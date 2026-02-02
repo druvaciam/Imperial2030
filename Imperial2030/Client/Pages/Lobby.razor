@@ -118,22 +118,35 @@
         var response = await Http.PostAsJsonAsync("api/games", newGameName);
         if (response.IsSuccessStatusCode)
         {
+            var game = await response.Content.ReadFromJsonAsync<GameDto>();
             newGameName = string.Empty;
-            // No need to reload, SignalR will handle it
+            if (game != null)
+            {
+                NavigationManager.NavigateTo($"/game/{game.Id}");
+            }
         }
     }
 
     private async Task JoinGame(Guid gameId)
     {
         var response = await Http.PostAsync($"api/games/{gameId}/join", null);
+        
         if (response.IsSuccessStatusCode)
         {
-            // NavigationManager.NavigateTo($"/game/{gameId}");
-            // SignalR updates the lobby list
+            NavigationManager.NavigateTo($"/game/{gameId}");
         }
         else
         {
-            Console.WriteLine("Failed to join game");
+            var error = await response.Content.ReadAsStringAsync();
+            if (response.StatusCode == System.Net.HttpStatusCode.BadRequest && 
+                error.Contains("You are already in this game"))
+            {
+                 NavigationManager.NavigateTo($"/game/{gameId}");
+            }
+            else
+            {
+                Console.WriteLine($"Failed to join game: {error}");
+            }
         }
     }
 

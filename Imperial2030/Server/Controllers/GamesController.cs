@@ -104,4 +104,98 @@ public class GamesController : ControllerBase
 
         return Ok();
     }
+    [HttpPost("{gameId}/leave")]
+    public async Task<IActionResult> LeaveGame(Guid gameId)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games.Include(g => g.Players).FirstOrDefaultAsync(g => g.Id == gameId);
+        if (game == null) return NotFound();
+
+        var player = game.Players.FirstOrDefault(p => p.UserId == userId);
+        if (player == null) return BadRequest("You are not in this game.");
+
+        _context.Players.Remove(player);
+
+        // If the player was the host, assign a new host if there are other players
+        if (player.IsHost)
+        {
+            var newHost = game.Players.FirstOrDefault(p => p.UserId != userId);
+            if (newHost != null)
+            {
+                newHost.IsHost = true;
+            }
+        }
+
+        await _context.SaveChangesAsync();
+
+        // If no players left, delete the game
+        // Reload game to check players count correctly after save (or just check the tracked collection if it was updated)
+        // EF Core tracks the collection, but let's be safe and check the database count or the in-memory collection which should be updated.
+        // Actually, _context.Players.Remove(player) removes it from the collection on the context.
+        if (!game.Players.Any())
+        {
+            _context.Games.Remove(game);
+            await _context.SaveChangesAsync();
+        }
+        
+        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+
+        return Ok();
+    }
+
+    [HttpGet("{gameId}")]
+    public async Task<ActionResult<GameDetailDto>> GetGame(Guid gameId)
+    {
+        var game = await _context.Games
+            .Include(g => g.Players)
+            .ThenInclude(p => p.User)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+
+        return new GameDetailDto
+        {
+            Id = game.Id,
+            Name = game.Name,
+            Status = game.Status,
+            CreatedAt = game.CreatedAt,
+            PlayerCount = game.Players.Count,
+            Players = game.Players.Select(p => new PlayerDto
+            {
+                Id = p.Id,
+                UserId = p.UserId,
+                UserName = p.User?.UserName ?? "Unknown",
+                IsHost = p.IsHost
+            }).ToList()
+        };
+    }
+
+    [HttpPost("{gameId}/start")]
+    public async Task<IActionResult> StartGame(Guid gameId)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games.Include(g => g.Players).FirstOrDefaultAsync(g => g.Id == gameId);
+        if (game == null) return NotFound();
+
+        var player = game.Players.FirstOrDefault(p => p.UserId == userId);
+        if (player == null) return BadRequest("You are not in this game.");
+
+        if (!player.IsHost) return Forbid();
+
+        if (game.Players.Count < 2) return BadRequest("Need at least 2 players to start.");
+
+        if (game.Status != GameStatus.Lobby) return BadRequest("Game is not in lobby state.");
+
+        game.Status = GameStatus.InProgress;
+        await _context.SaveChangesAsync();
+        
+        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameStarted", gameId);
+
+        return Ok();
+    }
 }

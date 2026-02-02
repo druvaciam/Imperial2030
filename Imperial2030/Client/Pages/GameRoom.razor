@@ -2,38 +2,77 @@
 @using Imperial2030.Shared.Models
 @attribute [Authorize]
 
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.SignalR.Client
+@inject NavigationManager Navigation
+@inject HttpClient Http
+@inject AuthenticationStateProvider AuthStateProvider
+@implements IAsyncDisposable
+
 <PageTitle>Imperial 2030 - Game Room</PageTitle>
 
-<div class="game-container">
-    <div class="sidebar-left">
-        <!-- Turn info, Rondel, etc. -->
-        <div class="panel">
-            <h4>Current Turn</h4>
-            <div class="turn-indicator">
-                <span class="badge bg-danger">Russia</span>
+@if (game == null)
+{
+    <p>Loading game details...</p>
+}
+else
+{
+    <div class="game-container">
+        <div class="sidebar-left">
+            <div class="panel">
+                <h4>Players</h4>
+                <ul class="list-group list-group-flush bg-transparent">
+                    @foreach (var player in game.Players)
+                    {
+                        <li class="list-group-item bg-transparent text-white d-flex justify-content-between align-items-center">
+                            @player.UserName
+                            @if (player.IsHost)
+                            {
+                                <span class="badge bg-warning text-dark">Host</span>
+                            }
+                        </li>
+                    }
+                </ul>
+            </div>
+            
+             <div class="panel mt-3">
+                <h4>Game Status</h4>
+                <p>@game.Status</p>
+            </div>
+
+            <div class="mt-auto pt-3 d-grid gap-2">
+                 @if (IsHost && game.Status == GameStatus.Lobby)
+                 {
+                     <button class="btn btn-success" @onclick="StartGame" disabled="@(game.Players.Count < 2)">Start Game</button>
+                 }
+                 <button class="btn btn-danger" @onclick="ExitGame">Exit Game</button>
+            </div>
+        </div>
+
+        <div class="main-board">
+            <!-- SVG Map or Canvas will go here -->
+            <div class="map-placeholder">
+                <h2>World Map Area</h2>
+                <p>Game ID: @GameId</p>
+                @if (game.Status == GameStatus.InProgress)
+                {
+                    <p class="text-success display-6">GAME IN PROGRESS</p>
+                }
+            </div>
+        </div>
+
+        <div class="sidebar-right">
+            <!-- Player stats, bond holdings -->
+            <div class="panel">
+                <h4>My Assets</h4>
+                <ul class="list-group list-group-flush bg-transparent">
+                    <li class="list-group-item bg-transparent text-white">Cash: 2M</li>
+                    <li class="list-group-item bg-transparent text-white">Bonds: Russia (4M), China (2M)</li>
+                </ul>
             </div>
         </div>
     </div>
-
-    <div class="main-board">
-        <!-- SVG Map or Canvas will go here -->
-        <div class="map-placeholder">
-            <h2>World Map Area</h2>
-            <p>Game ID: @GameId</p>
-        </div>
-    </div>
-
-    <div class="sidebar-right">
-        <!-- Player stats, bond holdings -->
-        <div class="panel">
-            <h4>My Assets</h4>
-            <ul class="list-group list-group-flush bg-transparent">
-                <li class="list-group-item bg-transparent text-white">Cash: 2M</li>
-                <li class="list-group-item bg-transparent text-white">Bonds: Russia (4M), China (2M)</li>
-            </ul>
-        </div>
-    </div>
-</div>
+}
 
 <style>
     .game-container {
@@ -50,6 +89,14 @@
         padding: 1rem;
         border-radius: 8px;
         color: #ecf0f1;
+        display: flex; /* Added for layout of sidebar content */
+        flex-direction: column;
+    }
+    
+    .sidebar-left {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
     }
 
     .main-board {
@@ -59,6 +106,7 @@
         align-items: center;
         justify-content: center;
         color: #95a5a6;
+        flex-direction: column;
     }
 
     .map-placeholder {
@@ -72,4 +120,96 @@
 @code {
     [Parameter]
     public Guid GameId { get; set; }
+
+    private GameDetailDto? game;
+    private HubConnection? hubConnection;
+    private bool IsHost = false;
+    private string? currentUserId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUserId = user.FindFirst(c => c.Type == "sub")?.Value; // 'sub' claim has the user ID from our GenerateJwtToken
+        // Alternatively, check ClaimTypes.NameIdentifier if 'sub' is not mapped or customly set.
+        // In AuthController.cs: new Claim(ClaimTypes.NameIdentifier, user.Id)
+        if (currentUserId == null) 
+             currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+
+        await LoadGame();
+
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/gamehub"))
+            .Build();
+
+        hubConnection.On<Guid>("GameUpdated", async (id) =>
+        {
+            if (id == GameId)
+            {
+                await LoadGame();
+                StateHasChanged();
+            }
+        });
+        
+        hubConnection.On<Guid>("GameStarted", async (id) =>
+        {
+            if (id == GameId)
+            {
+                await LoadGame();
+                StateHasChanged();
+            }
+        });
+
+        await hubConnection.StartAsync();
+        await hubConnection.InvokeAsync("JoinGameGroup", GameId.ToString());
+    }
+
+    private async Task LoadGame()
+    {
+        try
+        {
+            game = await Http.GetFromJsonAsync<GameDetailDto>($"api/games/{GameId}");
+            if (game != null && currentUserId != null)
+            {
+                var me = game.Players.FirstOrDefault(p => p.UserId == currentUserId);
+                IsHost = me?.IsHost ?? false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading game: {ex.Message}");
+        }
+    }
+
+    private async Task StartGame()
+    {
+        var response = await Http.PostAsync($"api/games/{GameId}/start", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            Console.WriteLine("Failed to start game");
+        }
+    }
+
+    private async Task ExitGame()
+    {
+        var response = await Http.PostAsync($"api/games/{GameId}/leave", null);
+        if (response.IsSuccessStatusCode)
+        {
+            Navigation.NavigateTo("/");
+        }
+        else
+        {
+            Console.WriteLine("Failed to leave game");
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.InvokeAsync("LeaveGameGroup", GameId.ToString());
+            await hubConnection.DisposeAsync();
+        }
+    }
 }

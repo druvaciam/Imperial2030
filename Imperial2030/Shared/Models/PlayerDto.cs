@@ -1,0 +1,11 @@
+using System;
+
+namespace Imperial2030.Shared.Models;
+
+public class PlayerDto
+{
+    public Guid Id { get; set; }
+    public string UserId { get; set; } = string.Empty;
+    public string UserName { get; set; } = string.Empty;
+    public bool IsHost { get; set; }
+}
