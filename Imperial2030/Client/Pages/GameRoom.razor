@@ -9,16 +9,34 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @implements IAsyncDisposable
 
-<PageTitle>Imperial 2030 - Game Room</PageTitle>
+<PageTitle>@(IsMyTurn() ? "⚠️ YOUR TURN! - " : "")@game.Name - Imperial 2030</PageTitle>
 
 @if (game == null)
 {
-    <p>Loading game details...</p>
+    <div class="text-center mt-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-white">Loading imperial archives...</p>
+    </div>
 }
 else
 {
     <div class="game-container">
+        @if (IsMyTurn())
+        {
+            <div class="turn-alert-overlay">
+                <div class="alert-content">
+                    <h1>IT IS YOUR MOVE!</h1>
+                    <p>You control @game.CurrentTurnNation</p>
+                </div>
+            </div>
+        }
+        
         <div class="sidebar-left">
+            <div class="panel mb-3 text-center">
+                <h3 class="m-0 text-white">@game.Name</h3>
+                <small class="text-muted">Game ID: @GameId.ToString().Substring(0, 8)...</small>
+            </div>
+
             <div class="panel">
                 <h4>Players</h4>
                 <ul class="list-group list-group-flush bg-transparent">
@@ -35,12 +53,19 @@ else
                 </ul>
             </div>
             
-             <div class="panel mt-3">
-                <h4>Game Status</h4>
-                <p class="mb-1">@game.Status</p>
-                <small class="text-muted">Turn: @(game.Status == GameStatus.InProgress ? "Russia" : "-")</small>
+            <div class="panel mt-3">
+                <Rondel 
+                    NationStates="@game.NationStates" 
+                    CurrentTurnNation="@game.CurrentTurnNation"
+                    IsMyTurn="@IsMyTurn()"
+                    OnMoveSelected="@OnRondelMove" />
+                
+                <div class="mt-3 text-center">
+                    <span class="text-muted small text-uppercase">Current Turn</span>
+                    <h3 class="fw-bold text-white">@game.CurrentTurnNation</h3>
+                </div>
             </div>
-            
+
             @if (game.Status == GameStatus.InProgress)
             {
                 <div class="panel mt-3">
@@ -154,18 +179,32 @@ else
         padding: 1rem;
         border-radius: 8px;
         color: #ecf0f1;
-        display: flex; /* Added for layout of sidebar content */
+        display: flex; 
         flex-direction: column;
-        max-height: 100%;
-        overflow-y: auto;
     }
     
     .sidebar-left, .sidebar-right {
         display: flex;
         flex-direction: column;
         height: 100%;
-        overflow: hidden;
+        overflow-y: auto; 
         gap: 1rem;
+        padding-right: 5px;
+    }
+
+    /* Custom Scrollbar for sidebars */
+    .sidebar-left::-webkit-scrollbar, .sidebar-right::-webkit-scrollbar {
+        width: 6px;
+    }
+    .sidebar-left::-webkit-scrollbar-track, .sidebar-right::-webkit-scrollbar-track {
+        background: transparent; 
+    }
+    .sidebar-left::-webkit-scrollbar-thumb, .sidebar-right::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.2); 
+        border-radius: 3px;
+    }
+    .sidebar-left::-webkit-scrollbar-thumb:hover, .sidebar-right::-webkit-scrollbar-thumb:hover {
+        background: rgba(255,255,255,0.4); 
     }
 
     .main-board {
@@ -184,6 +223,43 @@ else
         border: 2px dashed #7f8c8d;
         padding: 4rem;
         border-radius: 12px;
+    }
+
+    .turn-alert-overlay {
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: auto;
+        height: auto;
+        padding: 10px 40px;
+        border-radius: 50px;
+        background: linear-gradient(180deg, rgba(231, 76, 60, 0.95) 0%, rgba(192, 57, 43, 0.95) 100%);
+        z-index: 2000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+        border: 2px solid rgba(255,255,255,0.3);
+        animation: slideDown 0.5s ease-out, pulse 2s infinite;
+        pointer-events: none;
+    }
+    
+    .alert-content {
+        text-align: center;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
+    
+    @@keyframes slideDown {
+        from { transform: translate(-50%, -150%); opacity: 0; }
+        to { transform: translate(-50%, 0); opacity: 1; }
+    }
+    
+    @@keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.02); }
+        100% { transform: scale(1); }
     }
 </style>
 
@@ -263,6 +339,36 @@ else
             var error = await response.Content.ReadAsStringAsync();
             errorMessage = $"Failed to start game: {error}";
             Console.WriteLine(errorMessage);
+        }
+    }
+
+    private bool IsMyTurn()
+    {
+        if (game == null || game.Status != GameStatus.InProgress) return false;
+        var currentNationState = game.NationStates.FirstOrDefault(ns => ns.Nation == game.CurrentTurnNation);
+        return currentNationState?.ControllerName == MyPlayer?.UserName;
+    }
+
+    private bool isSubmitting = false;
+
+    private async Task OnRondelMove(int slotIndex)
+    {
+        if (game == null || isSubmitting) return;
+        isSubmitting = true;
+        errorMessage = null;
+        try
+        {
+            var response = await Http.PostAsync($"api/games/{GameId}/move/{game.CurrentTurnNation}/{slotIndex}", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                errorMessage = $"Failed to move: {error}";
+                Console.WriteLine(errorMessage);
+            }
+        }
+        finally
+        {
+            isSubmitting = false;
         }
     }
 

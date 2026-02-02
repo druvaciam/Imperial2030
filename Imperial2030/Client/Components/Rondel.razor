@@ -1,0 +1,179 @@
+@using Imperial2030.Shared.Models
+@using System.Globalization
+
+<div class="rondel-container">
+    <svg viewBox="-120 -120 240 240" class="rondel-svg">
+        <defs>
+            <filter id="drop-shadow">
+                <feDropShadow dx="1" dy="1" stdDeviation="2" flood-opacity="0.5"/>
+            </filter>
+        </defs>
+
+        @for (int i = 0; i < 8; i++)
+        {
+            var index = i; 
+            var segment = GetSegment(index);
+            var isHoverable = CanMoveTo(index);
+            var isCurrent = CurrentPosition == index;
+            // Rotation centers the slice at the target angle.
+            // Formula: index*45 - 90. 
+            // 0 -> -90 (Top).
+            var rotation = (index * 45 - 90).ToString(CultureInfo.InvariantCulture);
+            var scale = (isCurrent ? 1.05 : 1).ToString(CultureInfo.InvariantCulture);
+
+            <g transform="rotate(@rotation)" 
+               class="rondel-slice @(isHoverable ? "hoverable" : "")"
+               @onclick="@(() => OnSliceClick(index))">
+                
+                <!-- Slice Shape: Symmetric wedge centered at 0 deg (-22.5 to +22.5) -->
+                <!-- x = 100 * cos(22.5) = 92.388 -->
+                <!-- y = 100 * sin(22.5) = 38.268 -->
+                <path d="M0,0 L92.39,-38.27 A100,100 0 0,1 92.39,38.27 Z" 
+                      fill="@segment.Color" 
+                      stroke="#333" 
+                      stroke-width="1"
+                      transform="scale(@scale)" />
+
+                <!-- Text label: Centered in the slice (at angle 0 relative to group) -->
+                <text x="65" y="4" 
+                      transform="rotate(0)" 
+                      text-anchor="middle" 
+                      fill="#fff" 
+                      stroke="#000"
+                      stroke-width="0.6"
+                      paint-order="stroke"
+                      font-size="10" 
+                      font-weight="bold"
+                      style="pointer-events: none;">
+                    @segment.Name
+                </text>
+            </g>
+        }
+
+        <!-- Center Hub -->
+        <circle cx="0" cy="0" r="20" fill="#444" stroke="#888" stroke-width="2" />
+        
+        <!-- Nation Markers -->
+        @foreach (var group in NationStates.Where(n => n.RondelPosition.HasValue).GroupBy(n => n.RondelPosition!.Value))
+        {
+            var pos = group.Key;
+            var angle = (pos * 45) - 90; 
+            var rad = (angle * Math.PI) / 180.0;
+            
+            int indexInSlot = 0;
+            foreach (var nation in group)
+            {
+                 // Stack radially outward: 45, 65, 85, etc.
+                 var r = 45 + (indexInSlot * 18); 
+                 var x = (r * Math.Cos(rad)).ToString(CultureInfo.InvariantCulture);
+                 var y = (r * Math.Sin(rad)).ToString(CultureInfo.InvariantCulture);
+                 indexInSlot++;
+
+                 <g transform="translate(@x, @y)">
+                     @if (nation.Nation == CurrentTurnNation)
+                     {
+                         <!-- Highlight Ring for Active Turn -->
+                         <circle r="11" fill="none" stroke="#fff" stroke-width="3" opacity="0.8">
+                            <animate attributeName="opacity" values="0.8;0.3;0.8" dur="1.5s" repeatCount="indefinite" />
+                         </circle>
+                         <circle r="9" fill="@GetNationColor(nation.Nation)" stroke="#fff" stroke-width="2" />
+                     }
+                     else
+                     {
+                         <circle r="8" fill="@GetNationColor(nation.Nation)" stroke="#fff" stroke-width="1" />
+                     }
+                     <text y="3" text-anchor="middle" font-size="7" fill="#fff" font-weight="@(nation.Nation == CurrentTurnNation ? "bold" : "normal")">
+                         @GetNationAbbreviation(nation.Nation)
+                     </text>
+                 </g>
+            }
+        }
+
+    </svg>
+</div>
+
+@code {
+    [Parameter] public List<NationStateDto> NationStates { get; set; } = new();
+    [Parameter] public Nation CurrentTurnNation { get; set; }
+    [Parameter] public bool IsMyTurn { get; set; }
+    [Parameter] public EventCallback<int> OnMoveSelected { get; set; }
+
+    private int? CurrentPosition => NationStates.FirstOrDefault(n => n.Nation == CurrentTurnNation)?.RondelPosition;
+
+    private bool CanMoveTo(int targetIndex)
+    {
+        if (!IsMyTurn) return false;
+        
+        var currentPos = CurrentPosition;
+        
+        // If not on Rondel yet, ANY move is valid (and free)
+        if (currentPos == null) return true;
+        
+        // Calculate forward distance
+        int dist = (targetIndex - currentPos.Value + 8) % 8;
+        if (dist == 0) return false; // Can't stay
+        
+        return true; 
+    }
+
+    private async Task OnSliceClick(int index)
+    {
+        if (CanMoveTo(index))
+        {
+            await OnMoveSelected.InvokeAsync(index);
+        }
+    }
+
+    private string GetNationAbbreviation(Nation nation) => nation switch
+    {
+        Nation.Russia => "RUS",
+        Nation.China => "CHN",
+        Nation.India => "IND",
+        Nation.Brazil => "BRA",
+        Nation.USA => "USA",
+        Nation.Europe => "EU",
+        _ => nation.ToString().Substring(0, 2).ToUpper()
+    };
+
+    private (string Name, string Color) GetSegment(int index) => index switch
+    {
+        0 => ("Taxation", "#f1c40f"),
+        1 => ("Factory", "#1f3a93"),
+        2 => ("Production", "#7f8c8d"),
+        3 => ("Maneuver", "#2ecc71"),
+        4 => ("Investor", "#3498db"),
+        5 => ("Import", "#e67e22"),
+        6 => ("Production", "#7f8c8d"),
+        7 => ("Maneuver", "#2ecc71"),
+        _ => ("", "#000")
+    };
+
+    private string GetNationColor(Nation nation) => nation switch
+    {
+        Nation.Russia => "#cf2a2a", // Red
+        Nation.China => "#f1c40f", // Yellow
+        Nation.India => "#95a5a6", // Grey/Silver for India (usually white/grey in Imperial)
+        Nation.Brazil => "#2ecc71", // Green
+        Nation.USA => "#2980b9", // Blue
+        Nation.Europe => "#8e44ad", // Purple
+        _ => "#000"
+    };
+}
+
+<style>
+    .rondel-container {
+        width: 100%;
+        max-width: 400px;
+        margin: 0 auto;
+    }
+    .rondel-slice {
+        cursor: default;
+        transition: opacity 0.2s;
+    }
+    .rondel-slice.hoverable {
+        cursor: pointer;
+    }
+    .rondel-slice.hoverable:hover {
+        opacity: 0.8;
+    }
+</style>

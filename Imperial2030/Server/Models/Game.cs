@@ -14,6 +14,7 @@ public class Game
     public GameStatus Status { get; set; } = GameStatus.Lobby;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public Nation CurrentTurnNation { get; set; } = Nation.Russia;
 
     public virtual ICollection<Player> Players { get; set; } = new List<Player>();
     public virtual ICollection<Bond> Bonds { get; set; } = new List<Bond>();

@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using Microsoft.AspNetCore.SignalR;
+using System;
+using System.Linq;
 
 namespace Imperial2030.Server.Controllers;
 
@@ -192,6 +194,7 @@ public class GamesController : ControllerBase
             Name = game.Name,
             Status = game.Status,
             CreatedAt = game.CreatedAt,
+            CurrentTurnNation = game.CurrentTurnNation,
             PlayerCount = game.Players.Count,
             Players = game.Players.Select(p => new PlayerDto
             {
@@ -214,6 +217,7 @@ public class GamesController : ControllerBase
                 Nation = ns.Nation,
                 Treasury = ns.Treasury,
                 Power = ns.Power,
+                RondelPosition = ns.RondelPosition,
                 ControllerName = ns.Controller?.User?.UserName
             }).ToList(),
             AvailableBonds = game.Bonds.Where(b => b.HolderId == null).Select(b => new BondDto
@@ -425,6 +429,9 @@ public class GamesController : ControllerBase
                     }
                 }
 
+                // Reset Rondel Position to null (Off-Board)
+                ns.RondelPosition = null;
+
                 if (controller != null)
                 {
                     ns.ControllerId = controller.Id;
@@ -476,5 +483,77 @@ public class GamesController : ControllerBase
             Console.WriteLine($"Error starting game: {ex}");
             return StatusCode(500, $"Internal server error: {ex.Message}");
         }
+    }
+
+    [HttpPost("{gameId}/move/{nation}/{targetSlot}")]
+    public async Task<IActionResult> MoveNation(Guid gameId, Nation nation, int targetSlot)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.NationStates)
+            .Include(g => g.Players)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
+        if (game.CurrentTurnNation != nation) return BadRequest($"It is {game.CurrentTurnNation}'s turn.");
+        if (targetSlot < 0 || targetSlot > 7) return BadRequest($"Invalid slot {targetSlot}. Must be 0-7.");
+
+        var nationState = game.NationStates.First(n => n.Nation == nation);
+        
+        // Controller Check
+        if (nationState.ControllerId == null) return BadRequest("No controller for this nation.");
+        
+        var controller = game.Players.First(p => p.Id == nationState.ControllerId);
+        if (controller.UserId != userId) return Forbid();
+
+        // Calculate Distance and Cost
+        int? currentSlot = nationState.RondelPosition;
+        int cost = 0;
+
+        if (currentSlot == null)
+        {
+            // First move: Free Placement to any slot
+            cost = 0;
+        }
+        else
+        {
+            // Standard Move Logic
+            if (currentSlot.Value == targetSlot) return BadRequest("Must move to a different slot.");
+
+            int distance = (targetSlot - currentSlot.Value + 8) % 8;
+            
+            if (distance == 0) return BadRequest("Must move at least 1 step."); // Should be covered by above equality check but safe.
+            // distance is 1..7
+            
+            if (distance > 3)
+            {
+                cost = (distance - 3) * 2; // 2M per extra step
+            }
+        }
+
+        if (controller.Cash < cost) return BadRequest($"Not enough cash. Cost: {cost}M");
+
+        // Execute Move
+        controller.Cash -= cost;
+        nationState.RondelPosition = targetSlot;
+        
+        // Advance Turn (Russia -> China -> India -> Brazil -> USA -> Europe)
+        var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
+        int currentIndex = nations.IndexOf(nation);
+        int nextIndex = (currentIndex + 1) % nations.Count;
+        game.CurrentTurnNation = nations[nextIndex];
+        
+        _context.Entry(controller).State = EntityState.Modified;
+        _context.Entry(nationState).State = EntityState.Modified;
+        _context.Entry(game).State = EntityState.Modified;
+
+        await _context.SaveChangesAsync();
+        
+        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        
+        return Ok();
     }
 }

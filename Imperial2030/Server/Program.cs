@@ -79,8 +79,7 @@ using (var scope = app.Services.CreateScope())
     var services = scope.ServiceProvider;
     try
     {
-        var context = services.GetRequiredService<Imperial2030.Server.Data.ApplicationDbContext>();
-        context.Database.EnsureCreated();
+        await Imperial2030.Server.Data.DbSeeder.SeedAsync(services);
     }
     catch (Exception ex)
     {

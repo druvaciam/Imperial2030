@@ -10,6 +10,7 @@ public class NationState
     public Nation Nation { get; set; }
     public int Treasury { get; set; } = 0;
     public int Power { get; set; } = 0;
+    public int? RondelPosition { get; set; } = 0;
 
     public Guid? ControllerId { get; set; }
     [ForeignKey(nameof(ControllerId))]
