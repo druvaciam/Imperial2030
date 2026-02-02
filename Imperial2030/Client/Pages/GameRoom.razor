@@ -9,7 +9,7 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @implements IAsyncDisposable
 
-<PageTitle>@(IsMyTurn() ? "⚠️ YOUR TURN! - " : "")@game.Name - Imperial 2030</PageTitle>
+<PageTitle>@(IsMyTurn() ? "⚠️ YOUR TURN! - " : "")@(game != null ? $"{game.Name} - " : "")Imperial 2030</PageTitle>
 
 @if (game == null)
 {
@@ -28,6 +28,13 @@ else
                     <h1>IT IS YOUR MOVE!</h1>
                     <p>You control @game.CurrentTurnNation</p>
                 </div>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(toastMessage))
+        {
+            <div class="toast-notification @(isToastError ? "bg-danger" : "bg-success")">
+                @toastMessage
             </div>
         }
         
@@ -76,7 +83,7 @@ else
                             <li class="list-group-item bg-transparent text-white px-0">
                                 <b>@ns.Nation</b><br/>
                                 <span class="text-info">Treasury: @ns.Treasury M</span> | 
-                                <span class="text-warning">Power: @ns.Power</span><br/>
+                                <span class="text-warning">Power: @ns.Power (@(ns.Power/5)x)</span><br/>
                                 <span class="text-muted">Ctrl: @(ns.ControllerName ?? "None")</span>
                             </li>
                         }
@@ -261,6 +268,23 @@ else
         50% { transform: scale(1.02); }
         100% { transform: scale(1); }
     }
+    .toast-notification {
+        position: fixed;
+        top: 80px; /* Below the Turn Alert if present */
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 10px 20px;
+        border-radius: 5px;
+        color: white;
+        z-index: 3000;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        animation: fadeIn 0.3s ease-in-out;
+    }
+    
+    @@keyframes fadeIn {
+        from { opacity: 0; transform: translate(-50%, -20px); }
+        to { opacity: 1; transform: translate(-50%, 0); }
+    }
 </style>
 
 @code {
@@ -349,27 +373,70 @@ else
         return currentNationState?.ControllerName == MyPlayer?.UserName;
     }
 
+    [Inject] IJSRuntime JSRuntime { get; set; }
+
     private bool isSubmitting = false;
+    private string? toastMessage;
+    private bool isToastError;
 
     private async Task OnRondelMove(int slotIndex)
     {
         if (game == null || isSubmitting) return;
+        
+        var nation = game.CurrentTurnNation;
+        var ns = game.NationStates.FirstOrDefault(n => n.Nation == nation);
+        if (ns == null) return;
+
+        // Client-side cost verification
+        int cost = 0;
+        if (ns.RondelPosition.HasValue)
+        {
+             int current = ns.RondelPosition.Value;
+             if (current == slotIndex) return; // Same slot, ignore
+             
+             int dist = (slotIndex - current + 8) % 8;
+             if (dist > 3)
+             {
+                 int powerFactor = ns.Power / 5;
+                 int costPerStep = 1 + powerFactor;
+                 cost = (dist - 3) * costPerStep;
+             }
+        }
+        
+        if (cost > 0)
+        {
+            bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", $"This move will cost {cost}M. Proceed?");
+            if (!confirmed) return;
+        }
+
         isSubmitting = true;
-        errorMessage = null;
         try
         {
-            var response = await Http.PostAsync($"api/games/{GameId}/move/{game.CurrentTurnNation}/{slotIndex}", null);
+            var response = await Http.PostAsync($"api/games/{GameId}/move/{nation}/{slotIndex}", null);
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                errorMessage = $"Failed to move: {error}";
-                Console.WriteLine(errorMessage);
+                await ShowToast($"Move failed: {error}", true);
             }
+        }
+        catch (Exception ex)
+        {
+             await ShowToast($"Error: {ex.Message}", true);
         }
         finally
         {
             isSubmitting = false;
         }
+    }
+
+    private async Task ShowToast(string message, bool isError)
+    {
+        toastMessage = message;
+        isToastError = isError;
+        StateHasChanged();
+        await Task.Delay(3000);
+        toastMessage = null;
+        StateHasChanged();
     }
 
     private async Task ExitGame()

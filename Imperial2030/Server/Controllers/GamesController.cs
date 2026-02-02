@@ -530,7 +530,10 @@ public class GamesController : ControllerBase
             
             if (distance > 3)
             {
-                cost = (distance - 3) * 2; // 2M per extra step
+                // Cost per additional step = 1 + Power Factor (Power / 5)
+                int powerFactor = nationState.Power / 5;
+                int costPerStep = 1 + powerFactor;
+                cost = (distance - 3) * costPerStep;
             }
         }
 
