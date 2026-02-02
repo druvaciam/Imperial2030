@@ -1,0 +1,19 @@
+root = true
+
+[*]
+end_of_line = CRLF
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{cs,razor}]
+indent_style = space
+indent_size = 4
+max_line_length = 150
+
+# C# formatting rules: "true" to force behavior, "false" to force opposite, unset to leave to editor
+csharp_preserve_single_line_blocks = true
+csharp_preserve_single_line_statements = true
+
+# Style definitions
+dotnet_sort_system_directives_first = true

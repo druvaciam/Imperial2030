@@ -1,0 +1,155 @@
+@page "/"
+@using Imperial2030.Shared.Models
+@using Microsoft.AspNetCore.Authorization
+@inject HttpClient Http
+@inject NavigationManager NavigationManager
+@attribute [Authorize]
+
+<PageTitle>Game Lobby</PageTitle>
+
+<div class="container mt-4">
+    <div class="row align-items-center mb-4">
+        <div class="col">
+            <h1 class="display-4 text-white">Game Lobby</h1>
+        </div>
+        <div class="col-auto">
+            <div class="input-group">
+                <input type="text" class="form-control" placeholder="New Game Name" @bind="newGameName" />
+                <button class="btn btn-success" @onclick="CreateGame"
+                    disabled="@string.IsNullOrWhiteSpace(newGameName)">Create Game</button>
+            </div>
+        </div>
+    </div>
+
+    @if (games == null)
+    {
+        <div class="text-center">
+            <div class="spinner-border text-light" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    }
+    else if (!games.Any())
+    {
+        <div class="alert alert-info text-center" role="alert">
+            No active games found. Be the first to create one!
+        </div>
+    }
+    else
+    {
+        <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
+            @foreach (var game in games)
+            {
+                <div class="col">
+                    <div class="card h-100 bg-dark text-white border-secondary shadow-sm">
+                        <div class="card-body">
+                            <h5 class="card-title text-warning">@game.Name</h5>
+                            <h6 class="card-subtitle mb-2 text-muted">Created: @game.CreatedAt.ToLocalTime().ToShortTimeString()
+                            </h6>
+                            <p class="card-text">
+                                Status: <span class="badge bg-@GetStatusColor(game.Status)">@game.Status</span><br />
+                                Players: @game.PlayerCount / @game.MaxPlayers
+                            </p>
+                        </div>
+                        <div class="card-footer bg-transparent border-secondary text-end">
+                            <button class="btn btn-primary btn-sm" @onclick="@(() => JoinGame(game.Id))"
+                                disabled="@game.IsFull">
+                                @(game.IsFull ? "Full" : "Join Game")
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@implements IAsyncDisposable
+@using Microsoft.AspNetCore.SignalR.Client
+
+
+@code {
+    private List<GameDto>? games;
+    private string newGameName = string.Empty;
+    private HubConnection? hubConnection;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadGames();
+
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/gamehub"))
+            .Build();
+
+        hubConnection.On<GameDto>("GameCreated", (game) =>
+        {
+            games?.Insert(0, game);
+            StateHasChanged();
+        });
+
+        hubConnection.On<Guid>("GameUpdated", async (gameId) =>
+        {
+             // For simplicity, just reload the list to get fresh counts
+             // Optimistically we could find it in the list and increment, 
+             // but reloading ensures we have correct state securely.
+             await LoadGames();
+             StateHasChanged();
+        });
+
+        await hubConnection.StartAsync();
+    }
+
+    private async Task LoadGames()
+    {
+        try
+        {
+            games = await Http.GetFromJsonAsync<List<GameDto>>("api/games");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading games: {ex.Message}");
+        }
+    }
+
+    private async Task CreateGame()
+    {
+        if (string.IsNullOrWhiteSpace(newGameName)) return;
+
+        var response = await Http.PostAsJsonAsync("api/games", newGameName);
+        if (response.IsSuccessStatusCode)
+        {
+            newGameName = string.Empty;
+            // No need to reload, SignalR will handle it
+        }
+    }
+
+    private async Task JoinGame(Guid gameId)
+    {
+        var response = await Http.PostAsync($"api/games/{gameId}/join", null);
+        if (response.IsSuccessStatusCode)
+        {
+            // NavigationManager.NavigateTo($"/game/{gameId}");
+            // SignalR updates the lobby list
+        }
+        else
+        {
+            Console.WriteLine("Failed to join game");
+        }
+    }
+
+    private string GetStatusColor(GameStatus status) => status switch
+    {
+        GameStatus.Lobby => "success",
+        GameStatus.InProgress => "warning",
+        GameStatus.Finished => "secondary",
+        _ => "primary"
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+}

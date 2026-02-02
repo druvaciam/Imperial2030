@@ -1,0 +1,14 @@
+@page "/logout"
+@using Imperial2030.Client.Services
+@inject AuthService AuthService
+@inject NavigationManager Navigation
+
+<p>Logging out...</p>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.Logout();
+        Navigation.NavigateTo("/");
+    }
+}
