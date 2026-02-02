@@ -1,8 +1,10 @@
 @page "/"
 @using Imperial2030.Shared.Models
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @inject HttpClient Http
 @inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthStateProvider
 @attribute [Authorize]
 
 <PageTitle>Game Lobby</PageTitle>
@@ -14,7 +16,7 @@
         </div>
         <div class="col-auto">
             <div class="input-group">
-                <input type="text" class="form-control" placeholder="New Game Name" @bind="newGameName" />
+                <input type="text" class="form-control" placeholder="New Game Name" @bind="newGameName" @bind:event="oninput" />
                 <button class="btn btn-success" @onclick="CreateGame"
                     disabled="@string.IsNullOrWhiteSpace(newGameName)">Create Game</button>
             </div>
@@ -40,6 +42,8 @@
         <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
             @foreach (var game in games)
             {
+                bool amIInGame = currentUserId != null && game.UserIds.Contains(currentUserId);
+                
                 <div class="col">
                     <div class="card h-100 bg-dark text-white border-secondary shadow-sm">
                         <div class="card-body">
@@ -52,10 +56,24 @@
                             </p>
                         </div>
                         <div class="card-footer bg-transparent border-secondary text-end">
-                            <button class="btn btn-primary btn-sm" @onclick="@(() => JoinGame(game.Id))"
-                                disabled="@game.IsFull">
-                                @(game.IsFull ? "Full" : "Join Game")
-                            </button>
+                            @if (amIInGame)
+                            {
+                                <button class="btn btn-info btn-sm me-2" @onclick="@(() => NavigationManager.NavigateTo($"/game/{game.Id}"))">
+                                    Resume
+                                </button>
+                                <!-- Optional: Leave button directly from lobby? User asked for Exit/Resume. -->
+                                <!-- Let's add Leave but confirm? No simple confirm in Blazor standard, just button. -->
+                                 <button class="btn btn-danger btn-sm" @onclick="@(() => LeaveGame(game.Id))">
+                                    Leave
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-primary btn-sm" @onclick="@(() => JoinGame(game.Id))"
+                                    disabled="@game.IsFull">
+                                    @(game.IsFull ? "Full" : "Join Game")
+                                </button>
+                            }
                         </div>
                     </div>
                 </div>
@@ -72,9 +90,16 @@
     private List<GameDto>? games;
     private string newGameName = string.Empty;
     private HubConnection? hubConnection;
+    private string? currentUserId;
 
     protected override async Task OnInitializedAsync()
     {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUserId = user.FindFirst(c => c.Type == "sub")?.Value; 
+        if (currentUserId == null) 
+             currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
         await LoadGames();
 
         hubConnection = new HubConnectionBuilder()
@@ -89,9 +114,6 @@
 
         hubConnection.On<Guid>("GameUpdated", async (gameId) =>
         {
-             // For simplicity, just reload the list to get fresh counts
-             // Optimistically we could find it in the list and increment, 
-             // but reloading ensures we have correct state securely.
              await LoadGames();
              StateHasChanged();
         });
@@ -138,15 +160,20 @@
         else
         {
             var error = await response.Content.ReadAsStringAsync();
-            if (response.StatusCode == System.Net.HttpStatusCode.BadRequest && 
-                error.Contains("You are already in this game"))
-            {
-                 NavigationManager.NavigateTo($"/game/{gameId}");
-            }
-            else
-            {
-                Console.WriteLine($"Failed to join game: {error}");
-            }
+            Console.WriteLine($"Failed to join game: {error}");
+        }
+    }
+    
+    private async Task LeaveGame(Guid gameId)
+    {
+        var response = await Http.PostAsync($"api/games/{gameId}/leave", null);
+        if (response.IsSuccessStatusCode)
+        {
+            await LoadGames(); // Refresh lobby
+        }
+        else
+        {
+             Console.WriteLine("Failed to leave game");
         }
     }
 
