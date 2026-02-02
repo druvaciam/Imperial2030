@@ -12,4 +12,6 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
 
     public DbSet<Game> Games { get; set; } = default!;
     public DbSet<Player> Players { get; set; } = default!;
+    public DbSet<Bond> Bonds { get; set; } = default!;
+    public DbSet<NationState> NationStates { get; set; } = default!;
 }

@@ -1,9 +1,9 @@
 @page "/game/{GameId:guid}"
 @using Imperial2030.Shared.Models
 @attribute [Authorize]
-
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.SignalR.Client
+@using Imperial2030.Client.Components
 @inject NavigationManager Navigation
 @inject HttpClient Http
 @inject AuthenticationStateProvider AuthStateProvider
@@ -37,8 +37,27 @@ else
             
              <div class="panel mt-3">
                 <h4>Game Status</h4>
-                <p>@game.Status</p>
+                <p class="mb-1">@game.Status</p>
+                <small class="text-muted">Turn: @(game.Status == GameStatus.InProgress ? "Russia" : "-")</small>
             </div>
+            
+            @if (game.Status == GameStatus.InProgress)
+            {
+                <div class="panel mt-3">
+                    <h4>Nations</h4>
+                    <ul class="list-group list-group-flush bg-transparent small">
+                        @foreach (var ns in game.NationStates)
+                        {
+                            <li class="list-group-item bg-transparent text-white px-0">
+                                <b>@ns.Nation</b><br/>
+                                <span class="text-info">Treasury: @ns.Treasury M</span> | 
+                                <span class="text-warning">Power: @ns.Power</span><br/>
+                                <span class="text-muted">Ctrl: @(ns.ControllerName ?? "None")</span>
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
 
             <div class="mt-auto pt-3 d-grid gap-2">
                  @if (IsHost && game.Status == GameStatus.Lobby)
@@ -50,25 +69,49 @@ else
         </div>
 
         <div class="main-board">
-            <!-- SVG Map or Canvas will go here -->
-            <div class="map-placeholder">
-                <h2>World Map Area</h2>
-                <p>Game ID: @GameId</p>
-                @if (game.Status == GameStatus.InProgress)
-                {
-                    <p class="text-success display-6">GAME IN PROGRESS</p>
-                }
-            </div>
+             @if (game.Status == GameStatus.InProgress)
+             {
+                 <GameMap NationStates="@game.NationStates" />
+             }
+             else
+             {
+                 <div class="map-placeholder">
+                    <h2>Imperial 2030</h2>
+                    <p>Waiting for game to start...</p>
+                    <p>Game ID: @GameId</p>
+                </div>
+             }
         </div>
 
         <div class="sidebar-right">
             <!-- Player stats, bond holdings -->
             <div class="panel">
                 <h4>My Assets</h4>
-                <ul class="list-group list-group-flush bg-transparent">
-                    <li class="list-group-item bg-transparent text-white">Cash: 2M</li>
-                    <li class="list-group-item bg-transparent text-white">Bonds: Russia (4M), China (2M)</li>
-                </ul>
+                @if (MyPlayer != null)
+                {
+                    <ul class="list-group list-group-flush bg-transparent">
+                        <li class="list-group-item bg-transparent text-white fs-5">
+                            Cash: <span class="text-success fw-bold">@MyPlayer.Cash M</span>
+                        </li>
+                        <li class="list-group-item bg-transparent text-white">
+                            <h6 class="text-muted mt-2">Bonds</h6>
+                            @if (MyPlayer.Bonds.Any())
+                            {
+                                @foreach (var bond in MyPlayer.Bonds)
+                                {
+                                    <div class="d-flex justify-content-between border-bottom border-secondary py-1">
+                                        <span>@bond.Nation</span>
+                                        <span>@bond.Interest M (Cost @bond.Cost)</span>
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <small>No bonds held.</small>
+                            }
+                        </li>
+                    </ul>
+                }
             </div>
         </div>
     </div>
@@ -91,12 +134,16 @@ else
         color: #ecf0f1;
         display: flex; /* Added for layout of sidebar content */
         flex-direction: column;
+        max-height: 100%;
+        overflow-y: auto;
     }
     
-    .sidebar-left {
+    .sidebar-left, .sidebar-right {
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
+        height: 100%;
+        overflow: hidden;
+        gap: 1rem;
     }
 
     .main-board {
@@ -107,6 +154,7 @@ else
         justify-content: center;
         color: #95a5a6;
         flex-direction: column;
+        overflow: hidden;
     }
 
     .map-placeholder {
@@ -125,14 +173,13 @@ else
     private HubConnection? hubConnection;
     private bool IsHost = false;
     private string? currentUserId;
+    private PlayerDto? MyPlayer => game?.Players.FirstOrDefault(p => p.UserId == currentUserId);
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         var user = authState.User;
-        currentUserId = user.FindFirst(c => c.Type == "sub")?.Value; // 'sub' claim has the user ID from our GenerateJwtToken
-        // Alternatively, check ClaimTypes.NameIdentifier if 'sub' is not mapped or customly set.
-        // In AuthController.cs: new Claim(ClaimTypes.NameIdentifier, user.Id)
+        currentUserId = user.FindFirst(c => c.Type == "sub")?.Value; 
         if (currentUserId == null) 
              currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
@@ -165,6 +212,8 @@ else
         await hubConnection.InvokeAsync("JoinGameGroup", GameId.ToString());
     }
 
+    private string? errorMessage;
+
     private async Task LoadGame()
     {
         try
@@ -179,15 +228,19 @@ else
         catch (Exception ex)
         {
             Console.WriteLine($"Error loading game: {ex.Message}");
+            errorMessage = $"Error loading game: {ex.Message}";
         }
     }
 
     private async Task StartGame()
     {
+        errorMessage = null;
         var response = await Http.PostAsync($"api/games/{GameId}/start", null);
         if (!response.IsSuccessStatusCode)
         {
-            Console.WriteLine("Failed to start game");
+            var error = await response.Content.ReadAsStringAsync();
+            errorMessage = $"Failed to start game: {error}";
+            Console.WriteLine(errorMessage);
         }
     }
 

@@ -21,6 +21,5 @@ public class Player
     // Gameplay specific properties
     public int Cash { get; set; } = 0; // Starting cash depends on starting nation or generic start
 
-    // In Imperial, players don't "play as" a nation fixedly, but we might track which nation they currently control or sit at if using a variant.
-    // For now, these are the basics.
+    public virtual ICollection<Bond> Bonds { get; set; } = new List<Bond>();
 }

@@ -8,4 +8,6 @@ public class PlayerDto
     public string UserId { get; set; } = string.Empty;
     public string UserName { get; set; } = string.Empty;
     public bool IsHost { get; set; }
+    public int Cash { get; set; }
+    public List<BondDto> Bonds { get; set; } = new List<BondDto>();
 }
