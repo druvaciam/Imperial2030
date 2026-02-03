@@ -96,13 +96,14 @@
     [Parameter] public List<NationStateDto> NationStates { get; set; } = new();
     [Parameter] public Nation CurrentTurnNation { get; set; }
     [Parameter] public bool IsMyTurn { get; set; }
+    [Parameter] public bool IsLocked { get; set; }
     [Parameter] public EventCallback<int> OnMoveSelected { get; set; }
 
     private int? CurrentPosition => NationStates.FirstOrDefault(n => n.Nation == CurrentTurnNation)?.RondelPosition;
 
     private bool CanMoveTo(int targetIndex)
     {
-        if (!IsMyTurn) return false;
+        if (!IsMyTurn || IsLocked) return false;
         
         var currentPos = CurrentPosition;
         

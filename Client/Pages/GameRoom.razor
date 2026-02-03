@@ -1,5 +1,6 @@
 @page "/game/{GameId:guid}"
 @using Imperial2030.Shared.Models
+@using Imperial2030.Shared.Constants
 @attribute [Authorize]
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.SignalR.Client
@@ -65,12 +66,38 @@ else
                     NationStates="@game.NationStates" 
                     CurrentTurnNation="@game.CurrentTurnNation"
                     IsMyTurn="@IsMyTurn()"
+                    IsLocked="@hasMoved"
                     OnMoveSelected="@OnRondelMove" />
                 
                 <div class="mt-3 text-center">
                     <span class="text-muted small text-uppercase">Current Turn</span>
                     <h3 class="fw-bold text-white">@game.CurrentTurnNation</h3>
                 </div>
+
+                @if (IsMyTurn())
+                {
+                    <div class="mt-3 d-grid gap-2">
+                        @if (CanBuildFactory() && !hasBuiltFactory && hasMoved)
+                        {
+                            <div class="card bg-dark border-secondary">
+                                <div class="card-header text-center">Build Factory</div>
+                                <div class="card-body p-2">
+                                    <p class="small text-muted mb-2">Select a home territory to build a factory (Cost: 5M).</p>
+                                    @foreach (var t in GetValidFactoryTerritories())
+                                    {
+                                        <button class="btn btn-sm btn-outline-info w-100 mb-1" @onclick="@(() => BuildFactory(t.Id))">
+                                            @t.Name
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        
+                        <button class="btn btn-warning fw-bold" @onclick="EndTurn" disabled="@(!hasMoved || isSubmitting)">
+                            Ends Turn
+                        </button>
+                    </div>
+                }
             </div>
 
             @if (game.Status == GameStatus.InProgress)
@@ -103,7 +130,7 @@ else
         <div class="main-board">
              @if (game.Status == GameStatus.InProgress)
              {
-                 <GameMap NationStates="@game.NationStates" />
+                 <GameMap Game="@game" IsMyTurn="@IsMyTurn()" />
              }
              else
              {
@@ -317,6 +344,7 @@ else
             if (id == GameId)
             {
                 await LoadGame();
+                CheckTurnChange();
                 StateHasChanged();
             }
         });
@@ -326,6 +354,7 @@ else
             if (id == GameId)
             {
                 await LoadGame();
+                CheckTurnChange();
                 StateHasChanged();
             }
         });
@@ -345,6 +374,7 @@ else
             {
                 var me = game.Players.FirstOrDefault(p => p.UserId == currentUserId);
                 IsHost = me?.IsHost ?? false;
+                if (lastTurnNation == null) lastTurnNation = game.CurrentTurnNation; // Init
             }
         }
         catch (Exception ex)
@@ -373,11 +403,32 @@ else
         return currentNationState?.ControllerName == MyPlayer?.UserName;
     }
 
-    [Inject] IJSRuntime JSRuntime { get; set; }
+    [Inject] public IJSRuntime JSRuntime { get; set; } = default!;
 
     private bool isSubmitting = false;
     private string? toastMessage;
     private bool isToastError;
+    
+    // Turn State Tracking
+    private bool hasMoved = false;
+    private bool hasBuiltFactory = false;
+
+    // Reset state when game updates (if it's a new turn for me)
+    private Guid? lastGameId = null;
+    private Nation? lastTurnNation = null;
+    
+    // Check if turn changed to reset flags
+    private void CheckTurnChange()
+    {
+        if (game == null) return;
+        
+        if (lastTurnNation != game.CurrentTurnNation)
+        {
+            hasMoved = false;
+            hasBuiltFactory = false;
+            lastTurnNation = game.CurrentTurnNation;
+        }
+    }
 
     private async Task OnRondelMove(int slotIndex)
     {
@@ -418,10 +469,83 @@ else
                 var error = await response.Content.ReadAsStringAsync();
                 await ShowToast($"Move failed: {error}", true);
             }
+            else
+            {
+                hasMoved = true;
+                // Don't auto-reset hasBuiltFactory here, it should be per turn
+            }
         }
         catch (Exception ex)
         {
              await ShowToast($"Error: {ex.Message}", true);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private async Task EndTurn()
+    {
+        if (game == null || isSubmitting) return;
+        isSubmitting = true;
+        try
+        {
+            var response = await Http.PostAsync($"api/games/{GameId}/end-turn", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                await ShowToast($"Failed to end turn: {error}", true);
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast($"Error: {ex.Message}", true);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private bool CanBuildFactory()
+    {
+        if (game == null || !IsMyTurn()) return false;
+        var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+        // Assuming slot 1 is Factory
+        return ns?.RondelPosition == 1 && ns.Treasury >= 5;
+    }
+
+    private List<Imperial2030.Shared.Models.Territory> GetValidFactoryTerritories()
+    {
+        if (game == null) return new ();
+        var nation = game.CurrentTurnNation;
+        return Imperial2030.Shared.Constants.TerritoryData.AllTerritories
+            .Where(t => t.Nation == nation && !game.Territories.Any(ts => ts.TerritoryId == t.Id && ts.HasFactory))
+            .ToList();
+    }
+
+    private async Task BuildFactory(string territoryId)
+    {
+        if (game == null || isSubmitting) return;
+        isSubmitting = true;
+        try
+        {
+            var response = await Http.PostAsync($"api/games/{GameId}/build-factory/{territoryId}", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                await ShowToast($"Failed to build factory: {error}", true);
+            }
+            else
+            {
+                await ShowToast("Factory built successfully!", false);
+                hasBuiltFactory = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast($"Error: {ex.Message}", true);
         }
         finally
         {

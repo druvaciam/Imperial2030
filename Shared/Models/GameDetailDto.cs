@@ -8,4 +8,5 @@ public class GameDetailDto : GameDto
     public Nation CurrentTurnNation { get; set; }
     public List<NationStateDto> NationStates { get; set; } = new List<NationStateDto>();
     public List<BondDto> AvailableBonds { get; set; } = new List<BondDto>(); // Bonds in the bank
+    public List<TerritoryStateDto> Territories { get; set; } = new List<TerritoryStateDto>();
 }

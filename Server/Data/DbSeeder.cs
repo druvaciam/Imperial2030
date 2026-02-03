@@ -1,5 +1,6 @@
 using Imperial2030.Server.Models;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 
 namespace Imperial2030.Server.Data;
 
@@ -8,7 +9,8 @@ public static class DbSeeder
     public static async Task SeedAsync(IServiceProvider serviceProvider)
     {
         var context = serviceProvider.GetRequiredService<ApplicationDbContext>();
-        context.Database.EnsureCreated();
+        // Apply any pending migrations (creates DB if not exists)
+        await context.Database.MigrateAsync();
 
         await SeedUsersAsync(serviceProvider);
     }

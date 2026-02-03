@@ -14,4 +14,5 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Player> Players { get; set; } = default!;
     public DbSet<Bond> Bonds { get; set; } = default!;
     public DbSet<NationState> NationStates { get; set; } = default!;
+    public DbSet<TerritoryState> TerritoryStates { get; set; } = default!;
 }

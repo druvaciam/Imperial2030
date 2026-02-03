@@ -19,4 +19,5 @@ public class Game
     public virtual ICollection<Player> Players { get; set; } = new List<Player>();
     public virtual ICollection<Bond> Bonds { get; set; } = new List<Bond>();
     public virtual ICollection<NationState> NationStates { get; set; } = new List<NationState>();
+    public virtual ICollection<TerritoryState> TerritoryStates { get; set; } = new List<TerritoryState>();
 }

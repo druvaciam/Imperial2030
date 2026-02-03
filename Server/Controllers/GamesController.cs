@@ -1,6 +1,7 @@
 using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Models;
+using Imperial2030.Shared.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -184,6 +185,7 @@ public class GamesController : ControllerBase
             .Include(g => g.Bonds)
                 .ThenInclude(b => b.Holder)
                     .ThenInclude(h => h.User)
+            .Include(g => g.TerritoryStates)
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -227,6 +229,11 @@ public class GamesController : ControllerBase
                 Cost = b.Cost,
                 Interest = b.Interest,
                 HolderName = null
+            }).ToList(),
+            Territories = game.TerritoryStates.Select(ts => new TerritoryStateDto 
+            {
+                TerritoryId = ts.TerritoryId,
+                HasFactory = ts.HasFactory
             }).ToList()
         };
     }
@@ -256,6 +263,16 @@ public class GamesController : ControllerBase
             {
                 newNationStates.Add(new NationState { Nation = nation, Treasury = 0, Power = 0, GameId = gameId });
             }
+
+            // Init Territories
+            var territories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories; // Wait, I need to create this first
+            var newTerritoryStates = new List<TerritoryState>();
+            foreach(var t in territories)
+            {
+                newTerritoryStates.Add(new TerritoryState { TerritoryId = t.Id, GameId = gameId, HasFactory = false });
+            }
+            _context.TerritoryStates.AddRange(newTerritoryStates);
+
 
             var bondDefinitions = new[]
             {
@@ -543,20 +560,111 @@ public class GamesController : ControllerBase
         controller.Cash -= cost;
         nationState.RondelPosition = targetSlot;
         
-        // Advance Turn (Russia -> China -> India -> Brazil -> USA -> Europe)
-        var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
-        int currentIndex = nations.IndexOf(nation);
-        int nextIndex = (currentIndex + 1) % nations.Count;
-        game.CurrentTurnNation = nations[nextIndex];
+        // Turn advancement is now manual via EndTurn endpoint
         
         _context.Entry(controller).State = EntityState.Modified;
         _context.Entry(nationState).State = EntityState.Modified;
-        _context.Entry(game).State = EntityState.Modified;
 
         await _context.SaveChangesAsync();
         
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
         
+        return Ok();
+    }
+    [HttpPost("{gameId}/build-factory/{territoryId}")]
+    public async Task<IActionResult> BuildFactory(Guid gameId, string territoryId)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.NationStates)
+            .Include(g => g.Players)
+            .Include(g => g.TerritoryStates)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
+
+        var nation = game.CurrentTurnNation;
+        var nationState = game.NationStates.First(n => n.Nation == nation);
+
+        // Controller Check
+        if (nationState.ControllerId == null) return BadRequest("No controller for this nation.");
+        var controller = game.Players.First(p => p.Id == nationState.ControllerId);
+        if (controller.UserId != userId) return Forbid();
+
+        // 1. Validate Rondel Position
+        // Assuming slot 1 is Factory (based on Rondel.razor)
+        if (nationState.RondelPosition != 1) return BadRequest("Nation must be on 'Factory' slot.");
+
+        // 2. Validate Territory
+        var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
+        if (territoryDef == null) return BadRequest("Invalid territory.");
+
+        // 3. Validate Home City
+        if (!territoryDef.IsHomeCity(nation)) return BadRequest($"Can only build in {nation}'s home cities.");
+
+        // 4. Validate State (No existing factory)
+        var territoryState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == territoryId);
+        if (territoryState == null) return BadRequest("Territory state not initialized."); // Should not happen if StartGame worked
+        if (territoryState.HasFactory) return BadRequest("Factory already exists.");
+
+        // 5. Validate Cost (5M from Nation Treasury - per User Request "The nation pays 5 million into the bank")
+        const int FactoryCost = 5;
+        if (nationState.Treasury < FactoryCost) return BadRequest($"Nation treasury insufficient. Need {FactoryCost}M.");
+
+        // 6. Execute Build
+        nationState.Treasury -= FactoryCost;
+        territoryState.HasFactory = true;
+
+        // No turn advance here? usually Factory building is an action within the turn. 
+        // The turn advances when moving on the Rondel. 
+        // Wait, the "Factory" action happens AFTER moving.
+        // So we update state, but do not change CurrentTurnNation (that happened in MoveNation).
+
+        _context.Entry(nationState).State = EntityState.Modified;
+        _context.Entry(territoryState).State = EntityState.Modified;
+
+        await _context.SaveChangesAsync();
+        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+
+        return Ok();
+    }
+
+    [HttpPost("{gameId}/end-turn")]
+    public async Task<IActionResult> EndTurn(Guid gameId)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.NationStates)
+            .Include(g => g.Players)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
+
+        var nation = game.CurrentTurnNation;
+        var nationState = game.NationStates.First(n => n.Nation == nation);
+
+        // Controller Check
+        if (nationState.ControllerId == null) return BadRequest("No controller for this nation.");
+        var controller = game.Players.First(p => p.Id == nationState.ControllerId);
+        if (controller.UserId != userId) return Forbid();
+
+        // Advance Turn (Russia -> China -> India -> Brazil -> USA -> Europe)
+        var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
+        int currentIndex = nations.IndexOf(nation);
+        int nextIndex = (currentIndex + 1) % nations.Count;
+        game.CurrentTurnNation = nations[nextIndex];
+
+        _context.Entry(game).State = EntityState.Modified;
+        await _context.SaveChangesAsync();
+
+        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+
         return Ok();
     }
 }
