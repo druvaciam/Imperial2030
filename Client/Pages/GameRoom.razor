@@ -62,11 +62,16 @@ else
             </div>
             
             <div class="panel mt-3">
+                @{
+                    var currentNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+                    bool isLocked = currentNs?.HasMovedThisTurn ?? false;
+                }
+                
                 <Rondel 
                     NationStates="@game.NationStates" 
                     CurrentTurnNation="@game.CurrentTurnNation"
                     IsMyTurn="@IsMyTurn()"
-                    IsLocked="@hasMoved"
+                    IsLocked="@isLocked"
                     OnMoveSelected="@OnRondelMove" />
                 
                 <div class="mt-3 text-center">
@@ -76,8 +81,12 @@ else
 
                 @if (IsMyTurn())
                 {
+                    var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+                    bool alreadyBuilt = ns?.HasBuiltThisTurn ?? false;
+                    bool turnMoved = ns?.HasMovedThisTurn ?? false;
+
                     <div class="mt-3 d-grid gap-2">
-                        @if (CanBuildFactory() && !hasBuiltFactory && hasMoved)
+                        @if (CanBuildFactory() && !alreadyBuilt && turnMoved)
                         {
                             <div class="card bg-dark border-secondary">
                                 <div class="card-header text-center">Build Factory</div>
@@ -93,7 +102,7 @@ else
                             </div>
                         }
                         
-                        <button class="btn btn-warning fw-bold" @onclick="EndTurn" disabled="@(!hasMoved || isSubmitting)">
+                        <button class="btn btn-warning fw-bold" @onclick="EndTurn" disabled="@(!turnMoved || isSubmitting)">
                             Ends Turn
                         </button>
                     </div>
@@ -344,7 +353,7 @@ else
             if (id == GameId)
             {
                 await LoadGame();
-                CheckTurnChange();
+
                 StateHasChanged();
             }
         });
@@ -354,7 +363,7 @@ else
             if (id == GameId)
             {
                 await LoadGame();
-                CheckTurnChange();
+
                 StateHasChanged();
             }
         });
@@ -374,7 +383,7 @@ else
             {
                 var me = game.Players.FirstOrDefault(p => p.UserId == currentUserId);
                 IsHost = me?.IsHost ?? false;
-                if (lastTurnNation == null) lastTurnNation = game.CurrentTurnNation; // Init
+
             }
         }
         catch (Exception ex)
@@ -408,27 +417,8 @@ else
     private bool isSubmitting = false;
     private string? toastMessage;
     private bool isToastError;
-    
-    // Turn State Tracking
-    private bool hasMoved = false;
-    private bool hasBuiltFactory = false;
-
     // Reset state when game updates (if it's a new turn for me)
     private Guid? lastGameId = null;
-    private Nation? lastTurnNation = null;
-    
-    // Check if turn changed to reset flags
-    private void CheckTurnChange()
-    {
-        if (game == null) return;
-        
-        if (lastTurnNation != game.CurrentTurnNation)
-        {
-            hasMoved = false;
-            hasBuiltFactory = false;
-            lastTurnNation = game.CurrentTurnNation;
-        }
-    }
 
     private async Task OnRondelMove(int slotIndex)
     {
@@ -471,8 +461,7 @@ else
             }
             else
             {
-                hasMoved = true;
-                // Don't auto-reset hasBuiltFactory here, it should be per turn
+                // State update handled by SignalR refresh, hasMoved is server-side now
             }
         }
         catch (Exception ex)
@@ -540,7 +529,7 @@ else
             else
             {
                 await ShowToast("Factory built successfully!", false);
-                hasBuiltFactory = true;
+                // State update handled by SignalR refresh, hasBuilt is server-side now
             }
         }
         catch (Exception ex)

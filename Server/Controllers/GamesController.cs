@@ -220,7 +220,9 @@ public class GamesController : ControllerBase
                 Treasury = ns.Treasury,
                 Power = ns.Power,
                 RondelPosition = ns.RondelPosition,
-                ControllerName = ns.Controller?.User?.UserName
+                ControllerName = ns.Controller?.User?.UserName,
+                HasBuiltThisTurn = ns.HasBuiltThisTurn,
+                HasMovedThisTurn = ns.HasMovedThisTurn
             }).ToList(),
             AvailableBonds = game.Bonds.Where(b => b.HolderId == null).Select(b => new BondDto
             {
@@ -526,6 +528,9 @@ public class GamesController : ControllerBase
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
+        // Check if already moved
+        if (nationState.HasMovedThisTurn) return BadRequest("Already moved this turn.");
+
         // Calculate Distance and Cost
         int? currentSlot = nationState.RondelPosition;
         int cost = 0;
@@ -559,6 +564,7 @@ public class GamesController : ControllerBase
         // Execute Move
         controller.Cash -= cost;
         nationState.RondelPosition = targetSlot;
+        nationState.HasMovedThisTurn = true;
         
         // Turn advancement is now manual via EndTurn endpoint
         
@@ -597,6 +603,9 @@ public class GamesController : ControllerBase
         // 1. Validate Rondel Position
         // Assuming slot 1 is Factory (based on Rondel.razor)
         if (nationState.RondelPosition != 1) return BadRequest("Nation must be on 'Factory' slot.");
+        
+        // 1b. Validate Per Turn Limit
+        if (nationState.HasBuiltThisTurn) return BadRequest("Already built factory this turn.");
 
         // 2. Validate Territory
         var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
@@ -617,6 +626,9 @@ public class GamesController : ControllerBase
         // 6. Execute Build
         nationState.Treasury -= FactoryCost;
         territoryState.HasFactory = true;
+        
+        // Set flag
+        nationState.HasBuiltThisTurn = true;
 
         // No turn advance here? usually Factory building is an action within the turn. 
         // The turn advances when moving on the Rondel. 
@@ -659,6 +671,10 @@ public class GamesController : ControllerBase
         int currentIndex = nations.IndexOf(nation);
         int nextIndex = (currentIndex + 1) % nations.Count;
         game.CurrentTurnNation = nations[nextIndex];
+        
+        // Reset current nation's turn flags
+        nationState.HasBuiltThisTurn = false;
+        nationState.HasMovedThisTurn = false;
 
         _context.Entry(game).State = EntityState.Modified;
         await _context.SaveChangesAsync();

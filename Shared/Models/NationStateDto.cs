@@ -7,4 +7,6 @@ public class NationStateDto
     public int Power { get; set; }
     public int? RondelPosition { get; set; }
     public string? ControllerName { get; set; }
+    public bool HasBuiltThisTurn { get; set; }
+    public bool HasMovedThisTurn { get; set; }
 }

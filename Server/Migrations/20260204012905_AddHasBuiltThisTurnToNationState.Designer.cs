@@ -3,6 +3,7 @@ using System;
 using Imperial2030.Server.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Imperial2030.Server.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260204012905_AddHasBuiltThisTurnToNationState")]
+    partial class AddHasBuiltThisTurnToNationState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.2");
@@ -149,9 +152,6 @@ namespace Imperial2030.Server.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("HasBuiltThisTurn")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("HasMovedThisTurn")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Nation")
