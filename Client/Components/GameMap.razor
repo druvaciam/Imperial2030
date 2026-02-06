@@ -1,4 +1,6 @@
 @using Imperial2030.Shared.Models
+@using Imperial2030.Shared.Constants
+@using Imperial2030.Client.Constants
 
 <div class="map-container">
 <svg
@@ -10,8 +12,14 @@
    xmlns:xlink="http://www.w3.org/1999/xlink"
    xmlns="http://www.w3.org/2000/svg"
    xmlns:svg="http://www.w3.org/2000/svg">
+
   <defs
-     id="defs1" />
+     id="defs1">
+     <symbol id="factory-icon" viewBox="0 0 30 30">
+        <!-- Simple Factory Icon: Base with saw-tooth roof -->
+        <path d="M 2,28 L 28,28 L 28,14 L 22,18 L 22,8 L 14,14 L 14,8 L 2,14 Z" stroke="#333" stroke-width="2" />
+     </symbol>
+  </defs>
   <g
      id="g1">
     <image
@@ -118,6 +126,22 @@
           d="m 948.49972,323.65757 0.57921,-4.74944 3.70688,-3.93857 -1.39008,-5.67617 2.3168,-1.62177 19.80868,-2.896 -1.39008,-5.67617 -2.08512,-4.86529 -0.23168,-5.21281 -4.63361,-7.87714 c 0,0 3.82272,-17.37603 -10.6573,-20.61956 -14.48003,-3.24352 2.43264,-7.87713 2.43264,-7.87713 l 5.67617,-0.69504 8.3405,-7.06626 7.76129,5.79202 c 0,0 -0.11584,4.17024 5.90785,3.4752 1.27425,1.1584 1.27425,1.1584 1.27425,1.1584 l 3.82272,-4.6336 8.10882,2.43264 c 0,0 3.12774,1.50592 -0.69504,4.51777 -3.82273,3.01184 -3.82273,3.01184 -3.82273,3.01184 l -2.08512,3.35937 -1.85345,4.17025 2.66433,2.08512 3.01184,-0.23168 0.23168,3.35937 15.87013,0.11584 v 19.34532 l -8.1088,-0.11584 1.5059,2.66432 6.3712,-0.23168 0.3476,6.95041 -5.3287,0.92673 -1.9693,9.49889 c 0,0 -2.5485,1.27425 -2.7801,7.29794 -3.47528,3.24352 -3.59112,3.35936 -3.59112,3.35936 l -10.54146,8.10882 -4.74945,1.27424 -8.9197,0.11584 -4.17025,5.90785 1.62177,4.17025 c 0,0 -3.35937,3.12769 -3.82273,2.89601 -0.46336,-0.23168 -2.66433,-2.20097 -2.66433,-2.20097 l 0.11585,-1.62176 3.24352,-1.50592 -0.23168,-1.15841 -2.54848,-1.1584 -0.11584,-4.17025 -2.08513,-1.62176 -5.90785,0.11584 -2.78016,-5.09697 z"
           id="Shanghai" class="@GetTerritoryClass("Shanghai")"
           @onclick='() => OnTerritoryClick("Shanghai")' />
+    </g>
+
+    <g id="factories">
+        @if (Game != null)
+        {
+            @foreach (var tState in Game.Territories.Where(t => t.HasFactory))
+            {
+                if (MapCoordinates.TerritoryCenters.TryGetValue(tState.TerritoryId, out var coords))
+                {
+                    var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tState.TerritoryId);
+                    string fill = def?.CityType == CityType.LightBlue ? "#00BFFF" : "#8B4513"; // DeepSkyBlue or SaddleBrown
+                    
+                    <use href="#factory-icon" x="@(coords.X - 15)" y="@(coords.Y - 15)" width="30" height="30" style="fill:@fill; opacity: 0.9; pointer-events: none;" />
+                }
+            }
+        }
     </g>
   </g>
 </svg>
@@ -239,10 +263,6 @@
         if (Game == null) return baseClass;
 
         var territoryState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryId);
-        if (territoryState != null && territoryState.HasFactory)
-        {
-            baseClass += " factory-built";
-        }
 
         if (IsMyTurn)
         {
@@ -250,14 +270,14 @@
             var ns = Game.NationStates.FirstOrDefault(n => n.Nation == nation);
             if (ns != null && ns.RondelPosition == 1) // Factory
             {
-                 var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
-                 if (territoryDef != null && territoryDef.IsHomeCity(nation))
-                 {
-                     if (territoryState == null || !territoryState.HasFactory)
-                     {
-                         baseClass += " valid-target";
-                     }
-                 }
+                var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
+                if (territoryDef != null && territoryDef.IsHomeCity(nation))
+                {
+                    if (territoryState == null || !territoryState.HasFactory)
+                    {
+                        baseClass += " valid-target";
+                    }
+                }
             }
         }
 

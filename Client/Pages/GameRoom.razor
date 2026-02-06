@@ -121,6 +121,18 @@ else
                                 <span class="text-info">Treasury: @ns.Treasury M</span> | 
                                 <span class="text-warning">Power: @ns.Power (@(ns.Power/5)x)</span><br/>
                                 <span class="text-muted">Ctrl: @(ns.ControllerName ?? "None")</span>
+                                @{
+                                    var builtFactories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories
+                                        .Where(t => t.Nation == ns.Nation && game.Territories.Any(ts => ts.TerritoryId == t.Id && ts.HasFactory))
+                                        .Select(t => t.Name)
+                                        .ToList();
+                                }
+                                @if (builtFactories.Any())
+                                {
+                                    <div class="mt-1 text-white-50">
+                                        <i class="oi oi-home small"></i> Factories: @string.Join(", ", builtFactories) <text>,some other</text>
+                                    </div>
+                                }
                             </li>
                         }
                     </ul>
