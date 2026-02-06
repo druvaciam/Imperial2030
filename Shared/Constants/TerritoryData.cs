@@ -6,8 +6,6 @@ namespace Imperial2030.Shared.Constants;
 public static class TerritoryData
 {
     // Define all territories with their IDs and properties
-    // Based on Imperial 2030 Map (Partial - focused on Home Cities for Factory Action first)
-    
     public static readonly List<Territory> AllTerritories = new List<Territory>
     {
         // Russia
