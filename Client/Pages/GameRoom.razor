@@ -54,7 +54,11 @@ else
                             @player.UserName
                             @if (player.IsHost)
                             {
-                                <span class="badge bg-warning text-dark">Host</span>
+                                <span class="badge bg-warning text-dark me-1">Host</span>
+                            }
+                            @if (game.InvestorCardHolderId == player.Id)
+                            {
+                                <span class="badge bg-info text-dark">Investor Card</span>
                             }
                         </li>
                     }
@@ -102,12 +106,48 @@ else
                             </div>
                         }
                         
-                        <button class="btn btn-warning fw-bold" @onclick="EndTurn" disabled="@(!turnMoved || isSubmitting)">
+                        <button class="btn btn-warning fw-bold" @onclick="EndTurn" disabled="@(!turnMoved || isSubmitting || game.IsInvestorTurn)">
                             Ends Turn
+                            @if (game.IsInvestorTurn) { <span>(Waiting for Investor)</span> }
                         </button>
                     </div>
                 }
             </div>
+
+            <!-- Investor Action Panel -->
+            @if (game.IsInvestorTurn)
+            {
+                <div class="panel mt-3 border-info">
+                    <h4 class="text-info">Investor Phase</h4>
+                    @if (MyPlayer?.Id == game.ActingPlayerId)
+                    {
+                        <p class="small text-muted">You hold the Investor Card. You have received 2M bonus. Choose to invest or pass.</p>
+                        
+                        <div class="d-grid gap-2">
+                             <button class="btn btn-secondary" @onclick="@(() => PerformInvestment("Pass", null))">Pass (No Investment)</button>
+                             
+                             <h6 class="mt-2 text-white border-bottom pb-1">Available Bonds</h6>
+                             <div style="max-height: 200px; overflow-y: auto;">
+                                 @foreach (var bond in game.AvailableBonds.OrderBy(b => b.Nation).ThenBy(b => b.Cost))
+                                 {
+                                     bool canAfford = MyPlayer.Cash >= bond.Cost;
+                                     <button class="btn btn-sm btn-outline-primary w-100 mb-1 text-start" 
+                                             disabled="@(!canAfford)"
+                                             @onclick="@(() => PerformInvestment("Buy", bond.Id))">
+                                         <span class="fw-bold">@bond.Nation</span> - @bond.Interest M Interest
+                                         <span class="float-end badge @(canAfford ? "bg-success" : "bg-danger")">Cost: @bond.Cost M</span>
+                                     </button>
+                                 }
+                             </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="text-warning">Waiting for Investor Action...</p>
+                        <small>Current Actor: @game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId)?.UserName</small>
+                    }
+                </div>
+            }
 
             @if (game.Status == GameStatus.InProgress)
             {
@@ -130,7 +170,7 @@ else
                                 @if (builtFactories.Any())
                                 {
                                     <div class="mt-1 text-white-50">
-                                        <i class="oi oi-home small"></i> Factories: @string.Join(", ", builtFactories) <text>,some other</text>
+                                        <i class="oi oi-home small"></i> Factories: @string.Join(", ", builtFactories)
                                     </div>
                                 }
                             </li>
@@ -420,6 +460,8 @@ else
     private bool IsMyTurn()
     {
         if (game == null || game.Status != GameStatus.InProgress) return false;
+        // If it's investor turn, the global "Turn" is effectively paused for the nation controller
+        if (game.IsInvestorTurn) return false;
         var currentNationState = game.NationStates.FirstOrDefault(ns => ns.Nation == game.CurrentTurnNation);
         return currentNationState?.ControllerName == MyPlayer?.UserName;
     }
@@ -511,7 +553,7 @@ else
 
     private bool CanBuildFactory()
     {
-        if (game == null || !IsMyTurn()) return false;
+        if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
         // Assuming slot 1 is Factory
         return ns?.RondelPosition == 1 && ns.Treasury >= 5;
@@ -542,6 +584,30 @@ else
             {
                 await ShowToast("Factory built successfully!", false);
                 // State update handled by SignalR refresh, hasBuilt is server-side now
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast($"Error: {ex.Message}", true);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private async Task PerformInvestment(string actionType, Guid? bondId)
+    {
+        if (game == null || isSubmitting) return;
+        isSubmitting = true;
+        try
+        {
+            var payload = new { ActionType = actionType, BondId = bondId };
+            var response = await Http.PostAsJsonAsync($"api/games/{GameId}/investor-action", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                await ShowToast($"Investment failed: {error}", true);
             }
         }
         catch (Exception ex)

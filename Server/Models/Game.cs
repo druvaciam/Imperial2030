@@ -16,6 +16,12 @@ public class Game
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public Nation CurrentTurnNation { get; set; } = Nation.Russia;
 
+    // Investor Logic
+    public Guid? InvestorCardHolderId { get; set; }
+    public bool IsInvestorTurn { get; set; } = false;
+    public Guid? ActingPlayerId { get; set; } // If set, this player must take action (e.g. Investor) instead of CurrentTurnNation controller
+
+
     public virtual ICollection<Player> Players { get; set; } = new List<Player>();
     public virtual ICollection<Bond> Bonds { get; set; } = new List<Bond>();
     public virtual ICollection<NationState> NationStates { get; set; } = new List<NationState>();

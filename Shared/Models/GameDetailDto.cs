@@ -9,4 +9,8 @@ public class GameDetailDto : GameDto
     public List<NationStateDto> NationStates { get; set; } = new List<NationStateDto>();
     public List<BondDto> AvailableBonds { get; set; } = new List<BondDto>(); // Bonds in the bank
     public List<TerritoryStateDto> Territories { get; set; } = new List<TerritoryStateDto>();
+    
+    public Guid? InvestorCardHolderId { get; set; }
+    public bool IsInvestorTurn { get; set; }
+    public Guid? ActingPlayerId { get; set; }
 }

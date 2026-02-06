@@ -236,7 +236,10 @@ public class GamesController : ControllerBase
             {
                 TerritoryId = ts.TerritoryId,
                 HasFactory = ts.HasFactory
-            }).ToList()
+            }).ToList(),
+            InvestorCardHolderId = game.InvestorCardHolderId,
+            IsInvestorTurn = game.IsInvestorTurn,
+            ActingPlayerId = game.ActingPlayerId
         };
     }
 
@@ -459,7 +462,24 @@ public class GamesController : ControllerBase
             }
             
             await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync();
             _context.ChangeTracker.Clear();
+
+            // Init Investor Card Holder (Player who holds "Austria/Europe" card? No, usually starts with player to left of... 
+            // Rules: "Start with Player 1" (or standard distribution).
+            // Let's assign to first player sorted by ID for simplicity.
+            if (players.Any())
+            {
+                 var sorted = players.OrderBy(p => p.Id).ToList();
+                 var gameToInit = await _context.Games.FirstOrDefaultAsync(g => g.Id == gameId);
+                 if (gameToInit != null) 
+                 {
+                     gameToInit.InvestorCardHolderId = sorted[0].Id; // Give to First Player
+                     _context.Entry(gameToInit).State = EntityState.Modified;
+                 }
+            }
+            await _context.SaveChangesAsync();
+
 
 
             // PHASE 4: Update Game Status and Player Cash
@@ -503,6 +523,179 @@ public class GamesController : ControllerBase
             return StatusCode(500, $"Internal server error: {ex.Message}");
         }
     }
+    
+    // Helper to find next player in rotation
+    private Guid GetNextPlayerId(Game game, Guid currentId)
+    {
+        var sortedParams = game.Players.OrderBy(p => p.Id).ToList(); // Stable sort
+        var index = sortedParams.FindIndex(p => p.Id == currentId);
+        if (index == -1) return currentId; // Fallback
+        var nextIndex = (index + 1) % sortedParams.Count;
+        return sortedParams[nextIndex].Id;
+    }
+
+    private void HandleInvestorPhase(Game game, NationState nationState, Player controller)
+    {
+        // 1. Paying out interest
+        var bonds = game.Bonds.Where(b => b.Nation == nationState.Nation && b.HolderId != null).ToList();
+        
+        int owedToController = 0;
+        int owedToOthers = 0;
+
+        foreach (var bond in bonds)
+        {
+            if (bond.HolderId == controller.Id)
+                owedToController += bond.Interest;
+            else
+                owedToOthers += bond.Interest;
+        }
+
+        // Pay Others First
+        if (nationState.Treasury >= owedToOthers)
+        {
+            nationState.Treasury -= owedToOthers;
+            // Distribute to others
+            foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+            {
+                var holder = game.Players.First(p => p.Id == bond.HolderId);
+                holder.Cash += bond.Interest;
+                _context.Entry(holder).State = EntityState.Modified;
+            }
+
+            // Pay Controller
+            if (nationState.Treasury >= owedToController)
+            {
+                nationState.Treasury -= owedToController;
+                controller.Cash += owedToController;
+            }
+            else
+            {
+                // Partial payment to controller
+                controller.Cash += nationState.Treasury;
+                nationState.Treasury = 0;
+            }
+        }
+        else
+        {
+            // Treasury insufficient for others
+            int treasuryAmount = nationState.Treasury;
+            nationState.Treasury = 0;
+            
+            // Distribute whatever is in treasury to others? 
+            // Rules say: "must complete the payment of interest to others from his personal cash."
+            // Implicitly, the treasury money goes to them first.
+            // Simplified: Total needed for others is X. Treasury covers Y. Controller pays X - Y.
+            
+            int deficit = owedToOthers - treasuryAmount;
+
+            // Distribute full interest to others (part from Treasury, part from Controller)
+            foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+            {
+                var holder = game.Players.First(p => p.Id == bond.HolderId);
+                holder.Cash += bond.Interest;
+                _context.Entry(holder).State = EntityState.Modified;
+            }
+
+            // Controller pays deficit
+            controller.Cash -= deficit;
+            // Controller gets 0 interest.
+        }
+        
+        // 2. Activating the Investor
+        // 2M Bonus
+        if (game.InvestorCardHolderId.HasValue)
+        {
+             var investor = game.Players.FirstOrDefault(p => p.Id == game.InvestorCardHolderId.Value);
+             if (investor != null)
+             {
+                 investor.Cash += 2;
+                 _context.Entry(investor).State = EntityState.Modified;
+                 
+                 // Enable Investor Turn
+                 game.IsInvestorTurn = true;
+                 game.ActingPlayerId = investor.Id;
+             }
+        }
+    }
+
+    private void UpdateNationController(Game game, Nation nation)
+    {
+        var nationState = game.NationStates.First(n => n.Nation == nation);
+        var bonds = game.Bonds.Where(b => b.Nation == nation && b.HolderId != null).ToList();
+
+        if (!bonds.Any()) return; // No change if no bonds
+
+        // Calculate total investment per player
+        var investmentMap = new Dictionary<Guid, int>();
+        foreach (var bond in bonds)
+        {
+            if (bond.HolderId.HasValue)
+            {
+                if (!investmentMap.ContainsKey(bond.HolderId.Value))
+                    investmentMap[bond.HolderId.Value] = 0;
+                
+                investmentMap[bond.HolderId.Value] += bond.Cost;
+            }
+        }
+
+        // Find max
+        // Tie-breaking: Existing controller wins ties? 
+        // Rules: "If the sum of proper credits of several players is equal, the player among them who bought a bond of the nation most recently gets the card."
+        // We don't track purchase time perfectly, but we know the Acting Player just bought one.
+        // So if Acting Player ties with current controller, Acting Player takes it? 
+        // Or if Acting Player ties with someone else?
+        
+        // Simpler Heuristic for now:
+        // 1. Sort by Total Investment Descending.
+        // 2. If Tie, and one is the current controller, keep controller.
+        // 3. If Tie, and one is Acting Player (who just bought), they take it (New Arrival).
+        
+        if (!investmentMap.Any()) return;
+
+        var currentControllerId = nationState.ControllerId;
+        var topInvestor = investmentMap.OrderByDescending(kvp => kvp.Value).First();
+        int maxInvestment = topInvestor.Value;
+
+        var candidates = investmentMap.Where(kvp => kvp.Value == maxInvestment).Select(kvp => kvp.Key).ToList();
+
+        if (candidates.Count == 1)
+        {
+            // Clear winner
+            if (nationState.ControllerId != candidates[0])
+            {
+                nationState.ControllerId = candidates[0];
+                _context.Entry(nationState).State = EntityState.Modified;
+            }
+        }
+        else
+        {
+            // Tie
+            if (currentControllerId.HasValue && candidates.Contains(currentControllerId.Value))
+            {
+                // Current controller is in the tie - Retain Control
+                // (Unless standard rules say new buyer takes it? 
+                // Imperial 2030 Rule: "If there is a tie, the player who already held the Governance card retains it.")
+                // OK, so Retain is correct.
+            }
+            else
+            {
+                // Current controller is NOT in the tie (e.g. was overtaken by two others)
+                // OR there was no controller.
+                // Give to Acting Player if they are in the tie (they triggered the change)
+                if (game.ActingPlayerId.HasValue && candidates.Contains(game.ActingPlayerId.Value))
+                {
+                    nationState.ControllerId = game.ActingPlayerId.Value;
+                    _context.Entry(nationState).State = EntityState.Modified;
+                }
+                else
+                {
+                     // Fallback: Pick first
+                     nationState.ControllerId = candidates[0];
+                     _context.Entry(nationState).State = EntityState.Modified;
+                }
+            }
+        }
+    }
 
     [HttpPost("{gameId}/move/{nation}/{targetSlot}")]
     public async Task<IActionResult> MoveNation(Guid gameId, Nation nation, int targetSlot)
@@ -513,10 +706,13 @@ public class GamesController : ControllerBase
         var game = await _context.Games
             .Include(g => g.NationStates)
             .Include(g => g.Players)
+            .Include(g => g.Bonds)
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
+        if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
+        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
         if (game.CurrentTurnNation != nation) return BadRequest($"It is {game.CurrentTurnNation}'s turn.");
         if (targetSlot < 0 || targetSlot > 7) return BadRequest($"Invalid slot {targetSlot}. Must be 0-7.");
 
@@ -573,10 +769,114 @@ public class GamesController : ControllerBase
 
         await _context.SaveChangesAsync();
         
+        
+        // Check for Investor Slot (Index 4)
+        bool triggeredInvestor = false;
+        if (currentSlot != null)
+        {
+            // Moving from currentSlot to targetSlot (clockwise)
+            // Path: (current + 1) ... targetSlot
+            int dist = (targetSlot - currentSlot.Value + 8) % 8;
+            for (int i = 1; i <= dist; i++)
+            {
+                int step = (currentSlot.Value + i) % 8;
+                if (step == 4) 
+                {
+                    triggeredInvestor = true;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            // First placement: if placed on 4
+            if (targetSlot == 4) triggeredInvestor = true;
+        }
+
+        if (triggeredInvestor)
+        {
+            HandleInvestorPhase(game, nationState, controller);
+        }
+
+        await _context.SaveChangesAsync();
+        
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
         
         return Ok();
     }
+
+    [HttpPost("{gameId}/investor-action")]
+    public async Task<IActionResult> PerformInvestment(Guid gameId, [FromBody] InvestmentActionDto action)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.Players)
+            .Include(g => g.Bonds)
+            .Include(g => g.NationStates)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+        if (!game.IsInvestorTurn) return BadRequest("Not investor turn.");
+        if (game.ActingPlayerId == null) return BadRequest("No acting player.");
+        
+        var actingPlayer = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId);
+        if (actingPlayer == null || actingPlayer.UserId != userId) return Forbid();
+
+        if (action.ActionType == "Buy")
+        {
+             if (action.BondId == null) return BadRequest("BondId required.");
+             var bond = game.Bonds.FirstOrDefault(b => b.Id == action.BondId);
+             if (bond == null) return BadRequest("Bond not found.");
+             if (bond.HolderId != null) return BadRequest("Bond already owned."); // Simple buy new logic for now
+
+             // Trade in existing bond?
+             // Simple version: Buy new only
+             
+             // Check funds
+             if (actingPlayer.Cash < bond.Cost) return BadRequest("Insufficient funds.");
+
+             actingPlayer.Cash -= bond.Cost;
+             bond.HolderId = actingPlayer.Id;
+             
+             // Pay to Treasury
+             var ns = game.NationStates.First(n => n.Nation == bond.Nation);
+             ns.Treasury += bond.Cost;
+             
+             _context.Entry(ns).State = EntityState.Modified;
+             _context.Entry(bond).State = EntityState.Modified;
+             _context.Entry(actingPlayer).State = EntityState.Modified;
+             
+             _context.Entry(ns).State = EntityState.Modified;
+             _context.Entry(bond).State = EntityState.Modified;
+             _context.Entry(actingPlayer).State = EntityState.Modified;
+             
+             // Update Controller Logic
+             UpdateNationController(game, ns.Nation);
+        }
+        
+        // Pass Investor Card
+        if (game.InvestorCardHolderId.HasValue)
+        {
+            game.InvestorCardHolderId = GetNextPlayerId(game, game.InvestorCardHolderId.Value);
+        }
+
+        // End Investor Turn
+        game.IsInvestorTurn = false;
+        game.ActingPlayerId = null;
+        
+        await _context.SaveChangesAsync();
+        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        return Ok();
+    }
+
+    public class InvestmentActionDto
+    {
+        public string ActionType { get; set; } = "Pass"; // "Pass" or "Buy"
+        public Guid? BondId { get; set; }
+    }
+
     [HttpPost("{gameId}/build-factory/{territoryId}")]
     public async Task<IActionResult> BuildFactory(Guid gameId, string territoryId)
     {
@@ -591,6 +891,7 @@ public class GamesController : ControllerBase
 
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
+        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
 
         var nation = game.CurrentTurnNation;
         var nationState = game.NationStates.First(n => n.Nation == nation);
@@ -657,6 +958,7 @@ public class GamesController : ControllerBase
 
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
+        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
 
         var nation = game.CurrentTurnNation;
         var nationState = game.NationStates.First(n => n.Nation == nation);
