@@ -258,11 +258,23 @@ else
                             <h6 class="text-white border-bottom border-secondary pb-1 mt-2">Bonds</h6>
                             @if (MyPlayer.Bonds.Any())
                             {
-                                @foreach (var bond in MyPlayer.Bonds)
+                                @foreach (var group in MyPlayer.Bonds.GroupBy(b => b.Nation).OrderBy(g => g.Key))
                                 {
-                                    <div class="d-flex justify-content-between py-1">
-                                        <span>@bond.Nation</span>
-                                        <span>@bond.Interest M <small class="text-muted">(Cost @bond.Cost)</small></span>
+                                    var totalCost = group.Sum(b => b.Cost);
+                                    var totalInterest = group.Sum(b => b.Interest);
+                                    
+                                    <div class="mb-2 border-bottom border-secondary pb-1">
+                                        <div class="d-flex justify-content-between fw-bold text-info">
+                                            <span>@group.Key</span>
+                                            <span>@totalInterest M <small class="text-white small">(@totalCost M)</small></span>
+                                        </div>
+                                        @foreach (var bond in group.OrderByDescending(b => b.Cost))
+                                        {
+                                             <div class="d-flex justify-content-between small text-muted ps-2">
+                                                <span>Bond @bond.Cost</span>
+                                                <span>+@bond.Interest</span>
+                                             </div>
+                                        }
                                     </div>
                                 }
                             }
