@@ -534,12 +534,14 @@ public class GamesController : ControllerBase
         return sortedParams[nextIndex].Id;
     }
 
-    private void HandleInvestorPhase(Game game, NationState nationState, Player controller)
+    private void HandleInvestorPhase(Game game, NationState nationState, Player controller, bool isLandedOn)
     {
-        // 1. Paying out interest
-        var bonds = game.Bonds.Where(b => b.Nation == nationState.Nation && b.HolderId != null).ToList();
-        
-        int owedToController = 0;
+        // 1. Paying out interest (ONLY if landed on)
+        if (isLandedOn)
+        {
+            var bonds = game.Bonds.Where(b => b.Nation == nationState.Nation && b.HolderId != null).ToList();
+            
+            int owedToController = 0;
         int owedToOthers = 0;
 
         foreach (var bond in bonds)
@@ -581,25 +583,41 @@ public class GamesController : ControllerBase
             int treasuryAmount = nationState.Treasury;
             nationState.Treasury = 0;
             
-            // Distribute whatever is in treasury to others? 
-            // Rules say: "must complete the payment of interest to others from his personal cash."
-            // Implicitly, the treasury money goes to them first.
-            // Simplified: Total needed for others is X. Treasury covers Y. Controller pays X - Y.
-            
+            // Calculate how much the controller can actually cover
             int deficit = owedToOthers - treasuryAmount;
-
-            // Distribute full interest to others (part from Treasury, part from Controller)
-            foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
-            {
-                var holder = game.Players.First(p => p.Id == bond.HolderId);
-                holder.Cash += bond.Interest;
-                _context.Entry(holder).State = EntityState.Modified;
-            }
-
-            // Controller pays deficit
-            controller.Cash -= deficit;
+            int paymentFromController = Math.Min(controller.Cash, deficit); // Cap at available cash
+            
+            controller.Cash -= paymentFromController;
             // Controller gets 0 interest.
+            
+            // Total funds available for others
+            int totalForOthers = treasuryAmount + paymentFromController;
+            
+            // Distribute to others
+            if (totalForOthers >= owedToOthers)
+            {
+                // Full payment possible
+                foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+                {
+                    var holder = game.Players.First(p => p.Id == bond.HolderId);
+                    holder.Cash += bond.Interest;
+                    _context.Entry(holder).State = EntityState.Modified;
+                }
+            }
+            else
+            {
+                // Partial payment (Pro-rata)
+                 double ratio = (double)totalForOthers / owedToOthers;
+                 foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+                 {
+                     var holder = game.Players.First(p => p.Id == bond.HolderId);
+                     int payout = (int)(bond.Interest * ratio);
+                     holder.Cash += payout;
+                     _context.Entry(holder).State = EntityState.Modified;
+                 }
+            }
         }
+    }
         
         // 2. Activating the Investor
         // 2M Bonus
@@ -755,7 +773,7 @@ public class GamesController : ControllerBase
             }
         }
 
-        if (controller.Cash < cost) return BadRequest($"Not enough cash. Cost: {cost}M");
+        if (cost > 0 && controller.Cash < cost) return BadRequest($"Not enough cash. Cost: {cost}M");
 
         // Execute Move
         controller.Cash -= cost;
@@ -795,7 +813,8 @@ public class GamesController : ControllerBase
 
         if (triggeredInvestor)
         {
-            HandleInvestorPhase(game, nationState, controller);
+            bool landedOn = (targetSlot == 4);
+            HandleInvestorPhase(game, nationState, controller, landedOn);
         }
 
         await _context.SaveChangesAsync();
@@ -829,24 +848,35 @@ public class GamesController : ControllerBase
              if (action.BondId == null) return BadRequest("BondId required.");
              var bond = game.Bonds.FirstOrDefault(b => b.Id == action.BondId);
              if (bond == null) return BadRequest("Bond not found.");
-             if (bond.HolderId != null) return BadRequest("Bond already owned."); // Simple buy new logic for now
+             if (bond.HolderId != null) return BadRequest("Bond already owned."); 
 
-             // Trade in existing bond?
-             // Simple version: Buy new only
+             int cost = bond.Cost;
+             
+             // Trade In Logic
+             if (action.TradeInBondId.HasValue)
+             {
+                 var tradeIn = game.Bonds.FirstOrDefault(b => b.Id == action.TradeInBondId.Value);
+                 if (tradeIn == null) return BadRequest("Trade-in bond not found.");
+                 if (tradeIn.HolderId != actingPlayer.Id) return BadRequest("You do not own the trade-in bond.");
+                 if (tradeIn.Nation != bond.Nation) return BadRequest("Trade-in must be for same nation.");
+                 if (tradeIn.Cost >= bond.Cost) return BadRequest("New bond must be higher value.");
+                 
+                 cost = bond.Cost - tradeIn.Cost;
+                 
+                 // Return old bond to bank
+                 tradeIn.HolderId = null;
+                 _context.Entry(tradeIn).State = EntityState.Modified;
+             }
              
              // Check funds
-             if (actingPlayer.Cash < bond.Cost) return BadRequest("Insufficient funds.");
+             if (actingPlayer.Cash < cost) return BadRequest("Insufficient funds.");
 
-             actingPlayer.Cash -= bond.Cost;
+             actingPlayer.Cash -= cost;
              bond.HolderId = actingPlayer.Id;
              
              // Pay to Treasury
              var ns = game.NationStates.First(n => n.Nation == bond.Nation);
-             ns.Treasury += bond.Cost;
-             
-             _context.Entry(ns).State = EntityState.Modified;
-             _context.Entry(bond).State = EntityState.Modified;
-             _context.Entry(actingPlayer).State = EntityState.Modified;
+             ns.Treasury += cost;
              
              _context.Entry(ns).State = EntityState.Modified;
              _context.Entry(bond).State = EntityState.Modified;
@@ -875,6 +905,7 @@ public class GamesController : ControllerBase
     {
         public string ActionType { get; set; } = "Pass"; // "Pass" or "Buy"
         public Guid? BondId { get; set; }
+        public Guid? TradeInBondId { get; set; }
     }
 
     [HttpPost("{gameId}/build-factory/{territoryId}")]

@@ -124,19 +124,38 @@ else
                         <p class="small text-muted">You hold the Investor Card. You have received 2M bonus. Choose to invest or pass.</p>
                         
                         <div class="d-grid gap-2">
-                             <button class="btn btn-secondary" @onclick="@(() => PerformInvestment("Pass", null))">Pass (No Investment)</button>
+                             <button class="btn btn-secondary" @onclick="@(() => PerformInvestment("Pass", null, null))">Pass (No Investment)</button>
                              
                              <h6 class="mt-2 text-white border-bottom pb-1">Available Bonds</h6>
                              <div style="max-height: 200px; overflow-y: auto;">
                                  @foreach (var bond in game.AvailableBonds.OrderBy(b => b.Nation).ThenBy(b => b.Cost))
                                  {
-                                     bool canAfford = MyPlayer.Cash >= bond.Cost;
-                                     <button class="btn btn-sm btn-outline-primary w-100 mb-1 text-start" 
-                                             disabled="@(!canAfford)"
-                                             @onclick="@(() => PerformInvestment("Buy", bond.Id))">
-                                         <span class="fw-bold">@bond.Nation</span> - @bond.Interest M Interest
-                                         <span class="float-end badge @(canAfford ? "bg-success" : "bg-danger")">Cost: @bond.Cost M</span>
-                                     </button>
+                                     bool canAffordFull = MyPlayer.Cash >= bond.Cost;
+                                     
+                                     // Check for upgrade
+                                     var ownedBonds = MyPlayer.Bonds.Where(b => b.Nation == bond.Nation).OrderByDescending(b => b.Cost).ToList();
+                                     
+                                     <div class="mb-1">
+                                         <button class="btn btn-sm btn-outline-primary w-100 text-start" 
+                                                 disabled="@(!canAffordFull)"
+                                                 @onclick="@(() => PerformInvestment("Buy", bond.Id, null))">
+                                             <span class="fw-bold">@bond.Nation</span> @bond.Interest M Int. 
+                                             <span class="float-end badge @(canAffordFull ? "bg-success" : "bg-danger")">@bond.Cost M</span>
+                                         </button>
+                                         @foreach (var owned in ownedBonds)
+                                         {
+                                             if (owned.Cost < bond.Cost)
+                                             {
+                                                 int diff = bond.Cost - owned.Cost;
+                                                 bool canAffordUpgrade = MyPlayer.Cash >= diff;
+                                                 <button class="btn btn-sm btn-outline-info w-100 mt-1 text-end small"
+                                                         disabled="@(!canAffordUpgrade)"
+                                                         @onclick="@(() => PerformInvestment("Buy", bond.Id, owned.Id))">
+                                                     <small>Upgrade from @owned.Cost M (Pay @diff M)</small>
+                                                 </button>
+                                             }
+                                         }
+                                     </div>
                                  }
                              </div>
                         </div>
@@ -596,13 +615,13 @@ else
         }
     }
 
-    private async Task PerformInvestment(string actionType, Guid? bondId)
+    private async Task PerformInvestment(string actionType, Guid? bondId, Guid? tradeInBondId = null)
     {
         if (game == null || isSubmitting) return;
         isSubmitting = true;
         try
         {
-            var payload = new { ActionType = actionType, BondId = bondId };
+            var payload = new { ActionType = actionType, BondId = bondId, TradeInBondId = tradeInBondId };
             var response = await Http.PostAsJsonAsync($"api/games/{GameId}/investor-action", payload);
             if (!response.IsSuccessStatusCode)
             {
