@@ -225,14 +225,32 @@ else
         <div class="sidebar-right">
             <!-- Player stats, bond holdings -->
             <div class="panel">
-                <h4>My Assets</h4>
-                @if (MyPlayer != null)
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4 class="m-0">Assets</h4>
+                    @if (game != null)
+                    {
+                        <select class="form-select form-select-sm w-auto bg-dark text-white border-secondary py-0 pe-4" 
+                                value="@selectedPlayerId" 
+                                @onchange="@(e => selectedPlayerId = Guid.Parse(e.Value.ToString()))">
+                             @foreach (var p in game.Players)
+                             {
+                                 <option value="@p.Id">@p.UserName</option>
+                             }
+                        </select>
+                    }
+                </div>
+
+                @{
+                    var targetPlayer = game?.Players.FirstOrDefault(p => p.Id == selectedPlayerId) ?? MyPlayer;
+                }
+                
+                @if (targetPlayer != null)
                 {
                     <!-- Governments -->
                     <div class="mb-3">
-                         <h6 class="text-white border-bottom border-secondary pb-1">My Governments</h6>
+                         <h6 class="text-white border-bottom border-secondary pb-1"> Governments</h6>
                          @{
-                             var myGovernments = game.NationStates.Where(ns => ns.ControllerName == MyPlayer.UserName).ToList();
+                             var myGovernments = game.NationStates.Where(ns => ns.ControllerName == targetPlayer.UserName).ToList();
                          }
                          @if (myGovernments.Any())
                          {
@@ -252,13 +270,13 @@ else
 
                     <ul class="list-group list-group-flush bg-transparent">
                         <li class="list-group-item bg-transparent text-white fs-5 px-0">
-                            Cash: <span class="text-success fw-bold">@MyPlayer.Cash M</span>
+                            Cash: <span class="text-success fw-bold">@targetPlayer.Cash M</span>
                         </li>
                         <li class="list-group-item bg-transparent text-white px-0">
                             <h6 class="text-white border-bottom border-secondary pb-1 mt-2">Bonds</h6>
-                            @if (MyPlayer.Bonds.Any())
+                            @if (targetPlayer.Bonds.Any())
                             {
-                                @foreach (var group in MyPlayer.Bonds.GroupBy(b => b.Nation).OrderBy(g => g.Key))
+                                @foreach (var group in targetPlayer.Bonds.GroupBy(b => b.Nation).OrderBy(g => g.Key))
                                 {
                                     var totalCost = group.Sum(b => b.Cost);
                                     var totalInterest = group.Sum(b => b.Interest);
@@ -467,6 +485,10 @@ else
                 var me = game.Players.FirstOrDefault(p => p.UserId == currentUserId);
                 IsHost = me?.IsHost ?? false;
 
+                if (selectedPlayerId == null && me != null)
+                {
+                    selectedPlayerId = me.Id;
+                }
             }
         }
         catch (Exception ex)
@@ -504,6 +526,7 @@ else
     private bool isToastError;
     // Reset state when game updates (if it's a new turn for me)
     private Guid? lastGameId = null;
+    private Guid? selectedPlayerId;
 
     private async Task OnRondelMove(int slotIndex)
     {
