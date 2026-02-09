@@ -43,5 +43,15 @@ public static class TerritoryData
         new Territory { Id = "London", Name = "London", Nation = Nation.Europe, CityType = CityType.LightBlue },
         new Territory { Id = "Paris", Name = "Paris", Nation = Nation.Europe, CityType = CityType.Brown },
         new Territory { Id = "Rome", Name = "Rome", Nation = Nation.Europe, CityType = CityType.LightBlue },
+
+        // Independent Territories
+        new Territory { Id = "Switzerland", Name = "Switzerland", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Ukraine", Name = "Ukraine", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Korea", Name = "Korea", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Mongolia", Name = "Mongolia", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Kazakhstan", Name = "Kazakhstan", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Japan", Name = "Japan", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Turkey", Name = "Turkey", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Guinea", Name = "Guinea", Nation = null, CityType = CityType.None },
     };
 }
