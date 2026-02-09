@@ -106,10 +106,19 @@ else
                             </div>
                         }
                         
-                        <button class="btn btn-warning fw-bold" @onclick="EndTurn" disabled="@(!turnMoved || isSubmitting || game.IsInvestorTurn)">
-                            Ends Turn
-                            @if (game.IsInvestorTurn) { <span>(Waiting for Investor)</span> }
-                        </button>
+                        @if (CanTax() && turnMoved)
+                        {
+                             <button class="btn btn-warning w-100 fw-bold mb-2" @onclick="CollectTaxation" disabled="@isSubmitting">
+                                 Execute Taxation
+                             </button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-warning fw-bold" @onclick="EndTurn" disabled="@(!turnMoved || isSubmitting || game.IsInvestorTurn)">
+                                End Turn
+                                @if (game.IsInvestorTurn) { <span>(Waiting for Investor)</span> }
+                            </button>
+                        }
                     </div>
                 }
             </div>
@@ -648,6 +657,53 @@ else
         {
             isSubmitting = false;
         }
+    }
+
+    private bool CanTax()
+    {
+        if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
+        var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+        return ns?.RondelPosition == 0; // Slot 0 is Taxation
+    }
+
+    private async Task CollectTaxation()
+    {
+        if (game == null || isSubmitting) return;
+        isSubmitting = true;
+        try
+        {
+            var response = await Http.PostAsync($"api/games/{GameId}/taxation", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                await ShowToast($"Taxation failed: {error}", true);
+            }
+            else
+            {
+                 // Create a formatted message from result if possible, but minimal for now
+                 var result = await response.Content.ReadFromJsonAsync<TaxationResultDto>(); // Need DTO? Or just dynamic/anonymous?
+                 // Let's just toast success for now or parse generic object
+                 
+                 await ShowToast("Taxation executed successfully!", false);
+            }
+        }
+        catch (Exception ex)
+        {
+             await ShowToast($"Error: {ex.Message}", true);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+    
+    // Add simple DTO for result parsing locally if needed, or use dynamic
+    public class TaxationResultDto 
+    {
+        public int TaxRevenue { get; set; }
+        public int SoldiersPay { get; set; }
+        public int Bonus { get; set; }
+        public int PowerGain { get; set; }
     }
 
     private async Task PerformInvestment(string actionType, Guid? bondId, Guid? tradeInBondId = null)

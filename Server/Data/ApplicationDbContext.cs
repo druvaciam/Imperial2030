@@ -1,4 +1,5 @@
 using Imperial2030.Server.Models;
+using Imperial2030.Shared.Models;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,4 +16,5 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Bond> Bonds { get; set; } = default!;
     public DbSet<NationState> NationStates { get; set; } = default!;
     public DbSet<TerritoryState> TerritoryStates { get; set; } = default!;
+    public DbSet<Unit> Units { get; set; } = default!;
 }
