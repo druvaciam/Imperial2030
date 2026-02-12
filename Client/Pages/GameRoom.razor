@@ -106,6 +106,15 @@ else
                             </div>
                         }
                         
+
+                        
+                        @if (CanProduce() && turnMoved)
+                        {
+                             <button class="btn btn-primary w-100 fw-bold mb-2" @onclick="ExecuteProduction" disabled="@isSubmitting">
+                                 Execute Production
+                             </button>
+                        }
+
                         @if (CanTax() && turnMoved)
                         {
                              <button class="btn btn-warning w-100 fw-bold mb-2" @onclick="CollectTaxation" disabled="@isSubmitting">
@@ -704,6 +713,41 @@ else
         public int SoldiersPay { get; set; }
         public int Bonus { get; set; }
         public int PowerGain { get; set; }
+    }
+
+    private bool CanProduce()
+    {
+        if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
+        var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+        return (ns?.RondelPosition == 2 || ns?.RondelPosition == 6) && !ns.HasProducedThisTurn; // Slots 2 and 6 are Production
+    }
+
+    private async Task ExecuteProduction()
+    {
+        if (game == null || isSubmitting) return;
+        isSubmitting = true;
+        try
+        {
+            var response = await Http.PostAsync($"api/games/{GameId}/production", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                await ShowToast($"Production failed: {error}", true);
+            }
+            else
+            {
+                var msg = await response.Content.ReadAsStringAsync();
+                await ShowToast(msg, false);
+            }
+        }
+        catch (Exception ex)
+        {
+             await ShowToast($"Error: {ex.Message}", true);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
     }
 
     private async Task PerformInvestment(string actionType, Guid? bondId, Guid? tradeInBondId = null)

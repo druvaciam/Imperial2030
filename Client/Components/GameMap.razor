@@ -248,6 +248,36 @@
             }
         }
     </g>
+
+    <g id="units" style="pointer-events: none;">
+        @if (Game != null && Game.Units != null)
+        {
+            @foreach (var group in Game.Units.GroupBy(u => u.TerritoryId))
+            {
+                if (Imperial2030.Client.Constants.MapCoordinates.TerritoryCenters.TryGetValue(group.Key, out var coords))
+                {
+                    var units = group.ToList();
+                    for (int i = 0; i < units.Count; i++)
+                    {
+                        var unit = units[i];
+                        // Simple grid layout for stacking
+                        double offsetX = (i % 3) * 16 - 16; 
+                        double offsetY = (i / 3) * 16 + 20; 
+                        string color = GetNationColor(unit.Nation);
+                        
+                        if (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army)
+                        {
+                            <rect x="@(coords.X + offsetX - 8)" y="@(coords.Y + offsetY - 8)" width="16" height="16" fill="@color" stroke="white" stroke-width="2" />
+                        }
+                        else
+                        {
+                            <circle cx="@(coords.X + offsetX)" cy="@(coords.Y + offsetY)" r="8" fill="@color" stroke="white" stroke-width="2" />
+                        }
+                    }
+                }
+            }
+        }
+    </g>
   </g>
 </svg>
 </div>
@@ -387,5 +417,19 @@
         }
 
         return baseClass;
+    }
+
+    private string GetNationColor(Imperial2030.Shared.Models.Nation nation)
+    {
+        return nation switch
+        {
+            Imperial2030.Shared.Models.Nation.Russia => "#800080", // Purple
+            Imperial2030.Shared.Models.Nation.China => "#FFD700",  // Gold
+            Imperial2030.Shared.Models.Nation.India => "#000000",  // Black
+            Imperial2030.Shared.Models.Nation.Brazil => "#008000", // Green
+            Imperial2030.Shared.Models.Nation.USA => "#0000FF",    // Blue
+            Imperial2030.Shared.Models.Nation.Europe => "#FF0000", // Red
+            _ => "#Gray"
+        };
     }
 }

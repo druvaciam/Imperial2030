@@ -13,6 +13,7 @@ public class NationState
     public bool HasMovedThisTurn { get; set; } = false;
     public int? RondelPosition { get; set; } = 0;
     public bool HasBuiltThisTurn { get; set; } = false;
+    public bool HasProducedThisTurn { get; set; } = false;
 
     public Guid? ControllerId { get; set; }
     [ForeignKey(nameof(ControllerId))]

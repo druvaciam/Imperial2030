@@ -9,4 +9,5 @@ public class NationStateDto
     public string? ControllerName { get; set; }
     public bool HasBuiltThisTurn { get; set; }
     public bool HasMovedThisTurn { get; set; }
+    public bool HasProducedThisTurn { get; set; }
 }

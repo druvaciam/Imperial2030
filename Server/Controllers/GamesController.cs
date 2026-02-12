@@ -119,6 +119,7 @@ public class GamesController : ControllerBase
             .Include(g => g.Players)
             .Include(g => g.Bonds)
             .Include(g => g.NationStates)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -186,6 +187,8 @@ public class GamesController : ControllerBase
                 .ThenInclude(b => b.Holder)
                     .ThenInclude(h => h.User)
             .Include(g => g.TerritoryStates)
+            .Include(g => g.Units)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -222,6 +225,7 @@ public class GamesController : ControllerBase
                 RondelPosition = ns.RondelPosition,
                 ControllerName = ns.Controller?.User?.UserName,
                 HasBuiltThisTurn = ns.HasBuiltThisTurn,
+                HasProducedThisTurn = ns.HasProducedThisTurn,
                 HasMovedThisTurn = ns.HasMovedThisTurn
             }).ToList(),
             AvailableBonds = game.Bonds.Where(b => b.HolderId == null).Select(b => new BondDto
@@ -239,7 +243,8 @@ public class GamesController : ControllerBase
             }).ToList(),
             InvestorCardHolderId = game.InvestorCardHolderId,
             IsInvestorTurn = game.IsInvestorTurn,
-            ActingPlayerId = game.ActingPlayerId
+            ActingPlayerId = game.ActingPlayerId,
+            Units = game.Units.ToList()
         };
     }
 
@@ -725,6 +730,7 @@ public class GamesController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.Players)
             .Include(g => g.Bonds)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -822,6 +828,83 @@ public class GamesController : ControllerBase
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
         
         return Ok();
+    }
+
+    [HttpPost("{gameId}/production")]
+    public async Task<IActionResult> ExecuteProduction(Guid gameId)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.NationStates)
+            .Include(g => g.TerritoryStates)
+            .Include(g => g.Units)
+            .Include(g => g.Players)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
+        
+        var currentNation = game.CurrentTurnNation;
+        var nationState = game.NationStates.First(n => n.Nation == currentNation);
+
+        if (nationState.ControllerId == null) return BadRequest("No controller.");
+        var controller = game.Players.First(p => p.Id == nationState.ControllerId);
+        if (controller.UserId != userId) return Forbid();
+
+        // Check Rondel Position (Production slots: 2 and 6)
+        if (nationState.RondelPosition != 2 && nationState.RondelPosition != 6)
+        {
+            return BadRequest("Not on a Production slot.");
+        }
+
+        var factoryTerritories = game.TerritoryStates
+            .Where(t => t.HasFactory)
+            .ToList();
+
+        var createdUnits = 0;
+
+        foreach (var tState in factoryTerritories)
+        {
+            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tState.TerritoryId);
+            if (def == null) continue;
+
+            if (def.Nation != currentNation) continue; 
+
+            var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tState.TerritoryId).ToList();
+            bool isBlockaded = unitsInTerritory.Any(u => u.Nation != currentNation && u.UnitType == UnitType.Army && u.IsHostile);
+
+            if (isBlockaded) continue;
+
+            UnitType typeToProduce = def.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
+
+            var newUnit = new Unit
+            {
+                GameId = game.Id,
+                Nation = currentNation,
+                TerritoryId = tState.TerritoryId,
+                UnitType = typeToProduce,
+                IsHostile = true
+            };
+            
+            _context.Units.Add(newUnit);
+            createdUnits++;
+        }
+
+        if (createdUnits > 0)
+        {
+            nationState.HasProducedThisTurn = true;
+            _context.Entry(nationState).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+            await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+            return Ok($"Produced {createdUnits} units.");
+        }
+        else
+        {
+            return Ok("No units produced (all factories blockaded or none exist).");
+        }
     }
 
     [HttpPost("{gameId}/investor-action")]
@@ -1029,6 +1112,7 @@ public class GamesController : ControllerBase
             .Include(g => g.Bonds)
             .Include(g => g.TerritoryStates)
             .Include(g => g.Units) // Include Units for Army/Fleet counts
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
