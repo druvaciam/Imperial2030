@@ -9,15 +9,15 @@ public static class MapCoordinates
     {
         // USA
         { "NewYork", (281, 229) },
-        { "NewOrleans", (201, 287) },
-        { "SanFrancisco", (153, 190) },
-        { "Chicago", (242, 226) },
+        { "NewOrleans", (195, 287) },
+        { "SanFrancisco", (83, 240) },
+        { "Chicago", (225, 215) },
 
         // Europe
         { "London", (537, 160) },
         { "Paris", (550, 188) },
-        { "Rome", (573, 225) },
-        { "Berlin", (588, 174) },
+        { "Rome", (588, 235) },
+        { "Berlin", (588, 172) },
 
         // Russia
         { "Moscow", (685, 166) },
@@ -26,22 +26,22 @@ public static class MapCoordinates
         { "Novosibirsk", (842, 143) },
 
         // China
-        { "Beijing", (892, 215) },
-        { "Shanghai", (999, 280) },
-        { "Chongqing", (923, 319) },
+        { "Beijing", (957, 226) },
+        { "Shanghai", (1000, 280) },
+        { "Chongqing", (935, 298) },
         { "Urumqi", (845, 210) },
 
         // India
         { "Mumbai", (823, 349) },
-        { "NewDelhi", (862, 292) },
-        { "Kolkata", (876, 344) },
+        { "NewDelhi", (828, 279) },
+        { "Kolkata", (890, 329) },
         { "Chennai", (850, 360) },
 
         // Brazil
-        { "Brasilia", (339, 488) },
-        { "RioDeJaneiro", (380, 498) },
-        { "Manaus", (287, 474) },
-        { "Fortaleza", (350, 440) },
+        { "Brasilia", (341, 488) },
+        { "RioDeJaneiro", (380, 500) },
+        { "Manaus", (309, 443) },
+        { "Fortaleza", (395, 433) },
 
         // Independent Territories
         { "Switzerland", (577, 216) },
@@ -51,6 +51,14 @@ public static class MapCoordinates
         { "Kazakhstan", (828, 219) },
         { "Japan", (1050, 210) },
         { "Turkey", (703, 227) },
-        { "Guinea", (508, 405) }
+        { "Guinea", (508, 405) },
+        { "NorthAtlantic", (405, 250) },
+        { "Quebec", (315, 155) },
+        { "Mexico", (135, 333) },
+        { "Colombia", (237, 394) },
+        { "Afghanistan", (775, 247) },
+        { "GulfOfGuinea", (533, 475) },
+        { "Alaska", (68, 113) },
+        { "Canada", (200, 137) },
     };
 }

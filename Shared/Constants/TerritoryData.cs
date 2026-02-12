@@ -53,5 +53,13 @@ public static class TerritoryData
         new Territory { Id = "Japan", Name = "Japan", Nation = null, CityType = CityType.None },
         new Territory { Id = "Turkey", Name = "Turkey", Nation = null, CityType = CityType.None },
         new Territory { Id = "Guinea", Name = "Guinea", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Quebec", Name = "Quebec", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Mexico", Name = "Mexico", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Colombia", Name = "Colombia", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Afghanistan", Name = "Afghanistan", Nation = null, CityType = CityType.None },
+        new Territory { Id = "GulfOfGuinea", Name = "GulfOfGuinea", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Alaska", Name = "Alaska", Nation = null, CityType = CityType.None },
+        new Territory { Id = "NorthAtlantic", Name = "NorthAtlantic", Nation = null, CityType = CityType.None },
+        new Territory { Id = "Canada", Name = "Canada", Nation = null, CityType = CityType.None },
     };
 }
