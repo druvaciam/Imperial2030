@@ -60,5 +60,9 @@ public static class MapCoordinates
         { "GulfOfGuinea", (533, 475) },
         { "Alaska", (68, 113) },
         { "Canada", (200, 137) },
+        { "Peru", (219, 441) },
+        { "Argentina", (280, 539) },
+        { "North-Africa", (543, 293) },
+        { "MediterraneanSea", (615, 270) },
     };
 }
