@@ -21,6 +21,8 @@ public class Game
     public bool IsInvestorTurn { get; set; } = false;
     public Guid? ActingPlayerId { get; set; } // If set, this player must take action (e.g. Investor) instead of CurrentTurnNation controller
 
+    public ManeuverPhase CurrentManeuverPhase { get; set; } = ManeuverPhase.None;
+
 
     public virtual ICollection<Player> Players { get; set; } = new List<Player>();
     public virtual ICollection<Bond> Bonds { get; set; } = new List<Bond>();

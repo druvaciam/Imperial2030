@@ -15,5 +15,7 @@ builder.Services.AddAuthorizationCore();
 builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthenticationStateProvider>();
 builder.Services.AddScoped<CustomAuthenticationStateProvider>(provider => (CustomAuthenticationStateProvider)provider.GetRequiredService<AuthenticationStateProvider>());
 builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<ManeuverService>();
+builder.Services.AddScoped<MapService>();
 
 await builder.Build().RunAsync();

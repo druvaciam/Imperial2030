@@ -14,4 +14,21 @@ public class GameDetailDto : GameDto
     public Guid? InvestorCardHolderId { get; set; }
     public bool IsInvestorTurn { get; set; }
     public Guid? ActingPlayerId { get; set; }
+
+    public ManeuverState? ManeuverState { get; set; }
+}
+
+public enum ManeuverPhase
+{
+    None,
+    Fleets,
+    Armies,
+    Flags
+}
+
+public class ManeuverState
+{
+    public ManeuverPhase Phase { get; set; }
+    // We can add "UnitsMoved" set here later if needed, 
+    // but storing HasMoved on individual units is likely cleaner.
 }

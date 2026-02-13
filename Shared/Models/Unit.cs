@@ -9,6 +9,7 @@ public class Unit
     public UnitType UnitType { get; set; }
     public string TerritoryId { get; set; } = string.Empty;
     public bool IsHostile { get; set; } = true;
+    public bool HasMoved { get; set; }
 
     public Guid GameId { get; set; }
     // Navigation property will be defined in Server/Models/Game.cs context or handled via EF in Server

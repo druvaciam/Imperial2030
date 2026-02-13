@@ -239,12 +239,14 @@ public class GamesController : ControllerBase
             Territories = game.TerritoryStates.Select(ts => new TerritoryStateDto 
             {
                 TerritoryId = ts.TerritoryId,
-                HasFactory = ts.HasFactory
+                HasFactory = ts.HasFactory,
+                Controller = ts.Controller
             }).ToList(),
             InvestorCardHolderId = game.InvestorCardHolderId,
             IsInvestorTurn = game.IsInvestorTurn,
             ActingPlayerId = game.ActingPlayerId,
-            Units = game.Units.ToList()
+            Units = game.Units.ToList(),
+            ManeuverState = new ManeuverState { Phase = game.CurrentManeuverPhase }
         };
     }
 
@@ -279,7 +281,7 @@ public class GamesController : ControllerBase
             var newTerritoryStates = new List<TerritoryState>();
             foreach(var t in territories)
             {
-                newTerritoryStates.Add(new TerritoryState { TerritoryId = t.Id, GameId = gameId, HasFactory = false });
+                newTerritoryStates.Add(new TerritoryState { TerritoryId = t.Id, GameId = gameId, HasFactory = t.Nation.HasValue });
             }
             _context.TerritoryStates.AddRange(newTerritoryStates);
 
@@ -730,6 +732,7 @@ public class GamesController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.Players)
             .Include(g => g.Bonds)
+            .Include(g => g.Units)
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
@@ -786,8 +789,19 @@ public class GamesController : ControllerBase
         nationState.RondelPosition = targetSlot;
         nationState.HasMovedThisTurn = true;
         
+        // Reset Action Flags for the new slot
+        nationState.HasProducedThisTurn = false;
+        nationState.HasBuiltThisTurn = false;
+        
         // Turn advancement is now manual via EndTurn endpoint
         
+        // Reset Unit Movement for this nation
+        var unitsToReset = game.Units.Where(u => u.Nation == nation && u.HasMoved).ToList();
+        foreach (var unit in unitsToReset)
+        {
+            unit.HasMoved = false;
+        }
+
         _context.Entry(controller).State = EntityState.Modified;
         _context.Entry(nationState).State = EntityState.Modified;
 
@@ -819,8 +833,22 @@ public class GamesController : ControllerBase
 
         if (triggeredInvestor)
         {
+            // Calculate if landed on
+            // Note: The loop logic above is slightly flawed if we just check targetSlot==4 for "landedOn" 
+            // because distinct "pass through" vs "land on" matters for 2M bonus.
+            // But for now, sticking to existing logic structure.
             bool landedOn = (targetSlot == 4);
             HandleInvestorPhase(game, nationState, controller, landedOn);
+        }
+
+        // Initialize Maneuver Phase
+        if (targetSlot == 3 || targetSlot == 7)
+        {
+            game.CurrentManeuverPhase = ManeuverPhase.Fleets;
+        }
+        else
+        {
+            game.CurrentManeuverPhase = ManeuverPhase.None;
         }
 
         await _context.SaveChangesAsync();

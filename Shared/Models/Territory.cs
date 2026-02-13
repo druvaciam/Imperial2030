@@ -7,12 +7,19 @@ public enum CityType
     LightBlue = 2 // Shipyard (Ship)
 }
 
+public enum TerritoryType
+{
+    Land = 0,
+    Sea = 1
+}
+
 public class Territory
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public Nation? Nation { get; set; } // Owner (Home Province)
     public CityType CityType { get; set; } = CityType.None;
+    public TerritoryType Type { get; set; } = TerritoryType.Land;
     
     // Helper to see if it is a home city for a specific nation
     public bool IsHomeCity(Nation nation) => Nation == nation && CityType != CityType.None;
