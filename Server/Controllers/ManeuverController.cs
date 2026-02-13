@@ -191,7 +191,7 @@ public class ManeuverController : ControllerBase
                         {
                             var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tId);
                             
-                            if (territoryDef != null && territoryDef.Type == TerritoryType.Land)
+                            if (territoryDef != null)
                             {
                             // Direct DB Check to avoid "Row not found" or Stale Entity issues
                             // We do NOT use game.TerritoryStates here because it might be out of sync.
