@@ -741,4 +741,67 @@
              await JSRuntime.InvokeVoidAsync("alert", "Failed to advance phase.");
         }
     }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Game == null) return;
+
+        var tooltips = new Dictionary<string, string>();
+
+        foreach (var tDef in Imperial2030.Shared.Constants.TerritoryData.AllTerritories)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine(tDef.Name);
+
+            // Owner
+            var tState = Game.Territories.FirstOrDefault(t => t.TerritoryId == tDef.Id);
+            if (tState != null && tState.Controller != null)
+            {
+                sb.AppendLine($"Owner: {tState.Controller}");
+            }
+            else if (tDef.Nation != null)
+            {
+                sb.AppendLine($"Home Territory: {tDef.Nation}");
+            }
+
+            // Factory
+            if (tState != null && tState.HasFactory)
+            {
+                sb.AppendLine("Factory: Yes");
+            }
+
+            // Units
+            var units = Game.Units.Where(u => u.TerritoryId == tDef.Id).ToList();
+            if (units.Any())
+            {
+                var armies = units.Where(u => u.UnitType == UnitType.Army)
+                                .GroupBy(u => u.Nation)
+                                .Select(g => $"{g.Key}: {g.Count()}");
+                
+                var fleets = units.Where(u => u.UnitType == UnitType.Fleet)
+                                .GroupBy(u => u.Nation)
+                                .Select(g => $"{g.Key}: {g.Count()}");
+
+                if (armies.Any())
+                {
+                    sb.AppendLine($"Armies: {string.Join(", ", armies)}");
+                }
+                if (fleets.Any())
+                {
+                    sb.AppendLine($"Fleets: {string.Join(", ", fleets)}");
+                }
+            }
+
+            tooltips[tDef.Id] = sb.ToString().Trim();
+        }
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("updateTerritoryTooltips", tooltips);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error updating tooltips: {ex.Message}");
+        }
+    }
 }

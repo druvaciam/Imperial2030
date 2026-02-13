@@ -28,6 +28,23 @@
         <a class="dismiss">🗙</a>
     </div>
     <script src="_framework/blazor.webassembly.js"></script>
+    <script>
+        window.updateTerritoryTooltips = (tooltips) => {
+            for (const [id, text] of Object.entries(tooltips)) {
+                const element = document.getElementById(id);
+                if (element) {
+                    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+                    title.textContent = text;
+                    // Remove existing title if any
+                    const existingTitle = element.querySelector('title');
+                    if (existingTitle) {
+                        element.removeChild(existingTitle);
+                    }
+                    element.appendChild(title);
+                }
+            }
+        };
+    </script>
 </body>
 
 </html>

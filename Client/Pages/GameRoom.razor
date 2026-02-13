@@ -149,7 +149,7 @@ else
                              <div style="max-height: 200px; overflow-y: auto;">
                                  @foreach (var bond in game.AvailableBonds.OrderBy(b => b.Nation).ThenBy(b => b.Cost))
                                  {
-                                     bool canAffordFull = MyPlayer.Cash >= bond.Cost;
+                                     bool canAffordFull = (MyPlayer?.Cash ?? 0) >= bond.Cost;
                                      
                                      // Check for upgrade
                                      var ownedBonds = MyPlayer.Bonds.Where(b => b.Nation == bond.Nation).OrderByDescending(b => b.Cost).ToList();
@@ -166,7 +166,7 @@ else
                                              if (owned.Cost < bond.Cost)
                                              {
                                                  int diff = bond.Cost - owned.Cost;
-                                                 bool canAffordUpgrade = MyPlayer.Cash >= diff;
+                                                 bool canAffordUpgrade = (MyPlayer?.Cash ?? 0) >= diff;
                                                  <button class="btn btn-sm btn-outline-info w-100 mt-1 text-end small"
                                                          disabled="@(!canAffordUpgrade)"
                                                          @onclick="@(() => PerformInvestment("Buy", bond.Id, owned.Id))">
@@ -274,7 +274,7 @@ else
                     {
                         <select class="form-select form-select-sm w-auto bg-dark text-white border-secondary py-0 pe-4" 
                                 value="@selectedPlayerId" 
-                                @onchange="@(e => selectedPlayerId = Guid.Parse(e.Value.ToString()))">
+                                @onchange="@(e => { if (Guid.TryParse(e.Value?.ToString(), out var g)) selectedPlayerId = g; })">
                              @foreach (var p in game.Players)
                              {
                                  <option value="@p.Id">@p.UserName</option>
@@ -568,7 +568,7 @@ else
     private string? toastMessage;
     private bool isToastError;
     // Reset state when game updates (if it's a new turn for me)
-    private Guid? lastGameId = null;
+
     private Guid? selectedPlayerId;
 
     private async Task OnRondelMove(int slotIndex)

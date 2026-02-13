@@ -48,7 +48,7 @@ public static class MapCoordinates
         { "Murmansk", (652, 73) },
         { "Moscow", (685, 166) },
         { "Novosibirsk", (842, 143) },
-        { "Kazakhstan", (828, 219) },
+        { "Kazakhstan", (750, 197) },
         { "Vladivostok", (1035, 195) },
         { "Urumqi", (845, 210) },
         { "Beijing", (957, 226) },
