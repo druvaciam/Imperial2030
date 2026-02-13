@@ -200,6 +200,30 @@ else
                                 <span class="text-warning">Power: @ns.Power (@(ns.Power/5)x)</span><br/>
                                 <span class="text-muted">Ctrl: @(ns.ControllerName ?? "None")</span>
                                 @{
+                                    var flagNames = game.Territories
+                                        .Where(t => t.Controller == ns.Nation)
+                                        .Select(t => Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == t.TerritoryId)?.Name ?? t.TerritoryId)
+                                        .OrderBy(n => n)
+                                        .ToList();
+
+                                    var armyNames = game.Units
+                                        .Where(u => u.Nation == ns.Nation && u.UnitType == UnitType.Army)
+                                        .Select(u => Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == u.TerritoryId)?.Name ?? u.TerritoryId)
+                                        .OrderBy(n => n)
+                                        .ToList();
+
+                                    var fleetNames = game.Units
+                                        .Where(u => u.Nation == ns.Nation && u.UnitType == UnitType.Fleet)
+                                        .Select(u => Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == u.TerritoryId)?.Name ?? u.TerritoryId)
+                                        .OrderBy(n => n)
+                                        .ToList();
+                                }
+                                <div class="small text-white-50 mt-1 d-flex justify-content-between">
+                                    <span title="@string.Join(", ", flagNames)" style="cursor: help"><i class="oi oi-flag"></i> Flags: @flagNames.Count</span> 
+                                    <span title="@string.Join(", ", armyNames)" style="cursor: help"><i class="oi oi-people"></i> Armies: @armyNames.Count</span> 
+                                    <span title="@string.Join(", ", fleetNames)" style="cursor: help"><i class="oi oi-boat"></i> Fleets: @fleetNames.Count</span>
+                                </div>
+                                @{
                                     var builtFactories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories
                                         .Where(t => t.Nation == ns.Nation && game.Territories.Any(ts => ts.TerritoryId == t.Id && ts.HasFactory))
                                         .Select(t => t.Name)
