@@ -82,13 +82,9 @@ public static class TerritoryData
         new Territory { Id = "SouthPacific", Name = "South Pacific", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
         new Territory { Id = "SouthAtlantic", Name = "South Atlantic", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
         new Territory { Id = "IndianOcean", Name = "Indian Ocean", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
-        new Territory { Id = "NorthSea", Name = "North Sea", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
-        new Territory { Id = "EnglishChannel", Name = "English Channel", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
+
         new Territory { Id = "SeaOfJapan", Name = "Sea Of Japan", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
-        new Territory { Id = "YellowSea", Name = "Yellow Sea", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
         new Territory { Id = "ChinaSea", Name = "China Sea", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
-        new Territory { Id = "BayOfBengal", Name = "Bay Of Bengal", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
-        new Territory { Id = "ArabianSea", Name = "Arabian Sea", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
         new Territory { Id = "CaribbeanSea", Name = "Caribbean Sea", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
         new Territory { Id = "TasmanSea", Name = "Tasman Sea", Nation = null, CityType = CityType.None, Type = TerritoryType.Sea },
     };

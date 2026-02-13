@@ -79,13 +79,15 @@ public static class MapCoordinates
         { "NorthPacific", (50, 150) }, // Split?
         { "NorthAtlantic", (405, 250) },
         { "SouthAtlantic", (450, 500) }, // EST
+        { "GulfOfGuinea", (530, 440) }, // EST
         { "CaribbeanSea", (250, 350) }, // EST
         { "MediterraneanSea", (615, 270) },
-        { "NorthSea", (560, 140) }, // EST
+
         { "IndianOcean", (850, 500) }, // EST
         { "ChinaSea", (1000, 350) }, // EST
         { "SeaOfJapan", (1050, 200) }, // EST
         { "SouthPacific", (150, 550) }, // EST
         { "TasmanSea", (1100, 650) }, // EST
+
     };
 }
