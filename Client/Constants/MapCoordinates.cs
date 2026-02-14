@@ -32,7 +32,7 @@ public static class MapCoordinates
         { "Switzerland", (580, 210) }, // Added Switzerland
         { "Rome", (588, 235) },
         { "Berlin", (588, 172) },
-        { "Ukraine", (646, 213) },
+        { "Ukraine", (630, 180) },
 
 
         // --- AFRICA ---
@@ -62,7 +62,7 @@ public static class MapCoordinates
         { "Mongolia", (856, 187) },
         { "Iran", (750, 260) }, // EST
         { "Afghanistan", (775, 247) },
-        { "Turkey", (703, 227) },
+        { "Turkey", (660, 240) },
         { "NearEast", (700, 280) }, // EST
 
         // --- INDIA ---
@@ -80,14 +80,12 @@ public static class MapCoordinates
         { "NorthAtlantic", (405, 250) },
         { "SouthAtlantic", (450, 500) }, // EST
         { "GulfOfGuinea", (530, 440) }, // EST
-        { "CaribbeanSea", (250, 350) }, // EST
+        { "CaribbeanSea", (330, 350) }, // EST
         { "MediterraneanSea", (615, 270) },
-
         { "IndianOcean", (850, 500) }, // EST
         { "ChinaSea", (1000, 350) }, // EST
-        { "SeaOfJapan", (1050, 200) }, // EST
+        { "SeaOfJapan", (1130, 180) },
         { "SouthPacific", (150, 550) }, // EST
-        { "TasmanSea", (1100, 650) }, // EST
-
+        { "TasmanSea", (1016, 600) },
     };
 }
