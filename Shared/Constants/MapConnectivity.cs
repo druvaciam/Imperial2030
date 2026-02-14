@@ -28,10 +28,10 @@ public static class MapConnectivity
         { "North-Africa", new List<string> { "Guinea", "Nigeria", "MediterraneanSea", "NorthAtlantic" } },
         { "Guinea", new List<string> { "North-Africa", "Nigeria", "NorthAtlantic", "GulfOfGuinea" } },
         { "Nigeria", new List<string> { "North-Africa", "Guinea", "Congo", "SouthAtlantic", "GulfOfGuinea" } }, // Check Gulf
-        { "Congo", new List<string> { "Nigeria", "SouthAfrica", "EastAfrica", "SouthAtlantic", "GulfOfGuinea" } },
-        { "SouthAfrica", new List<string> { "Congo", "EastAfrica", "SouthAtlantic", "IndianOcean" } },
-        { "EastAfrica", new List<string> { "SouthAfrica", "Congo", "Egypt", "IndianOcean", "MediterraneanSea" } }, // Check borders
-        { "Egypt", new List<string> { "EastAfrica", "MediterraneanSea", "IndianOcean", "NearEast" } }, // Suez Logic separate?
+        { "Congo", new List<string> { "Nigeria", "South-Africa", "East-Africa", "SouthAtlantic", "GulfOfGuinea" } },
+        { "South-Africa", new List<string> { "Congo", "East-Africa", "SouthAtlantic", "IndianOcean" } },
+        { "East-Africa", new List<string> { "South-Africa", "Congo", "Egypt", "IndianOcean", "MediterraneanSea" } }, // Check borders
+        { "Egypt", new List<string> { "East-Africa", "MediterraneanSea", "IndianOcean", "NearEast" } }, // Suez Logic separate?
 
         // --- EUROPE ---
         { "London", new List<string> { "NorthAtlantic" } },
@@ -74,9 +74,9 @@ public static class MapConnectivity
 
         // --- SEA REGIONS (Interconnectivity) ---
         { "NorthAtlantic", new List<string> { "Canada", "NewYork", "Fortaleza", "RioDeJaneiro", "Guinea", "Paris", "London", "Berlin", "MediterraneanSea", "CaribbeanSea", "Murmansk", "GulfOfGuinea" } },
-        { "MediterraneanSea", new List<string> { "NorthAtlantic", "IndianOcean", "Paris", "Rome", "Switzerland", "Turkey", "Egypt", "EastAfrica", "North-Africa" } }, // Check EastAfrica/Suez
-        { "IndianOcean", new List<string> { "SouthAfrica", "EastAfrica", "Egypt", "Mumbai", "Chennai", "Kolkata", "Indonesia", "GulfOfGuinea", "Indochina", "ChinaSea", "Iran", "MediterraneanSea" } },
-        { "SouthAtlantic", new List<string> { "Fortaleza", "RioDeJaneiro", "Argentina", "SouthAfrica", "Congo", "Nigeria", "Guinea", "IndianOcean", "GulfOfGuinea" } },
+        { "MediterraneanSea", new List<string> { "NorthAtlantic", "IndianOcean", "Paris", "Rome", "Switzerland", "Turkey", "Egypt", "East-Africa", "North-Africa" } },
+        { "IndianOcean", new List<string> { "South-Africa", "East-Africa", "Egypt", "Mumbai", "Chennai", "Kolkata", "Indonesia", "GulfOfGuinea", "Indochina", "ChinaSea", "Iran", "MediterraneanSea" } },
+        { "SouthAtlantic", new List<string> { "Fortaleza", "RioDeJaneiro", "Argentina", "South-Africa", "Congo", "Nigeria", "Guinea", "IndianOcean", "GulfOfGuinea" } },
         { "NorthPacific", new List<string> { "Alaska", "Canada", "SanFrancisco", "Mexico", "Vladivostok", "SeaOfJapan", "ChinaSea", "SouthPacific" } },
         { "SouthPacific", new List<string> { "NorthPacific", "SanFrancisco", "Colombia", "Peru", "Argentina", "TasmanSea", "ChinaSea" } },
         { "CaribbeanSea", new List<string> { "NewOrleans", "Colombia", "NorthAtlantic", "SouthAtlantic", "Mexico", "GulfOfGuinea" } },

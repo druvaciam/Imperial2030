@@ -40,8 +40,8 @@ public static class MapCoordinates
         { "Guinea", (508, 405) },
         { "Nigeria", (565, 400) }, // EST
         { "Congo", (600, 480) }, // EST
-        { "SouthAfrica", (620, 580) }, // EST
-        { "EastAfrica", (650, 450) }, // EST
+        { "South-Africa", (620, 580) }, // EST
+        { "East-Africa", (650, 450) }, // EST
         { "Egypt", (640, 300) }, // EST
 
         // --- RUSSIA & ASIA ---
