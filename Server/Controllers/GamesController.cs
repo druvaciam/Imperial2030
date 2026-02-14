@@ -226,7 +226,8 @@ public class GamesController : ControllerBase
                 ControllerName = ns.Controller?.User?.UserName,
                 HasBuiltThisTurn = ns.HasBuiltThisTurn,
                 HasProducedThisTurn = ns.HasProducedThisTurn,
-                HasMovedThisTurn = ns.HasMovedThisTurn
+                HasMovedThisTurn = ns.HasMovedThisTurn,
+                HasImportedThisTurn = ns.HasImportedThisTurn
             }).ToList(),
             AvailableBonds = game.Bonds.Where(b => b.HolderId == null).Select(b => new BondDto
             {
@@ -792,6 +793,7 @@ public class GamesController : ControllerBase
         // Reset Action Flags for the new slot
         nationState.HasProducedThisTurn = false;
         nationState.HasBuiltThisTurn = false;
+        nationState.HasImportedThisTurn = false;
         
         // Turn advancement is now manual via EndTurn endpoint
         
@@ -1119,6 +1121,7 @@ public class GamesController : ControllerBase
         // Reset current nation's turn flags
         nationState.HasBuiltThisTurn = false;
         nationState.HasMovedThisTurn = false;
+        nationState.HasImportedThisTurn = false;
 
         _context.Entry(game).State = EntityState.Modified;
         await _context.SaveChangesAsync();
@@ -1347,5 +1350,85 @@ public class GamesController : ControllerBase
             Bonus = bonus, 
             PowerGain = powerGain 
         });
+    }
+
+
+    [HttpPost("{gameId}/import")]
+    public async Task<IActionResult> ExecuteImport(Guid gameId, [FromBody] ImportRequest request)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.NationStates)
+            .Include(g => g.Players)
+            .Include(g => g.Units)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
+        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
+
+        var nationState = game.NationStates.First(n => n.Nation == game.CurrentTurnNation);
+        if (nationState.ControllerId == null) return BadRequest("No controller.");
+
+        var controller = game.Players.First(p => p.Id == nationState.ControllerId);
+        if (controller.UserId != userId) return Forbid();
+
+        // 5 is Import slot
+        if (nationState.RondelPosition != 5) return BadRequest("Not in Import phase."); 
+        if (nationState.HasImportedThisTurn) return BadRequest("Already imported this turn.");
+
+        if (request.Units.Count > 3) return BadRequest("Cannot import more than 3 units.");
+        if (request.Units.Count == 0) return BadRequest("No units specified.");
+
+        int cost = request.Units.Count; // 1M per unit
+        if (nationState.Treasury < cost) return BadRequest($"Insufficient treasury. Cost: {cost}M");
+
+        // Validate placement
+        foreach (var unitReq in request.Units)
+        {
+            var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == unitReq.TerritoryId);
+            if (territoryDef == null) return BadRequest($"Invalid territory: {unitReq.TerritoryId}");
+
+            // Home Province Check
+            if (territoryDef.Nation != game.CurrentTurnNation) return BadRequest($"Territory {territoryDef.Name} is not a home province of {game.CurrentTurnNation}.");
+
+            // Hostile Army Check (Standing armies of other nations block import)
+            bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == unitReq.TerritoryId && u.Nation != game.CurrentTurnNation && u.UnitType == UnitType.Army && u.IsHostile);
+            if (hasHostileArmy) return BadRequest($"Territory {territoryDef.Name} contains hostile armies.");
+
+            // Fleet Harbor Check
+            if (unitReq.UnitType == UnitType.Fleet)
+            {
+                if (territoryDef.CityType != CityType.LightBlue) return BadRequest($"Cannot place Fleet in {territoryDef.Name} (no harbor).");
+            }
+        }
+
+        // Execute
+        nationState.Treasury -= cost;
+        nationState.HasImportedThisTurn = true;
+        
+        foreach (var unitReq in request.Units)
+        {
+            var newUnit = new Unit
+            {
+                GameId = gameId,
+                Nation = game.CurrentTurnNation,
+                TerritoryId = unitReq.TerritoryId,
+                UnitType = unitReq.UnitType,
+                IsHostile = true, // Default to standing
+                HasMoved = false 
+            };
+            _context.Units.Add(newUnit);
+        }
+
+        _context.Entry(nationState).State = EntityState.Modified;
+        await _context.SaveChangesAsync();
+
+        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        
+        return Ok($"Imported {request.Units.Count} units.");
     }
 }

@@ -10,4 +10,5 @@ public class NationStateDto
     public bool HasBuiltThisTurn { get; set; }
     public bool HasMovedThisTurn { get; set; }
     public bool HasProducedThisTurn { get; set; }
+    public bool HasImportedThisTurn { get; set; }
 }

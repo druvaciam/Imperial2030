@@ -106,6 +106,52 @@ else
                             </div>
                         }
                         
+                        @if (CanImport() && turnMoved && !alreadyBuilt) // reusing alreadyBuilt variable name? No, wait. 
+                        // Import slot is different from Factory.
+                        // CanImport checks specific slot. 
+                        // But wait, "alreadyBuilt" was defined as "ns?.HasBuiltThisTurn".
+                        // Import has its own flag. 
+                        {
+                             <div class="card bg-dark border-secondary mb-2">
+                                <div class="card-header text-center py-1">Import Units</div>
+                                <div class="card-body p-2">
+                                    <p class="small text-muted mb-2">Cost: 1M per unit. Max 3.</p>
+                                    
+                                    @foreach (var unit in pendingImports)
+                                    {
+                                        <div class="mb-2 bg-black bg-opacity-25 rounded p-1">
+                                            <div class="d-flex justify-content-between mb-1 gap-2">
+                                                <select class="form-select form-select-sm py-0 bg-dark text-white border-secondary" 
+                                                        value="@unit.UnitType" 
+                                                        @onchange="@(e => OnImportUnitTypeChanged(unit, e.Value))"
+                                                        style="height: 28px;">
+                                                    <option value="@UnitType.Army">Army</option>
+                                                    <option value="@UnitType.Fleet">Fleet</option>
+                                                </select>
+                                                <button class="btn btn-outline-danger btn-sm py-0" type="button" @onclick="() => RemoveImportUnit(unit)" style="height: 28px;">✕</button>
+                                            </div>
+                                            <select class="form-select form-select-sm bg-dark text-white border-secondary" @bind="unit.UnitType" hidden></select> @* Dummy to force re-render if needed, actually binding below *@
+                                            <select class="form-select form-select-sm bg-dark text-white border-secondary" @bind="unit.TerritoryId">
+                                                @foreach (var t in GetValidImportTerritories(unit.UnitType))
+                                                {
+                                                    <option value="@t.Id">@t.Name</option>
+                                                }
+                                            </select>
+                                        </div>
+                                    }
+
+                                    @if (pendingImports.Count < 3)
+                                    {
+                                        <button class="btn btn-sm btn-outline-success w-100 mb-2" @onclick="AddImportUnit">+ Add Unit</button>
+                                    }
+
+                                    <button class="btn btn-sm btn-primary w-100 fw-bold" @onclick="ExecuteImport" disabled="@(isSubmitting || pendingImports.Count == 0)">
+                                        Confirm Import (@(pendingImports.Count)M)
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                        
 
                         
                         @if (CanProduce() && turnMoved)
@@ -792,6 +838,120 @@ else
         catch (Exception ex)
         {
             await ShowToast($"Error: {ex.Message}", true);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private List<ImportUnit> pendingImports = new();
+
+    private bool CanImport()
+    {
+        if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
+        var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+        return ns?.RondelPosition == 5 && !ns.HasImportedThisTurn; 
+    }
+
+    private void AddImportUnit()
+    {
+        if (pendingImports.Count < 3)
+        {
+            var valid = GetValidImportTerritories(UnitType.Army);
+            // Default to first valid territory used
+            var defaultId = valid.FirstOrDefault()?.Id ?? "";
+            
+            // If already have imports, try to reuse last territory for convenience
+            if (pendingImports.Any())
+            {
+                 var last = pendingImports.Last();
+                 // Check if last used is valid for new type (Army)
+                 if (valid.Any(v => v.Id == last.TerritoryId)) 
+                 {
+                     defaultId = last.TerritoryId;
+                 }
+            }
+
+            pendingImports.Add(new ImportUnit { UnitType = UnitType.Army, TerritoryId = defaultId });
+        }
+    }
+
+    private void RemoveImportUnit(ImportUnit unit)
+    {
+        pendingImports.Remove(unit);
+    }
+
+    private void OnImportUnitTypeChanged(ImportUnit unit, object? newValue)
+    {
+        if (newValue is null) return;
+        if (Enum.TryParse<UnitType>(newValue.ToString(), out var parsedType))
+        {
+            unit.UnitType = parsedType;
+            // Check if current territory is still valid
+            var validTerritories = GetValidImportTerritories(parsedType);
+            if (!validTerritories.Any(t => t.Id == unit.TerritoryId))
+            {
+                // Reset to first valid
+                unit.TerritoryId = validTerritories.FirstOrDefault()?.Id ?? "";
+            }
+        }
+    }
+
+    private List<Imperial2030.Shared.Models.Territory> GetValidImportTerritories(UnitType unitType)
+    {
+        if (game == null) return new ();
+        var nation = game.CurrentTurnNation;
+        
+        var query = Imperial2030.Shared.Constants.TerritoryData.AllTerritories
+            .Where(t => t.Nation == nation); // Home Province
+
+        if (unitType == UnitType.Fleet)
+        {
+            query = query.Where(t => t.CityType == CityType.LightBlue); // Harbor
+        }
+
+        // Hostile Army filter
+        var hostileTerritories = game.Units
+            .Where(u => u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile)
+            .Select(u => u.TerritoryId)
+            .ToHashSet();
+
+        return query.Where(t => !hostileTerritories.Contains(t.Id)).ToList();
+    }
+
+    private async Task ExecuteImport()
+    {
+        if (game == null || isSubmitting) return;
+        
+        if (pendingImports.Count == 0) return;
+        var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+        if (ns == null || ns.Treasury < pendingImports.Count) 
+        {
+             await ShowToast("Insufficient funds!", true);
+             return;
+        }
+
+        isSubmitting = true;
+        try
+        {
+            var request = new ImportRequest { Units = pendingImports };
+            var response = await Http.PostAsJsonAsync($"api/games/{GameId}/import", request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                await ShowToast($"Import failed: {error}", true);
+            }
+            else
+            {
+                var msg = await response.Content.ReadAsStringAsync();
+                await ShowToast(msg, false);
+                pendingImports.Clear();
+            }
+        }
+        catch (Exception ex)
+        {
+             await ShowToast($"Error: {ex.Message}", true);
         }
         finally
         {

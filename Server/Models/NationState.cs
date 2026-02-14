@@ -14,6 +14,7 @@ public class NationState
     public int? RondelPosition { get; set; } = 0;
     public bool HasBuiltThisTurn { get; set; } = false;
     public bool HasProducedThisTurn { get; set; } = false;
+    public bool HasImportedThisTurn { get; set; } = false;
 
     public Guid? ControllerId { get; set; }
     [ForeignKey(nameof(ControllerId))]
