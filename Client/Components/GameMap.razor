@@ -594,67 +594,62 @@
                     for (int i = 0; i < units.Count; i++)
                     {
                         var unit = units[i];
-                        // Simple grid layout for stacking
-                        double offsetX = (i % 3) * 16 - 16; 
-                        double offsetY = (i / 3) * 16 + 20; 
-                        string color = GetNationColor(unit.Nation);
+                        // Dynamic grid layout for stacking
+                        int row = i / 3;
+                        int col = i % 3;
+                        int itemsInRow = System.Math.Min(3, units.Count - row * 3);
                         
+                        double rowWidth = (itemsInRow - 1) * 16.0;
+                        double offsetX = col * 16.0 - (rowWidth / 2.0); 
+                        double offsetY = row * 16.0 + 12.0; 
+                        string color = GetNationColor(unit.Nation);
+                        string strokeColor = (selectedUnitId == unit.Id) ? "#ffff00" : "white"; // Highlight selected
+                        string strokeWidth = (selectedUnitId == unit.Id) ? "3" : "2";
+
                         if (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army)
                         {
-                            <rect x="@(coords.X + offsetX - 8)" y="@(coords.Y + offsetY - 8)" width="16" height="16" fill="@color" stroke="white" stroke-width="2" />
+                            <g style="pointer-events: none;">
+                                <rect x="@(coords.X + offsetX - 8)" y="@(coords.Y + offsetY - 8)" width="16" height="16" 
+                                      fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
+                                <text x="@(coords.X + offsetX)" y="@(coords.Y + offsetY)" 
+                                      text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">A</text>
+                            </g>
                         }
                         else
                         {
-                            <circle cx="@(coords.X + offsetX)" cy="@(coords.Y + offsetY)" r="8" fill="@color" stroke="white" stroke-width="2" />
+                            <g style="pointer-events: none;">
+                                <circle cx="@(coords.X + offsetX)" cy="@(coords.Y + offsetY)" r="8" 
+                                        fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
+                                <text x="@(coords.X + offsetX)" y="@(coords.Y + offsetY)" 
+                                      text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">F</text>
+                            </g>
                         }
                     }
                 }
             }
         }
-    @if (Game != null && Game.Territories != null)
-    {
-        @foreach (var ts in Game.Territories)
-        {
-            if (ts.Controller.HasValue && MapCoordinates.TerritoryCenters.TryGetValue(ts.TerritoryId, out var flagCenter))
-            {
-                // Only show flag if controller differs from home nation
-                var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-                if (def != null && def.Nation == ts.Controller.Value) continue;
 
-                // Render Flag (Small rectangle + pole)
-                var flagX = flagCenter.X + 12;
-                var flagY = flagCenter.Y - 12;
-                <line x1="@flagX" y1="@flagY" x2="@flagX" y2="@(flagY + 14)" stroke="black" stroke-width="1" />
-                <rect x="@flagX" y="@flagY" width="14" height="9"
-                      fill="@GetNationColor(ts.Controller.Value)"
-                      stroke="black" stroke-width="0.5"
-                      style="pointer-events: none;" />
-            }
-        }
-    }
-
-    @if (Game != null && Game.Units != null)
-    {
-        @foreach (var unit in Game.Units)
+        @if (Game != null && Game.Territories != null)
         {
-            if (MapCoordinates.TerritoryCenters.TryGetValue(unit.TerritoryId, out var center))
+            @foreach (var ts in Game.Territories)
             {
-                <circle cx="@center.X" cy="@center.Y" r="10" 
-                        fill="@GetNationColor(unit.Nation)" 
-                        stroke="#fff" stroke-width="2"
-                        class="@(selectedUnitId == unit.Id ? "selected-unit" : "")"
-                        style="pointer-events: none;" />
-                @if (unit.UnitType == UnitType.Fleet)
+                if (ts.Controller.HasValue && Imperial2030.Client.Constants.MapCoordinates.TerritoryCenters.TryGetValue(ts.TerritoryId, out var flagCenter))
                 {
-                     <svg:text x="@center.X" y="@center.Y" text-anchor="middle" dy="4" font-size="10" fill="white" style="pointer-events: none;">F</svg:text>
-                }
-                else
-                {
-                     <svg:text x="@center.X" y="@center.Y" text-anchor="middle" dy="4" font-size="10" fill="white" style="pointer-events: none;">A</svg:text>
+                    // Only show flag if controller differs from home nation
+                    var def = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
+                    if (def != null && def.Nation == ts.Controller.Value) continue;
+
+                    // Render Flag (Small rectangle + pole)
+                    var flagX = flagCenter.X;
+                    var flagY = flagCenter.Y - 14;
+                    <line x1="@flagX" y1="@flagY" x2="@flagX" y2="@(flagY + 14)" stroke="black" stroke-width="1" />
+                    <rect x="@flagX" y="@flagY" width="14" height="9"
+                          fill="@GetNationColor(ts.Controller.Value)"
+                          stroke="black" stroke-width="0.5"
+                          style="pointer-events: none;" />
                 }
             }
         }
-    }
     </g>
   </g>
 </svg>
