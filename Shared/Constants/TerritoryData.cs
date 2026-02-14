@@ -66,7 +66,7 @@ public static class TerritoryData
         new Territory { Id = "Congo", Name = "Congo", Nation = null, CityType = CityType.None },
         new Territory { Id = "South-Africa", Name = "South Africa", Nation = null, CityType = CityType.None },
         new Territory { Id = "East-Africa", Name = "East Africa", Nation = null, CityType = CityType.None },
-        new Territory { Id = "Egypt", Name = "Egypt", Nation = null, CityType = CityType.None },
+
         new Territory { Id = "NearEast", Name = "Near East", Nation = null, CityType = CityType.None },
         new Territory { Id = "Indochina", Name = "Indochina", Nation = null, CityType = CityType.None },
         new Territory { Id = "Indonesia", Name = "Indonesia", Nation = null, CityType = CityType.None },

@@ -8,7 +8,7 @@ public static class MapCoordinates
     public static readonly Dictionary<string, (double X, double Y)> TerritoryCenters = new()
     {
         // --- NORTH AMERICA ---
-        { "Alaska", (68, 113) },
+        { "Alaska", (80, 113) },
         { "Canada", (200, 137) },
         { "Quebec", (315, 155) },
         { "NewYork", (281, 229) },
@@ -29,41 +29,39 @@ public static class MapCoordinates
         // --- EUROPE ---
         { "London", (537, 160) },
         { "Paris", (550, 188) },
-        { "Switzerland", (580, 210) }, // Added Switzerland
+        { "Switzerland", (567, 205) },
         { "Rome", (588, 235) },
         { "Berlin", (588, 172) },
-        { "Ukraine", (630, 180) },
-
+        { "Ukraine", (641, 177) },
 
         // --- AFRICA ---
         { "North-Africa", (543, 293) },
-        { "Guinea", (508, 405) },
-        { "Nigeria", (565, 400) }, // EST
-        { "Congo", (600, 480) }, // EST
-        { "South-Africa", (620, 580) }, // EST
-        { "East-Africa", (650, 450) }, // EST
-        { "Egypt", (640, 300) }, // EST
+        { "Guinea", (500, 366) },
+        { "Nigeria", (580, 350) },
+        { "Congo", (620, 420) },
+        { "South-Africa", (632, 527) },
+        { "East-Africa", (670, 360) },
 
         // --- RUSSIA & ASIA ---
         { "Murmansk", (652, 73) },
         { "Moscow", (685, 166) },
         { "Novosibirsk", (842, 143) },
-        { "Kazakhstan", (750, 197) },
+        { "Kazakhstan", (781, 188) },
         { "Vladivostok", (1035, 195) },
         { "Urumqi", (845, 210) },
         { "Beijing", (957, 226) },
         { "Shanghai", (1000, 280) },
         { "Chongqing", (935, 298) },
-        { "Indochina", (950, 380) }, // EST
-        { "Indonesia", (1000, 480) }, // EST
-        { "Philippines", (1080, 400) }, // EST
-        { "Japan", (1050, 210) },
-        { "Korea", (999, 238) },
-        { "Mongolia", (856, 187) },
-        { "Iran", (750, 260) }, // EST
+        { "Indochina", (936, 343) },
+        { "Indonesia", (986, 417) },
+        { "Philippines", (1023, 374) },
+        { "Japan", (1067, 250) },
+        { "Korea", (1014, 241) },
+        { "Mongolia", (902, 182) },
+        { "Iran", (743, 276) },
         { "Afghanistan", (775, 247) },
-        { "Turkey", (660, 240) },
-        { "NearEast", (700, 280) }, // EST
+        { "Turkey", (666, 239) },
+        { "NearEast", (697, 290) },
 
         // --- INDIA ---
         { "NewDelhi", (828, 279) },
@@ -72,20 +70,20 @@ public static class MapCoordinates
         { "Chennai", (850, 360) },
 
         // --- OCEANIA ---
-        { "Australia", (1050, 600) }, // EST
-        { "NewZealand", (1150, 700) }, // EST
+        { "Australia", (1080, 536) },
+        { "NewZealand", (1150, 585) },
 
         // --- SEAS ---
-        { "NorthPacific", (50, 150) }, // Split?
-        { "NorthAtlantic", (405, 250) },
-        { "SouthAtlantic", (450, 500) }, // EST
-        { "GulfOfGuinea", (530, 440) }, // EST
-        { "CaribbeanSea", (330, 350) }, // EST
+        { "NorthPacific", (40, 211) },
+        { "NorthAtlantic", (410, 220) },
+        { "SouthAtlantic", (460, 490) },
+        { "GulfOfGuinea", (545, 485) },
+        { "CaribbeanSea", (330, 350) },
         { "MediterraneanSea", (615, 270) },
-        { "IndianOcean", (850, 500) }, // EST
-        { "ChinaSea", (1000, 350) }, // EST
+        { "IndianOcean", (800, 418) },
+        { "ChinaSea", (1111, 360) },
         { "SeaOfJapan", (1130, 180) },
-        { "SouthPacific", (150, 550) }, // EST
-        { "TasmanSea", (1016, 600) },
+        { "SouthPacific", (60, 440) },
+        { "TasmanSea", (1020, 588) },
     };
 }
