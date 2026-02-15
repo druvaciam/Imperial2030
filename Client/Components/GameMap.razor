@@ -348,6 +348,83 @@
          @onclick='() => OnTerritoryClick("Indonesia")' />
       <rect
          style="opacity:0.5;"
+         id="tax5"
+         width="44.483002"
+         height="61.627003"
+         x="443.89969"
+         y="583.83466" />
+      <rect
+         style="opacity:0.5;"
+         id="tax6"
+         width="44.483002"
+         height="61.627003"
+         x="489.02371"
+         y="583.34045" />
+      <rect
+         style="opacity:0.5;"
+         id="tax8"
+         width="44.483002"
+         height="61.627003"
+         x="534.17023"
+         y="583.29535" />
+      <rect
+         style="opacity:0.5;"
+         id="tax10"
+         width="44.483002"
+         height="61.627003"
+         x="579.04517"
+         y="583.78015" />
+      <rect
+         style="opacity:0.5;"
+         id="tax11"
+         width="44.483002"
+         height="61.627003"
+         x="624.16583"
+         y="584.51074" />
+      <rect
+         style="opacity:0.5;"
+         id="tax12"
+         width="44.483002"
+         height="61.627003"
+         x="669.19171"
+         y="584.36633" />
+      <rect
+         style="opacity:0.5;"
+         id="tax13"
+         width="44.483002"
+         height="61.627003"
+         x="714.04517"
+         y="584.53662" />
+      <rect
+         style="opacity:0.5;"
+         id="tax14"
+         width="44.483002"
+         height="61.627003"
+         x="759.79944"
+         y="584.02368" />
+      <rect
+         style="opacity:0.5;"
+         id="tax15"
+         width="44.483002"
+         height="61.627003"
+         x="805.11621"
+         y="583.75647" />
+      <rect
+         style="opacity:0.5;"
+         id="tax16"
+         width="44.483002"
+         height="61.627003"
+         x="850.31238"
+         y="584.51074" />
+      <rect
+         style="opacity:0.5;"
+         id="tax18"
+         width="44.483002"
+         height="61.627003"
+         x="895.72614"
+         y="583.78015" />
+      <rect
+         style="opacity:0.5;"
          id="power0"
          width="41.283001"
          height="40.955704"
@@ -651,6 +728,49 @@
             }
         }
     </g>
+    
+    @if (Game != null)
+    {
+        var localGame = Game; // Capture for null safety in loop
+        <!-- Tax Chart Markers -->
+        @foreach (var group in localGame.NationStates.GroupBy(ns => ns.TaxChartPosition))
+        {
+            var rect = GetTaxRect(group.Key);
+            if (rect.HasValue)
+            {
+                var (x, y, w, h) = rect.Value;
+                var nations = group.ToList();
+                var count = nations.Count;
+
+                // Calculate base center
+                double centerX = x + w / 2;
+                double centerY = y + h / 2;
+                
+                int maxCols = 3;
+                int totalRows = (count + maxCols - 1) / maxCols;
+                double rowHeight = 12.0; // Spacing between rows
+                double totalGridHeight = (totalRows - 1) * rowHeight;
+
+                for (int i = 0; i < count; i++)
+                {
+                    var ns = nations[i];
+                    
+                    int row = i / maxCols;
+                    int col = i % maxCols;
+                    
+                    int itemsInThisRow = Math.Min(maxCols, count - row * maxCols);
+                    double rowWidth = (itemsInThisRow - 1) * 12.0; // 12px spacing specific to row
+
+                    double offsetX = col * 12.0 - rowWidth / 2.0;
+                    double offsetY = row * rowHeight - totalGridHeight / 2.0;
+
+                    <circle cx="@(centerX + offsetX)" cy="@(centerY + offsetY)" r="5" 
+                            fill="@GetNationColor(ns.Nation)" 
+                            stroke="white" stroke-width="1.5" style="opacity:0.9;" />
+                }
+            }
+        }
+    }
   </g>
 </svg>
 <div style="position: absolute; bottom: 20px; right: 20px; display: flex; gap: 10px;">
@@ -721,6 +841,8 @@
         100% { fill-opacity: 0.3; }
     }
 </style>
+
+
 
 @inject HttpClient Http
 @inject IJSRuntime JSRuntime
@@ -840,7 +962,9 @@
         // 2. Army Rail Logic
         // Combine neighbors with rail-reachable territories
         var railDestinations = GetRailReachableTerritories(currentTerritoryId, unit.Nation);
-        return neighbors.Union(railDestinations).Distinct().ToList();
+        var allDestinations = neighbors.Union(railDestinations).Distinct().ToList();
+        allDestinations.Remove(currentTerritoryId); // Fix: Exclude self (click = deselect)
+        return allDestinations;
     }
 
     private List<string> GetRailReachableTerritories(string startId, Imperial2030.Shared.Models.Nation nation)
@@ -852,7 +976,7 @@
         var visited = new HashSet<string>();
 
         // Start BFS
-        if (!IsTerritoryRailValid(startId, nation)) return reachable;
+        // if (!IsTerritoryRailValid(startId, nation)) return reachable; // REMOVED: Allow entry from outside
 
         queue.Enqueue(startId);
         visited.Add(startId);
@@ -866,16 +990,16 @@
 
             foreach (var neighborId in neighbors)
             {
-                // Any neighbor of a rail-valid node is reachable (as a destination)
-                reachable.Add(neighborId);
-
-                // Only continue traversing through VALID rail nodes
-                if (visited.Contains(neighborId)) continue;
-
+                // Fix: Rail movement must end IN the rail network (Home/Controlled)
                 if (IsTerritoryRailValid(neighborId, nation))
                 {
-                    visited.Add(neighborId);
-                    queue.Enqueue(neighborId);
+                    reachable.Add(neighborId);
+
+                    if (!visited.Contains(neighborId))
+                    {
+                        visited.Add(neighborId);
+                        queue.Enqueue(neighborId);
+                    }
                 }
             }
         }
@@ -1026,6 +1150,23 @@
         { 25, (1140.6702, 31.070118, 44.231998, 22.607548) }
     };
 
+    // Tax Chart Rects from User (x, y, w, h)
+    // 5, 6, 8, 10, 11, 12, 13, 14, 15, 16, 18
+    private static readonly Dictionary<int, (double x, double y, double w, double h)> TaxChartRects = new()
+    {
+        { 5, (443.89969, 583.83466, 44.483002, 61.627003) },
+        { 6, (489.02371, 583.34045, 44.483002, 61.627003) },
+        { 8, (534.17023, 583.29535, 44.483002, 61.627003) },
+        { 10, (579.04517, 583.78015, 44.483002, 61.627003) },
+        { 11, (624.16583, 584.51074, 44.483002, 61.627003) },
+        { 12, (669.19171, 584.36633, 44.483002, 61.627003) },
+        { 13, (714.04517, 584.53662, 44.483002, 61.627003) },
+        { 14, (759.79944, 584.02368, 44.483002, 61.627003) },
+        { 15, (805.11621, 583.75647, 44.483002, 61.627003) },
+        { 16, (850.31238, 584.51074, 44.483002, 61.627003) },
+        { 18, (895.72614, 583.78015, 44.483002, 61.627003) }
+    };
+
     private async Task NextPhase()
     {
         if (Game == null) return;
@@ -1097,5 +1238,26 @@
         {
             Console.WriteLine($"Error updating tooltips: {ex.Message}");
         }
+    }
+    private (double x, double y, double w, double h)? GetTaxRect(int revenue)
+    {
+        int key;
+        if (revenue >= 18) key = 18;
+        else if (revenue >= 16) key = 16;
+        else if (revenue >= 15) key = 15;
+        else if (revenue >= 14) key = 14;
+        else if (revenue >= 13) key = 13;
+        else if (revenue >= 12) key = 12;
+        else if (revenue >= 11) key = 11;
+        else if (revenue >= 10) key = 10;
+        else if (revenue >= 8) key = 8;
+        else if (revenue >= 6) key = 6;
+        else key = 5; // 0-5
+
+        if (TaxChartRects.TryGetValue(key, out var r))
+        {
+            return r;
+        }
+        return null;
     }
 }

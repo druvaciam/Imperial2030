@@ -15,6 +15,7 @@ public class NationState
     public bool HasBuiltThisTurn { get; set; } = false;
     public bool HasProducedThisTurn { get; set; } = false;
     public bool HasImportedThisTurn { get; set; } = false;
+    public int TaxChartPosition { get; set; } = 0;
 
     public Guid? ControllerId { get; set; }
     [ForeignKey(nameof(ControllerId))]

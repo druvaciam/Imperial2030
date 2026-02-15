@@ -1249,36 +1249,30 @@ public class GamesController : ControllerBase
         }
 
         // --- Step 4: Adding Power Points ---
-        // Formula: Explicit Lookup based on "At least X Tax -> Y Power"
-        // 0-5: 0
-        // 6-7: 1
-        // 8-9: 2
-        // 10: 3
-        // 11: 4
-        // 12: 5
-        // 13: 6
-        // 14: 7
-        // 15: 8
-        // 16-17: 9
-        // 18+: 10
-        
-        int powerGain = 0;
-        if (totalTaxRevenue >= 18) powerGain = 10;
-        else if (totalTaxRevenue >= 16) powerGain = 9;
-        else if (totalTaxRevenue >= 15) powerGain = 8;
-        else if (totalTaxRevenue >= 14) powerGain = 7;
-        else if (totalTaxRevenue >= 13) powerGain = 6;
-        else if (totalTaxRevenue >= 12) powerGain = 5;
-        else if (totalTaxRevenue >= 11) powerGain = 4;
-        else if (totalTaxRevenue >= 10) powerGain = 3;
-        else if (totalTaxRevenue >= 8) powerGain = 2;
-        else if (totalTaxRevenue >= 6) powerGain = 1;
-        else powerGain = 0;
+        // Power gain is based on Tax Revenue
+        // Using the explicit lookup table provided by user:
+        // Tax: 0-5 -> 0 Power
+        // ...
+        // Tax: 18+ -> 10 Power
 
-        // Special case: 
-        // "The newly acquired power points are added to the previous point standing"
+        int powerGain = 0;
+        if (totalTaxRevenue <= 5) powerGain = 0;
+        else if (totalTaxRevenue <= 7) powerGain = 1;
+        else if (totalTaxRevenue <= 9) powerGain = 2;
+        else if (totalTaxRevenue == 10) powerGain = 3;
+        else if (totalTaxRevenue == 11) powerGain = 4;
+        else if (totalTaxRevenue == 12) powerGain = 5;
+        else if (totalTaxRevenue == 13) powerGain = 6;
+        else if (totalTaxRevenue == 14) powerGain = 7;
+        else if (totalTaxRevenue == 15) powerGain = 8;
+        else if (totalTaxRevenue <= 17) powerGain = 9;
+        else powerGain = 10; // 18+
+
         nationState.Power += powerGain;
-        if (nationState.Power > 25) nationState.Power = 25; // Max 25? "As soon as a nation has reached a total of 25 power points, the game ends."
+        if (nationState.Power > 25) nationState.Power = 25;
+
+        // Update Tax Chart Position
+        nationState.TaxChartPosition = totalTaxRevenue;
 
         // Save Changes
         _context.Entry(nationState).State = EntityState.Modified;

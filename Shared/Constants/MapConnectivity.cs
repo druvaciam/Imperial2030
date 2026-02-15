@@ -43,11 +43,12 @@ public static class MapConnectivity
         // --- RUSSIA & ASIA ---
         { "Moscow", new List<string> { "Ukraine", "Novosibirsk", "Murmansk", "Kazakhstan", "Turkey" } },
         { "Murmansk", new List<string> { "Moscow", "Novosibirsk", "NorthAtlantic", "Berlin" } },
-        { "Novosibirsk", new List<string> { "Moscow", "Murmansk", "Vladivostok", "Kazakhstan", "Urumqi", "Mongolia" } },
-        { "Vladivostok", new List<string> { "Novosibirsk", "Mongolia", "Beijing", "NorthPacific", "SeaOfJapan" } },
+        { "Novosibirsk", new List<string> { "Moscow", "Murmansk", "Vladivostok", "Kazakhstan", "Mongolia" } },
+        { "Vladivostok", new List<string> { "Novosibirsk", "Mongolia", "Beijing", "NorthPacific", "SeaOfJapan", "Korea" } },
         { "Mongolia", new List<string> { "Novosibirsk", "Vladivostok", "Beijing", "Urumqi", "Kazakhstan" } },
         { "Kazakhstan", new List<string> { "Moscow", "Novosibirsk", "Urumqi", "Mongolia", "Afghanistan" } },
-        { "Urumqi", new List<string> { "Novosibirsk", "Kazakhstan", "Beijing", "Chongqing", "NewDelhi", "Mongolia", "Afghanistan" } },
+        { "Urumqi", new List<string> { "Kazakhstan", "Beijing", "Chongqing", "NewDelhi", "Mongolia", "Afghanistan" } },
+        { "Korea", new List<string> { "Beijing", "Vladivostok", "SeaOfJapan" } },
         { "Beijing", new List<string> { "Urumqi", "Chongqing", "Shanghai", "Vladivostok", "Korea", "SeaOfJapan", "Mongolia" } },
         { "Shanghai", new List<string> { "Beijing", "Chongqing", "SeaOfJapan", "ChinaSea" } },
         { "Chongqing", new List<string> { "Beijing", "Shanghai", "Urumqi", "Kolkata", "Indochina" } },
@@ -79,8 +80,8 @@ public static class MapConnectivity
         { "SouthPacific", new List<string> { "NorthPacific", "SanFrancisco", "Colombia", "Peru", "Argentina", "TasmanSea", "ChinaSea" } },
         { "CaribbeanSea", new List<string> { "NewOrleans", "Colombia", "NorthAtlantic", "SouthAtlantic", "Mexico", "GulfOfGuinea" } },
         { "SeaOfJapan", new List<string> { "Vladivostok", "Japan", "NorthPacific", "Beijing", "Shanghai", "Korea", "ChinaSea" } },
-        { "ChinaSea", new List<string> { "Shanghai", "Indochina", "Indonesia", "Philippines", "SeaOfJapan", "IndianOcean", "SouthPacific", "NorthPacific" } },
-        { "TasmanSea", new List<string> { "Australia", "NewZealand", "SouthPacific", "Indonesia", "IndianOcean" } },
+        { "ChinaSea", new List<string> { "Shanghai", "Indochina", "Indonesia", "Philippines", "SeaOfJapan", "IndianOcean", "SouthPacific", "NorthPacific", "TasmanSea" } },
+        { "TasmanSea", new List<string> { "Australia", "NewZealand", "SouthPacific", "Indonesia", "IndianOcean", "ChinaSea" } },
         { "GulfOfGuinea", new List<string> { "Nigeria", "Guinea", "Congo", "SouthAtlantic", "NorthAtlantic", "CaribbeanSea", "IndianOcean" } },
     };
 
@@ -99,30 +100,12 @@ public static class MapConnectivity
         }
         else
         {
-            // Fleet
-            var currentT = TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == territoryId);
-            if (currentT == null) return Enumerable.Empty<string>();
-
-            if (currentT.Type == Shared.Models.TerritoryType.Land)
-            {
-                // Fleet in Port: Can only move to Sea
-                return neighbors.Where(n => {
-                     var t = TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == n);
-                     return t != null && t.Type == Shared.Models.TerritoryType.Sea;
-                });
-            }
-            else
-            {
-                // Fleet in Sea: Can move to Sea or Land (Port)
-                return neighbors.Where(n => {
-                     var t = TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == n);
-                     if (t == null) return false;
-                     if (t.Type == Shared.Models.TerritoryType.Sea) return true;
-                     
-                     // Land: Must be a Port (Have a CityType)
-                     return t.CityType != Shared.Models.CityType.None;
-                });
-            }
+            // Fleet: Can ONLY move to Sea regions
+            // (Whether starting from Land/Port or Sea, destination must be Sea)
+            return neighbors.Where(n => {
+                 var t = TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == n);
+                 return t != null && t.Type == Shared.Models.TerritoryType.Sea;
+            });
         }
     }
 }

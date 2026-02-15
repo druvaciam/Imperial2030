@@ -8,6 +8,7 @@ public class NationStateDto
     public int? RondelPosition { get; set; }
     public string? ControllerName { get; set; }
     public bool HasBuiltThisTurn { get; set; }
+    public int TaxChartPosition { get; set; }
     public bool HasMovedThisTurn { get; set; }
     public bool HasProducedThisTurn { get; set; }
     public bool HasImportedThisTurn { get; set; }

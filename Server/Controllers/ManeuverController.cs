@@ -175,54 +175,16 @@ public class ManeuverController : ControllerBase
             switch (game.CurrentManeuverPhase)
             {
                 case ManeuverPhase.Fleets:
+                    await UpdateTerritoryControl(game);
                     game.CurrentManeuverPhase = ManeuverPhase.Armies;
                     break;
                 case ManeuverPhase.Armies:
-                    // Automatic Flag Placement Logic
-                    var territoriesWithUnits = game.Units.Select(u => u.TerritoryId).Distinct().ToList();
-                    
-                    foreach (var tId in territoriesWithUnits)
-                    {
-                        var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tId).ToList();
-                        if (!unitsInTerritory.Any()) continue;
-
-                        var firstNation = unitsInTerritory.First().Nation;
-                        if (unitsInTerritory.All(u => u.Nation == firstNation))
-                        {
-                            var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tId);
-                            
-                            if (territoryDef != null)
-                            {
-                            // Direct DB Check to avoid "Row not found" or Stale Entity issues
-                            // We do NOT use game.TerritoryStates here because it might be out of sync.
-                            var tState = await _context.TerritoryStates
-                                .FirstOrDefaultAsync(ts => ts.GameId == game.Id && ts.TerritoryId == tId);
-
-                            if (tState == null)
-                            {
-                                tState = new TerritoryState { TerritoryId = tId, GameId = game.Id };
-                                _context.TerritoryStates.Add(tState);
-                            }
-
-                            // If I am the owner (home province), I control it naturally. 
-                            // If I am NOT the owner, I place a flag.
-                            // Update controller (Place Flag) ONLY IF NEUTRAL TERRITORY
-                            // Flags are NOT placed on Home Provinces (Nation is not null)
-                            bool isHomeProvince = territoryDef.Nation.HasValue;
-
-                            if (!isHomeProvince && tState.Controller != firstNation)
-                            {
-                                tState.Controller = firstNation;
-                            }
-                        }
-                    }
-                }
-
-                game.CurrentManeuverPhase = ManeuverPhase.None; 
-                break;
-            default:
-                return BadRequest("Invalid phase transition.");
-        }
+                    await UpdateTerritoryControl(game);
+                    game.CurrentManeuverPhase = ManeuverPhase.None; 
+                    break;
+                default:
+                    return BadRequest("Invalid phase transition.");
+            }
         
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -236,6 +198,49 @@ public class ManeuverController : ControllerBase
         return StatusCode(500, ex.Message);
     }
 }
+
+    private async Task UpdateTerritoryControl(Game game)
+    {
+        // Automatic Flag Placement Logic
+        var territoriesWithUnits = game.Units.Select(u => u.TerritoryId).Distinct().ToList();
+        
+        foreach (var tId in territoriesWithUnits)
+        {
+            var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tId).ToList();
+            if (!unitsInTerritory.Any()) continue;
+
+            var firstNation = unitsInTerritory.First().Nation;
+            if (unitsInTerritory.All(u => u.Nation == firstNation))
+            {
+                var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tId);
+                
+                if (territoryDef != null)
+                {
+                    // Direct DB Check to avoid "Row not found" or Stale Entity issues
+                    // We do NOT use game.TerritoryStates here because it might be out of sync.
+                    var tState = await _context.TerritoryStates
+                        .FirstOrDefaultAsync(ts => ts.GameId == game.Id && ts.TerritoryId == tId);
+
+                    if (tState == null)
+                    {
+                        tState = new TerritoryState { TerritoryId = tId, GameId = game.Id };
+                        _context.TerritoryStates.Add(tState);
+                    }
+
+                    // If I am the owner (home province), I control it naturally. 
+                    // If I am NOT the owner, I place a flag.
+                    // Update controller (Place Flag) ONLY IF NEUTRAL TERRITORY
+                    // Flags are NOT placed on Home Provinces (Nation is not null)
+                    bool isHomeProvince = territoryDef.Nation.HasValue;
+
+                    if (!isHomeProvince && tState.Controller != firstNation)
+                    {
+                        tState.Controller = firstNation;
+                    }
+                }
+            }
+        }
+    }
 
     private void ResolveBattles(Game game, ApplicationDbContext context)
     {
@@ -294,8 +299,8 @@ public class ManeuverController : ControllerBase
             {
                 foreach (var neighborId in neighbors)
                 {
-                    // If neighbor IS the destination, we can move there (exit rail network)
-                    if (neighborId == endId) return true;
+                    // Shortcut REMOVED: Must traverse only valid rail nodes.
+                    // if (neighborId == endId) return true;
 
                     if (visited.Contains(neighborId)) continue;
                     
