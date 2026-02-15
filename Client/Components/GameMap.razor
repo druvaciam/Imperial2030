@@ -3,6 +3,35 @@
 @using Imperial2030.Client.Constants
 
 <div class="map-container">
+    @if (ShowConvoyModal)
+    {
+        <div class="modal fade show d-block" tabindex="-1" role="dialog" style="background-color: rgba(0,0,0,0.5); z-index: 3000;">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Select Convoy Path</h5>
+                        <button type="button" class="btn-close" @onclick="CloseConvoyModal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Multiple convoy routes available. Choose one:</p>
+                        <div class="list-group">
+                            @for (int i = 0; i < ConvoyOptions.Count; i++)
+                            {
+                                var path = ConvoyOptions[i];
+                                var index = i; 
+                                <button type="button" class="list-group-item list-group-item-action" @onclick="() => SelectConvoyOption(index)">
+                                    Route @(i + 1): via @string.Join(", ", path.Select(f => f.TerritoryId))
+                                </button>
+                            }
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="CloseConvoyModal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
 <svg
    version="1.1"
    id="svg1"
@@ -773,15 +802,15 @@
     }
   </g>
 </svg>
-<div style="position: absolute; bottom: 20px; right: 20px; display: flex; gap: 10px;">
+
+
     @if (IsMyTurn && Game?.ManeuverState?.Phase != ManeuverPhase.None)
     {
-        <div class="card p-2 bg-light shadow">
+        <div class="card p-2 bg-light shadow" style="position: absolute; top: 10px; right: 10px; z-index: 500;">
             <h6 class="mb-2">Phase: @Game.ManeuverState.Phase</h6>
             <button class="btn btn-primary btn-sm" @onclick="NextPhase">End Phase</button>
         </div>
     }
-</div>
 </div>
 
 <style>
@@ -887,37 +916,87 @@
     private async Task HandleManeuverClick(string territoryId, Imperial2030.Shared.Models.Nation nation)
     {
         // 1. Execute Move if valid (PRIORITY: If we have a selection and clicked a valid target, MOVE)
-        if (selectedUnitId.HasValue && validDestinations.Contains(territoryId))
+        if (selectedUnitId.HasValue)
         {
             var selectedUnit = Game.Units.FirstOrDefault(u => u.Id == selectedUnitId.Value);
-            if (selectedUnit != null)
+            if (selectedUnit == null) 
             {
-                bool success = false;
-                if (selectedUnit.UnitType == UnitType.Fleet)
-                {
-                    success = await ManeuverService.MoveFleet(Game.Id, selectedUnit.Id, territoryId);
-                }
-                else if (selectedUnit.UnitType == UnitType.Army)
-                {
-                    success = await ManeuverService.MoveArmy(Game.Id, selectedUnit.Id, territoryId);
-                }
+                DeselectUnit();
+                return;
+            }
 
-                if (success)
+            // Check Adjacency / Valid Destinations
+            // We already calculated validDestinations on selection, but let's re-verify specific types.
+            
+            // Is Destination standard neighbor?
+            if (!validDestinations.Contains(territoryId))
+            {
+                 DeselectUnit(); // Invalid move target -> Deselect
+                 
+                 // OR: If clicking another unit, maybe select that instead? 
+                 // Current logic: Deselect. 
+                 // We could check if we clicked a friendly unit to select it?
+                 // But for now, stick to deselect.
+                 
+                 // Wait, if I click my own unit to deselect, that's handled in selection. 
+                 // If I click here, it's a move attempt.
+                 return;
+            }
+
+            // Determine Move Type
+            bool isStandard = false; 
+            if (MapConnectivity.Adjacency.TryGetValue(selectedUnit.TerritoryId, out var neighbors))
+            {
+                isStandard = neighbors.Contains(territoryId);
+            }
+            
+            bool isRail = false;
+            if (!isStandard && selectedUnit.UnitType == UnitType.Army)
+            {
+                var railDestinations = GetRailReachableTerritories(selectedUnit.TerritoryId, selectedUnit.Nation);
+                isRail = railDestinations.Contains(territoryId);
+            }
+
+            if (isStandard || isRail || selectedUnit.UnitType == UnitType.Fleet)
+            {
+                // Standard or Rail Move
+                await MoveUnit(selectedUnit, territoryId); 
+                DeselectUnit();
+            }
+            else
+            {
+                // Army Convoy Check
+                var convoyPaths = GetAllConvoyPaths(Game, selectedUnit.TerritoryId, territoryId, selectedUnit.Nation);
+                
+                if (convoyPaths.Count == 0)
                 {
-                    selectedUnitId = null;
-                    validDestinations.Clear();
-                    return; // Stop processing
+                    DeselectUnit();
+                }
+                else if (convoyPaths.Count == 1)
+                {
+                    // Single Convoy Path
+                    await MoveUnit(selectedUnit, territoryId, convoyPaths[0].Select(u => u.Id).ToList());
+                    DeselectUnit();
                 }
                 else
                 {
-                     await JSRuntime.InvokeVoidAsync("alert", "Move failed.");
-                     // Keep selection? Or clear? Usually keep to try again.
-                     return;
+                    // Multiple Convoy Paths -> Modal
+                    ConvoyOptions = convoyPaths;
+                    PendingMoveDest = territoryId;
+                    ShowConvoyModal = true;
+                    StateHasChanged();
                 }
             }
         }
-
-        // 2. Check for selectable unit at location (Only if not moving)
+        else
+        {
+             // Select Unit Logic
+             await SelectUnitAt(territoryId, nation);
+        }
+    }
+    private async Task SelectUnitAt(string territoryId, Imperial2030.Shared.Models.Nation nation)
+    {
+        // 2. Check for selectable unit at location
         var unitsAtLoc = Game.Units
             .Where(u => u.TerritoryId == territoryId && u.Nation == nation)
             .ToList();
@@ -931,8 +1010,7 @@
             // Toggle Selection
             if (selectedUnitId == relevantUnit.Id)
             {
-                selectedUnitId = null;
-                validDestinations.Clear();
+                DeselectUnit();
             }
             else
             {
@@ -943,13 +1021,18 @@
             return;
         }
 
-        // 3. Deselect if clicked empty space and not valid move
+        // 3. Deselect if clicked empty space
         if (selectedUnitId.HasValue)
         {
-            selectedUnitId = null;
-            validDestinations.Clear();
-            StateHasChanged();
+            DeselectUnit();
         }
+    }
+
+    private void DeselectUnit()
+    {
+        selectedUnitId = null;
+        validDestinations.Clear();
+        StateHasChanged();
     }
 
     private List<string> GetValidDestinations(Unit unit, string currentTerritoryId)
@@ -962,7 +1045,9 @@
         // 2. Army Rail Logic
         // Combine neighbors with rail-reachable territories
         var railDestinations = GetRailReachableTerritories(currentTerritoryId, unit.Nation);
-        var allDestinations = neighbors.Union(railDestinations).Distinct().ToList();
+        var convoyDestinations = GetConvoyDestinations(currentTerritoryId, unit.Nation);
+
+        var allDestinations = neighbors.Union(railDestinations).Union(convoyDestinations).Distinct().ToList();
         allDestinations.Remove(currentTerritoryId); // Fix: Exclude self (click = deselect)
         return allDestinations;
     }
@@ -1028,9 +1113,11 @@
         var hostileUnits = Game.Units.Any(u => u.TerritoryId == territoryId && u.Nation != nation && u.UnitType == UnitType.Army);
         if (hostileUnits) return false;
 
-        // Console.WriteLine($"RailValid {territoryId}? YES");
+    // Console.WriteLine($"RailValid {territoryId}? YES");
         return true;
     }
+
+
 
     private async Task HandleFactoryClick(string territoryId, Imperial2030.Shared.Models.Nation nation, Imperial2030.Shared.Models.NationStateDto ns)
     {
@@ -1070,6 +1157,10 @@
         }
     }
 
+    private string? hoveredTerritoryId;
+    
+
+
     private string GetTerritoryClass(string territoryId)
     {
         string baseClass = "map-territory";
@@ -1082,8 +1173,6 @@
         }
 
         var territoryState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryId);
-        
-        // ... (existing logic) ...
         
         if (IsMyTurn)
         {
@@ -1259,5 +1348,173 @@
             return r;
         }
         return null;
+    }
+    // Convoy Logic & Modal
+    private bool ShowConvoyModal { get; set; } = false;
+    private List<List<Unit>> ConvoyOptions { get; set; } = new();
+    private string? PendingMoveDest { get; set; }
+
+    private void CloseConvoyModal()
+    {
+        ShowConvoyModal = false;
+        ConvoyOptions.Clear();
+        PendingMoveDest = null;
+        StateHasChanged();
+    }
+
+    private async Task SelectConvoyOption(int index)
+    {
+        if (index < 0 || index >= ConvoyOptions.Count || PendingMoveDest == null || !selectedUnitId.HasValue) return;
+
+        var path = ConvoyOptions[index];
+        var unit = Game.Units.FirstOrDefault(u => u.Id == selectedUnitId.Value);
+        
+        if (unit != null)
+        {
+            await MoveUnit(unit, PendingMoveDest, path.Select(u => u.Id).ToList());
+        }
+
+        CloseConvoyModal();
+        DeselectUnit();
+    }
+
+    private async Task MoveUnit(Unit unit, string destinationId, List<Guid>? convoyFleets = null)
+    {
+        bool success;
+        if (unit.UnitType == UnitType.Fleet)
+        {
+            success = await ManeuverService.MoveFleet(Game.Id, unit.Id, destinationId);
+        }
+        else
+        {
+            success = await ManeuverService.MoveArmy(Game.Id, unit.Id, destinationId, convoyFleets);
+        }
+
+        if (!success)
+        {
+             await JSRuntime.InvokeVoidAsync("alert", "Move failed (validation error).");
+        }
+    }
+
+    private List<List<Unit>> GetAllConvoyPaths(GameDetailDto game, string startId, string endId, Imperial2030.Shared.Models.Nation nation)
+    {
+        var paths = new List<List<Unit>>();
+        
+        var availableFleets = game.Units
+            .Where(u => u.UnitType == UnitType.Fleet && u.Nation == nation && !u.HasConvoyed)
+            .GroupBy(u => u.TerritoryId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        if (!availableFleets.Any()) return paths;
+
+        // Seas adjacent to start (Army Start -> Sea)
+        var startNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(startId, true);
+        var seasAdjacentToStart = startNeighbors.Where(n => availableFleets.ContainsKey(n)).ToList();
+        
+        // Seas adjacent to end (Sea -> Army End)
+        var endNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(endId, true);
+        var targetSeas = new HashSet<string>(endNeighbors);
+        
+        // Queue: (CurrentSea, PathOfFleets)
+        var queue = new Queue<(string Region, List<Unit> Path)>();
+        
+        foreach (var sea in seasAdjacentToStart)
+        {
+            var fleet = availableFleets[sea].First();
+            queue.Enqueue((sea, new List<Unit> { fleet }));
+        }
+        
+        // As we want *all* paths, we need to be careful with cycles but allow re-visiting nodes for different paths?
+        // Actually, for "options" we usually just want shortest unique paths.
+        // Let's stick to simple BFS for now, maybe finding just ONE path per entry point?
+        // Or find all non-cyclic paths?
+        // Let's implement a BFS that tracks visited in path context.
+        
+        while (queue.Count > 0)
+        {
+            var (currentSea, path) = queue.Dequeue();
+            
+            if (targetSeas.Contains(currentSea))
+            {
+                paths.Add(path);
+                // If we have enough options, stop to update UI faster
+                if (paths.Count >= 5) break;
+                continue;
+            }
+            
+            // Limit path length to prevent infinite search
+            if (path.Count >= 5) continue;
+
+            var seaNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentSea, true); // Sea-Sea
+            
+            foreach (var nextSea in seaNeighbors)
+            {
+                if (availableFleets.ContainsKey(nextSea) && !path.Any(f => f.TerritoryId == nextSea))
+                {
+                     var fleet = availableFleets[nextSea].First();
+                     var newPath = new List<Unit>(path) { fleet };
+                     queue.Enqueue((nextSea, newPath));
+                }
+            }
+        }
+        
+        return paths;
+    }
+
+    private List<string> GetConvoyDestinations(string startId, Imperial2030.Shared.Models.Nation nation)
+    {
+        var destinations = new List<string>();
+        if (Game == null) return destinations;
+
+        var availableFleets = Game.Units
+            .Where(u => u.UnitType == UnitType.Fleet && u.Nation == nation && !u.HasConvoyed)
+            .Select(u => u.TerritoryId)
+            .ToHashSet();
+
+        if (!availableFleets.Any()) return destinations;
+
+        // BFS through Fleets
+        var queue = new Queue<string>();
+        var visitedSeas = new HashSet<string>();
+
+        // 1. Embark: Land -> Sea
+        var startNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(startId, true);
+        foreach (var sea in startNeighbors)
+        {
+            if (availableFleets.Contains(sea))
+            {
+                queue.Enqueue(sea);
+                visitedSeas.Add(sea);
+            }
+        }
+
+        while (queue.Count > 0)
+        {
+            var currentSea = queue.Dequeue();
+
+            // 2. Disembark: Sea -> Land
+            var landNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentSea, false); // Get adjacent lands
+            foreach (var land in landNeighbors)
+            {
+                // Cannot move back to start via convoy (rule: A -> B, A != B)
+                if (land != startId)
+                {
+                    destinations.Add(land);
+                }
+            }
+
+            // 3. Move to next Sea (Chain): Sea -> Sea
+            var nextSeas = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentSea, true);
+            foreach (var next in nextSeas)
+            {
+                if (availableFleets.Contains(next) && !visitedSeas.Contains(next))
+                {
+                    visitedSeas.Add(next);
+                    queue.Enqueue(next);
+                }
+            }
+        }
+
+        return destinations.Distinct().ToList();
     }
 }

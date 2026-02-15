@@ -798,12 +798,12 @@ public class GamesController : ControllerBase
         // Turn advancement is now manual via EndTurn endpoint
         
         // Reset Unit Movement for this nation
-        var unitsToReset = game.Units.Where(u => u.Nation == nation && u.HasMoved).ToList();
-        foreach (var unit in unitsToReset)
+        foreach(var u in game.Units.Where(u => u.Nation == nation))
         {
-            unit.HasMoved = false;
+             u.HasMoved = false;
+             u.HasConvoyed = false; 
+             _context.Entry(u).State = EntityState.Modified;
         }
-
         _context.Entry(controller).State = EntityState.Modified;
         _context.Entry(nationState).State = EntityState.Modified;
 

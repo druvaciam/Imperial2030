@@ -130,9 +130,43 @@ public class ManeuverController : ControllerBase
         if (!isAdjacent)
         {
             // Check Rail Logic
-            if (!CanMoveByRail(game, unit.TerritoryId, request.DestinationId, nation))
+            if (CanMoveByRail(game, unit.TerritoryId, request.DestinationId, nation))
             {
-                return BadRequest("Destination is not adjacent and no valid rail path exists.");
+                // Move valid by Rail - No extra cost/side effects for now
+            }
+            else
+            {
+                // Check Convoy Logic
+                List<Unit>? usedFleets = null;
+
+                if (request.ConvoyFleetIds != null && request.ConvoyFleetIds.Any())
+                {
+                    // Validate specific fleets provided by client
+                    usedFleets = ValidateSpecificConvoyFleets(game, unit.TerritoryId, request.DestinationId, nation, request.ConvoyFleetIds);
+                    if (usedFleets == null)
+                    {
+                        return BadRequest("Invalid convoy path with specified fleets.");
+                    }
+                }
+                else
+                {
+                    // Auto-select fleets
+                    usedFleets = GetConvoyFleets(game, unit.TerritoryId, request.DestinationId, nation);
+                }
+
+                if (usedFleets != null)
+                {
+                    // Mark fleets as used
+                    foreach (var fleet in usedFleets)
+                    {
+                        fleet.HasConvoyed = true;
+                        _context.Entry(fleet).State = EntityState.Modified;
+                    }
+                }
+                else
+                {
+                    return BadRequest("Destination is not adjacent, and no valid rail or convoy path exists.");
+                }
             }
         }
 
@@ -334,10 +368,185 @@ public class ManeuverController : ControllerBase
         }
         return false;
     }
+    private List<Unit>? GetConvoyFleets(Game game, string startId, string destId, Nation nation)
+    {
+        // 1. Identify all valid "Launch Points" (Current + Rail Reachable)
+        var launchPoints = new HashSet<string>();
+        launchPoints.Add(startId);
+        
+        var railReachable = GetRailReachableTerritories(game, startId, nation);
+        foreach (var r in railReachable) launchPoints.Add(r);
+
+        // 2. BFS from Launch Points seeking Destination via Sea
+        // State: (CurrentTerritory, UsedFleets)
+        // Optimization: We only need to find *one* valid path.
+        // But we need to track fleets to ensure we don't double-count or use used ones?
+        // Actually, since we return on first success, tracking "Path" is enough.
+        
+        var queue = new Queue<(string Location, List<Unit> Fleets)>();
+        var visited = new HashSet<string>();
+
+        foreach (var lp in launchPoints)
+        {
+            // Optimization: If launch point IS destination (rail move), we handle it in Rail check? 
+            // ManeuverController logic checks Rail first. So here destId is NOT reachable by rail.
+            
+            queue.Enqueue((lp, new List<Unit>()));
+            visited.Add(lp);
+        }
+
+        while (queue.Count > 0)
+        {
+            var (currentId, currentFleets) = queue.Dequeue();
+
+            // Neighbors
+            if (!MapConnectivity.Adjacency.TryGetValue(currentId, out var neighbors)) continue;
+
+            foreach (var neighbor in neighbors)
+            {
+                if (visited.Contains(neighbor)) continue;
+
+                var neighborDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == neighbor);
+                if (neighborDef == null) continue;
+
+                if (neighborDef.Type == TerritoryType.Sea)
+                {
+                    // To enter/cross sea, we need an UNUSED fleet there
+                    var fleet = game.Units.FirstOrDefault(u => 
+                        u.Nation == nation && 
+                        u.TerritoryId == neighbor && 
+                        u.UnitType == UnitType.Fleet && 
+                        !u.HasConvoyed &&
+                        !currentFleets.Contains(u)); // Ensure we don't re-use same fleet instance in loop (BFS prevents loop but safe)
+
+                    if (fleet != null)
+                    {
+                        var newFleets = new List<Unit>(currentFleets) { fleet };
+                        visited.Add(neighbor);
+                        queue.Enqueue((neighbor, newFleets));
+                    }
+                }
+                else if (neighborDef.Type == TerritoryType.Land)
+                {
+                    // Potential Destination
+                    if (neighbor == destId)
+                    {
+                        return currentFleets;
+                    }
+                    // Cannot pass through Land during Convoy (must end at Land)
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private List<string> GetRailReachableTerritories(Game game, string startId, Nation nation)
+    {
+        var reachable = new List<string>();
+        var queue = new Queue<string>();
+        var visited = new HashSet<string>();
+
+        // Start BFS (Same logic as CanMoveByRail but collecting)
+        // If start is not valid rail? 
+        // CanMoveByRail assumed checks inside loop.
+        
+        queue.Enqueue(startId);
+        visited.Add(startId);
+
+        while (queue.Count > 0)
+        {
+            var currentId = queue.Dequeue();
+            
+            if (MapConnectivity.Adjacency.TryGetValue(currentId, out var neighbors))
+            {
+                foreach (var neighborId in neighbors)
+                {
+                    if (visited.Contains(neighborId)) continue;
+                    
+                    var neighborDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == neighborId);
+                    if (neighborDef == null || neighborDef.Type != TerritoryType.Land) continue;
+                    
+                    // Logic from CanMoveByRail
+                    bool isHome = neighborDef.Nation == nation;
+                    var tState = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == neighborId);
+                    bool isControlled = (isHome && (tState == null || tState.Controller == nation)) ||
+                                        (tState != null && tState.Controller == nation);
+                    
+                    if (!isHome && !isControlled) continue;
+
+                    bool hasHostileUnits = game.Units.Any(u => u.TerritoryId == neighborId && u.Nation != nation);
+                    if (hasHostileUnits) continue;
+
+                    visited.Add(neighborId);
+                    reachable.Add(neighborId);
+                    queue.Enqueue(neighborId);
+                }
+            }
+        }
+        return reachable;
+    }
+
+    private List<Unit>? ValidateSpecificConvoyFleets(Game game, string startId, string destId, Nation nation, List<Guid> fleetIds)
+    {
+        // 1. Retrieve Fleets
+        var fleets = new List<Unit>();
+        foreach(var fId in fleetIds)
+        {
+            var f = game.Units.FirstOrDefault(u => u.Id == fId);
+            if(f == null || f.Nation != nation || f.UnitType != UnitType.Fleet || f.HasConvoyed) 
+                return null; // Invalid fleet (not found, wrong nation, not fleet, or already used)
+            fleets.Add(f);
+        }
+
+        // 2. Validate Chain (BFS restricted to ONLY these fleets)
+        // Start from launch points
+        var launchPoints = new HashSet<string>();
+        launchPoints.Add(startId);
+        var railReachable = GetRailReachableTerritories(game, startId, nation);
+        foreach (var r in railReachable) launchPoints.Add(r);
+
+        var queue = new Queue<string>();
+        var visited = new HashSet<string>();
+        
+        foreach (var lp in launchPoints)
+        {
+            queue.Enqueue(lp);
+            visited.Add(lp);
+        }
+
+        while(queue.Count > 0)
+        {
+            var currentId = queue.Dequeue();
+            
+            // Fix: Use direct Adjacency to see Sea neighbors
+            if (!MapConnectivity.Adjacency.TryGetValue(currentId, out var neighbors)) continue;
+
+            foreach(var neighbor in neighbors)
+            {
+                if(visited.Contains(neighbor)) continue;
+
+                var tumor = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == neighbor);
+                if (tumor == null) continue;
+
+                if (tumor.Type == TerritoryType.Sea)
+                {
+                    // Must have one of the SPECIFIED fleets here
+                    if (fleets.Any(f => f.TerritoryId == neighbor))
+                    {
+                        visited.Add(neighbor);
+                        queue.Enqueue(neighbor);
+                    }
+                }
+                else if (tumor.Type == TerritoryType.Land)
+                {
+                    if (neighbor == destId) return fleets;
+                }
+            }
+        }
+
+        return null; // Chain broken or destination unreachable with these fleets
+    }
 }
 
-public class MoveUnitRequest
-{
-    public Guid UnitId { get; set; }
-    public string DestinationId { get; set; }
-}
+

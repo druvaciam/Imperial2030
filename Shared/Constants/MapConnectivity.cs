@@ -72,10 +72,10 @@ public static class MapConnectivity
         { "NewZealand", new List<string> { "TasmanSea" } },
 
         // --- SEA REGIONS (Interconnectivity) ---
-        { "NorthAtlantic", new List<string> { "Canada", "NewYork", "Fortaleza", "RioDeJaneiro", "Guinea", "Paris", "London", "Berlin", "MediterraneanSea", "CaribbeanSea", "Murmansk", "GulfOfGuinea" } },
+        { "NorthAtlantic", new List<string> { "Canada", "NewYork", "Fortaleza", "RioDeJaneiro", "Guinea", "North-Africa", "Paris", "London", "Berlin", "MediterraneanSea", "CaribbeanSea", "Murmansk", "GulfOfGuinea", "Quebec" } },
         { "MediterraneanSea", new List<string> { "NorthAtlantic", "IndianOcean", "Paris", "Rome", "Turkey", "East-Africa", "North-Africa", "NearEast" } },
         { "IndianOcean", new List<string> { "South-Africa", "East-Africa", "Mumbai", "Chennai", "Kolkata", "Indonesia", "GulfOfGuinea", "Indochina", "ChinaSea", "Iran", "MediterraneanSea", "NearEast", "SouthAtlantic", "TasmanSea" } },
-        { "SouthAtlantic", new List<string> { "Fortaleza", "RioDeJaneiro", "Argentina", "South-Africa", "Congo", "Nigeria", "Guinea", "IndianOcean", "GulfOfGuinea" } },
+        { "SouthAtlantic", new List<string> { "Fortaleza", "RioDeJaneiro", "Argentina", "South-Africa", "Congo", "Nigeria", "Guinea", "IndianOcean", "GulfOfGuinea", "CaribbeanSea" } },
         { "NorthPacific", new List<string> { "Alaska", "Canada", "SanFrancisco", "Mexico", "Vladivostok", "SeaOfJapan", "ChinaSea", "SouthPacific" } },
         { "SouthPacific", new List<string> { "NorthPacific", "SanFrancisco", "Colombia", "Peru", "Argentina", "TasmanSea", "ChinaSea" } },
         { "CaribbeanSea", new List<string> { "NewOrleans", "Colombia", "NorthAtlantic", "SouthAtlantic", "Mexico", "GulfOfGuinea" } },

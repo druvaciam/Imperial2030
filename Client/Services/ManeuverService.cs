@@ -29,9 +29,14 @@ public class ManeuverService
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<bool> MoveArmy(Guid gameId, Guid unitId, string destinationId)
+    public async Task<bool> MoveArmy(Guid gameId, Guid unitId, string destinationId, List<Guid>? convoyFleetIds = null)
     {
-        var request = new { UnitId = unitId, DestinationId = destinationId };
+        var request = new MoveUnitRequest 
+        { 
+            UnitId = unitId, 
+            DestinationId = destinationId,
+            ConvoyFleetIds = convoyFleetIds
+        };
         var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/move-army", request);
         return response.IsSuccessStatusCode;
     }
