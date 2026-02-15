@@ -35,7 +35,7 @@ public static class MapConnectivity
         // --- EUROPE ---
         { "London", new List<string> { "NorthAtlantic" } },
         { "Paris", new List<string> { "Berlin", "Rome", "Switzerland", "MediterraneanSea", "NorthAtlantic" } }, 
-        { "Switzerland", new List<string> { "Paris", "Berlin", "Rome", "MediterraneanSea" } },
+        { "Switzerland", new List<string> { "Paris", "Berlin", "Rome" } },
         { "Rome", new List<string> { "Paris", "Berlin", "Switzerland", "MediterraneanSea", "Turkey" } }, 
         { "Berlin", new List<string> { "Paris", "Rome", "Switzerland", "Ukraine", "NorthAtlantic", "Murmansk" } }, 
         { "Ukraine", new List<string> { "Moscow", "Berlin" } },
@@ -72,19 +72,18 @@ public static class MapConnectivity
 
         // --- SEA REGIONS (Interconnectivity) ---
         { "NorthAtlantic", new List<string> { "Canada", "NewYork", "Fortaleza", "RioDeJaneiro", "Guinea", "Paris", "London", "Berlin", "MediterraneanSea", "CaribbeanSea", "Murmansk", "GulfOfGuinea" } },
-        { "MediterraneanSea", new List<string> { "NorthAtlantic", "IndianOcean", "Paris", "Rome", "Switzerland", "Turkey", "East-Africa", "North-Africa", "NearEast" } },
-        { "IndianOcean", new List<string> { "South-Africa", "East-Africa", "Mumbai", "Chennai", "Kolkata", "Indonesia", "GulfOfGuinea", "Indochina", "ChinaSea", "Iran", "MediterraneanSea", "NearEast" } },
+        { "MediterraneanSea", new List<string> { "NorthAtlantic", "IndianOcean", "Paris", "Rome", "Turkey", "East-Africa", "North-Africa", "NearEast" } },
+        { "IndianOcean", new List<string> { "South-Africa", "East-Africa", "Mumbai", "Chennai", "Kolkata", "Indonesia", "GulfOfGuinea", "Indochina", "ChinaSea", "Iran", "MediterraneanSea", "NearEast", "SouthAtlantic", "TasmanSea" } },
         { "SouthAtlantic", new List<string> { "Fortaleza", "RioDeJaneiro", "Argentina", "South-Africa", "Congo", "Nigeria", "Guinea", "IndianOcean", "GulfOfGuinea" } },
         { "NorthPacific", new List<string> { "Alaska", "Canada", "SanFrancisco", "Mexico", "Vladivostok", "SeaOfJapan", "ChinaSea", "SouthPacific" } },
         { "SouthPacific", new List<string> { "NorthPacific", "SanFrancisco", "Colombia", "Peru", "Argentina", "TasmanSea", "ChinaSea" } },
         { "CaribbeanSea", new List<string> { "NewOrleans", "Colombia", "NorthAtlantic", "SouthAtlantic", "Mexico", "GulfOfGuinea" } },
         { "SeaOfJapan", new List<string> { "Vladivostok", "Japan", "NorthPacific", "Beijing", "Shanghai", "Korea", "ChinaSea" } },
         { "ChinaSea", new List<string> { "Shanghai", "Indochina", "Indonesia", "Philippines", "SeaOfJapan", "IndianOcean", "SouthPacific", "NorthPacific" } },
-        { "TasmanSea", new List<string> { "Australia", "NewZealand", "SouthPacific", "Indonesia" } },
+        { "TasmanSea", new List<string> { "Australia", "NewZealand", "SouthPacific", "Indonesia", "IndianOcean" } },
         { "GulfOfGuinea", new List<string> { "Nigeria", "Guinea", "Congo", "SouthAtlantic", "NorthAtlantic", "CaribbeanSea", "IndianOcean" } },
     };
 
-    // Helper for sea vs land distinction if needed (though TerritoryData.cs has CityType which helps)
     public static IEnumerable<string> GetNeighbors(string territoryId, bool isFleet)
     {
         if (!Adjacency.TryGetValue(territoryId, out var neighbors))
@@ -115,7 +114,14 @@ public static class MapConnectivity
             else
             {
                 // Fleet in Sea: Can move to Sea or Land (Port)
-                return neighbors;
+                return neighbors.Where(n => {
+                     var t = TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == n);
+                     if (t == null) return false;
+                     if (t.Type == Shared.Models.TerritoryType.Sea) return true;
+                     
+                     // Land: Must be a Port (Have a CityType)
+                     return t.CityType != Shared.Models.CityType.None;
+                });
             }
         }
     }

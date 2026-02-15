@@ -206,8 +206,11 @@ public class ManeuverController : ControllerBase
 
                             // If I am the owner (home province), I control it naturally. 
                             // If I am NOT the owner, I place a flag.
-                            // Update controller
-                            if (tState.Controller != firstNation)
+                            // Update controller (Place Flag) ONLY IF NEUTRAL TERRITORY
+                            // Flags are NOT placed on Home Provinces (Nation is not null)
+                            bool isHomeProvince = territoryDef.Nation.HasValue;
+
+                            if (!isHomeProvince && tState.Controller != firstNation)
                             {
                                 tState.Controller = firstNation;
                             }

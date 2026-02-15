@@ -1218,52 +1218,21 @@ public class GamesController : ControllerBase
             nationState.Treasury = 0;
         }
 
-        // --- Step 3: Success Bonus ---
         // Bonus for the Controller (Player)
-        // Chart:
-        // Revenue 0-5: 0
-        // Revenue 6-9: 1M
-        // Revenue 10-11: 2M
-        // Revenue 12-14: 3M
-        // Revenue 15+: (Revenue - 12) ? No, chart is usually specific.
-        // Let's approximate standard Imperial chart or 2030 specific?
-        // Imperial 2030 Rulebook: 
-        // Tax 6: 1M
-        // Tax 10: 2M
-        // Tax 12: 3M
-        // Tax 15: 4M
-        // Tax 18: 5M No... let's look for a formula or lookup.
-        // 
-        // Standard Imperial Chart (often same):
-        // <6: 0
+        // 0-5: 0
         // 6-9: 1
         // 10-11: 2
-        // 12-14: 3
-        // 15+: 5? 
-        // Let's implement a lookup based on "1 million with at least 6, 2 million with at least 10 etc."
-        // Let's assume:
-        // 6: 1
-        // 10: 2
-        // 12: 3
-        // 15: 4
-        // 18: 5
-        // ...
-        // Actually, the success bonus is (Revenue / 2) - 2 ? 
-        // 6/2 - 2 = 1. 
-        // 10/2 - 2 = 3 (Mismatch).
-        // Let's use written rules: "1m with at least 6, 2m with at least 10".
-        // Let's use a safe progressive check.
+        // 12-13: 3
+        // 14-15: 4
+        // 16+: 5
         
         int bonus = 0;
-        if (totalTaxRevenue >= 6) bonus = 1;
-        if (totalTaxRevenue >= 10) bonus = 2; // Replaces previous? Or adds? "The bonus is shown on the middle line". Usually absolute value.
-        if (totalTaxRevenue >= 12) bonus = 3;
-        if (totalTaxRevenue >= 15) bonus = 4;
-        if (totalTaxRevenue >= 17) bonus = 5; // Guessing the upper steps, rules summary is brief.
-        
-        // Let's verify with "Imperial 2030 tax chart" knowledge from general knowledge or stick to provided text:
-        // "1 million with at least 6, 2 million with at least 10 etc."
-        // I will implement flexible logic or comment "Extend chart".
+        if (totalTaxRevenue >= 16) bonus = 5;
+        else if (totalTaxRevenue >= 14) bonus = 4;
+        else if (totalTaxRevenue >= 12) bonus = 3;
+        else if (totalTaxRevenue >= 10) bonus = 2;
+        else if (totalTaxRevenue >= 6) bonus = 1;
+        else bonus = 0;
         
         // Check Treasury Ability to Pay Bonus
         // "If the soldiers‘ pay was so high that the treasury does not have enough money to pay the bonus, the bonus is reduced"
@@ -1280,31 +1249,31 @@ public class GamesController : ControllerBase
         }
 
         // --- Step 4: Adding Power Points ---
-        // "Based on its tax revenue... gains additional power points"
-        // Chart mapping (Imperial 2030):
-        // 0-4: 0
-        // 5: 1
-        // 6: 2
-        // 7: 3
-        // 8: 4
-        // 9: 5
-        // 10: 6
-        // 11: 7
-        // 12: 8
-        // 13: 9
-        // 14: 10
-        // 15: 11? 
-        // Power points usually = Tax - 4 (for Tax >= 5).
-        // 5-4 = 1. 6-4 = 2. 10-4=6. 
-        // Let's use (Revenue - 4), min 0.
-        // However, max power gain is 10? Or just linear?
-        // Imperial 2030 max tax is 23. 23-4 = 19 points? That's a lot. Max on track is 25.
-        // Let's use (Tax - 5) + 1? i.e. Tax - 4.
+        // Formula: Explicit Lookup based on "At least X Tax -> Y Power"
+        // 0-5: 0
+        // 6-7: 1
+        // 8-9: 2
+        // 10: 3
+        // 11: 4
+        // 12: 5
+        // 13: 6
+        // 14: 7
+        // 15: 8
+        // 16-17: 9
+        // 18+: 10
         
-        int powerGain = Math.Max(0, totalTaxRevenue - 5); 
-        // Wait. "6 million tax -> 2 power". 6-4=2. Corrects.
-        // "10 million tax -> 6 power". 10-4=6. Corrects.
-        // Formula seems to be Tax - 4 (min 0).
+        int powerGain = 0;
+        if (totalTaxRevenue >= 18) powerGain = 10;
+        else if (totalTaxRevenue >= 16) powerGain = 9;
+        else if (totalTaxRevenue >= 15) powerGain = 8;
+        else if (totalTaxRevenue >= 14) powerGain = 7;
+        else if (totalTaxRevenue >= 13) powerGain = 6;
+        else if (totalTaxRevenue >= 12) powerGain = 5;
+        else if (totalTaxRevenue >= 11) powerGain = 4;
+        else if (totalTaxRevenue >= 10) powerGain = 3;
+        else if (totalTaxRevenue >= 8) powerGain = 2;
+        else if (totalTaxRevenue >= 6) powerGain = 1;
+        else powerGain = 0;
 
         // Special case: 
         // "The newly acquired power points are added to the previous point standing"

@@ -764,25 +764,7 @@
 
     private async Task HandleManeuverClick(string territoryId, Imperial2030.Shared.Models.Nation nation)
     {
-        // 1. Check for selectable unit at location
-        var unitsAtLoc = Game.Units
-            .Where(u => u.TerritoryId == territoryId && u.Nation == nation)
-            .ToList();
-
-        var relevantUnit = unitsAtLoc.FirstOrDefault(u => 
-            (Game.ManeuverState.Phase == ManeuverPhase.Fleets && u.UnitType == UnitType.Fleet) ||
-            (Game.ManeuverState.Phase == ManeuverPhase.Armies && u.UnitType == UnitType.Army));
-
-        if (relevantUnit != null && !relevantUnit.HasMoved)
-        {
-            // Select Unit
-            selectedUnitId = relevantUnit.Id;
-            validDestinations = GetValidDestinations(relevantUnit, territoryId);
-            StateHasChanged();
-            return;
-        }
-
-        // 2. Execute Move if valid
+        // 1. Execute Move if valid (PRIORITY: If we have a selection and clicked a valid target, MOVE)
         if (selectedUnitId.HasValue && validDestinations.Contains(territoryId))
         {
             var selectedUnit = Game.Units.FirstOrDefault(u => u.Id == selectedUnitId.Value);
@@ -802,16 +784,46 @@
                 {
                     selectedUnitId = null;
                     validDestinations.Clear();
+                    return; // Stop processing
                 }
                 else
                 {
                      await JSRuntime.InvokeVoidAsync("alert", "Move failed.");
+                     // Keep selection? Or clear? Usually keep to try again.
+                     return;
                 }
             }
         }
-        else
+
+        // 2. Check for selectable unit at location (Only if not moving)
+        var unitsAtLoc = Game.Units
+            .Where(u => u.TerritoryId == territoryId && u.Nation == nation)
+            .ToList();
+
+        var relevantUnit = unitsAtLoc.FirstOrDefault(u => 
+            (Game.ManeuverState.Phase == ManeuverPhase.Fleets && u.UnitType == UnitType.Fleet) ||
+            (Game.ManeuverState.Phase == ManeuverPhase.Armies && u.UnitType == UnitType.Army));
+
+        if (relevantUnit != null && !relevantUnit.HasMoved)
         {
-            // Deselect
+            // Toggle Selection
+            if (selectedUnitId == relevantUnit.Id)
+            {
+                selectedUnitId = null;
+                validDestinations.Clear();
+            }
+            else
+            {
+                selectedUnitId = relevantUnit.Id;
+                validDestinations = GetValidDestinations(relevantUnit, territoryId);
+            }
+            StateHasChanged();
+            return;
+        }
+
+        // 3. Deselect if clicked empty space and not valid move
+        if (selectedUnitId.HasValue)
+        {
             selectedUnitId = null;
             validDestinations.Clear();
             StateHasChanged();
@@ -878,19 +890,21 @@
         var tDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
         if (tDef == null || tDef.Type != TerritoryType.Land) return false;
 
-        // 1. Control Check (Home or Flag)
-        bool isHome = tDef.IsHomeCity(nation) || tDef.Nation == nation; 
+        // 1. Control Check (Home Province Only)
+        // Rail logic only applies within the nation's home provinces.
+        bool isHome = tDef.IsHomeCity(nation); 
         
-        // Check Flag
-        var tState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryId);
-        bool isControlled = tState != null && tState.Controller == nation;
+        if (!isHome) 
+        {
+            // Console.WriteLine($"RailValid {territoryId}? NO (Not Home)");
+            return false;
+        }
 
-        if (!isHome && !isControlled) return false;
-
-        // 2. Hostile Unit Check
-        var hostileUnits = Game.Units.Any(u => u.TerritoryId == territoryId && u.Nation != nation);
+        // 2. Hostile Unit Check (Suspends Rail)
+        var hostileUnits = Game.Units.Any(u => u.TerritoryId == territoryId && u.Nation != nation && u.UnitType == UnitType.Army);
         if (hostileUnits) return false;
 
+        // Console.WriteLine($"RailValid {territoryId}? YES");
         return true;
     }
 
