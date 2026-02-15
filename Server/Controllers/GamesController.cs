@@ -227,7 +227,8 @@ public class GamesController : ControllerBase
                 HasBuiltThisTurn = ns.HasBuiltThisTurn,
                 HasProducedThisTurn = ns.HasProducedThisTurn,
                 HasMovedThisTurn = ns.HasMovedThisTurn,
-                HasImportedThisTurn = ns.HasImportedThisTurn
+                HasImportedThisTurn = ns.HasImportedThisTurn,
+                PreviousTaxChartPosition = ns.PreviousTaxChartPosition
             }).ToList(),
             AvailableBonds = game.Bonds.Where(b => b.HolderId == null).Select(b => new BondDto
             {
@@ -278,11 +279,22 @@ public class GamesController : ControllerBase
             }
 
             // Init Territories
-            var territories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories; // Wait, I need to create this first
+            // Each nation starts with 2 factories (one Brown/Army, one LightBlue/Fleet) per Imperial 2030 rules.
+            // The remaining 2 home cities can have factories built via the Factory rondel action.
+            var startingFactories = new HashSet<string>
+            {
+                "Moscow", "Vladivostok",       // Russia
+                "Beijing", "Shanghai",         // China
+                "NewDelhi", "Mumbai",          // India
+                "Brasilia", "RioDeJaneiro",    // Brazil
+                "Chicago", "NewOrleans",       // USA
+                "Paris", "London"              // Europe
+            };
+            var territories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories;
             var newTerritoryStates = new List<TerritoryState>();
             foreach(var t in territories)
             {
-                newTerritoryStates.Add(new TerritoryState { TerritoryId = t.Id, GameId = gameId, HasFactory = t.Nation.HasValue });
+                newTerritoryStates.Add(new TerritoryState { TerritoryId = t.Id, GameId = gameId, HasFactory = startingFactories.Contains(t.Id) });
             }
             _context.TerritoryStates.AddRange(newTerritoryStates);
 
@@ -1272,6 +1284,7 @@ public class GamesController : ControllerBase
         if (nationState.Power > 25) nationState.Power = 25;
 
         // Update Tax Chart Position
+        nationState.PreviousTaxChartPosition = nationState.TaxChartPosition;
         nationState.TaxChartPosition = totalTaxRevenue;
 
         // Save Changes

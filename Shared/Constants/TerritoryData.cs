@@ -24,7 +24,7 @@ public static class TerritoryData
         new Territory { Id = "NewDelhi", Name = "New Delhi", Nation = Nation.India, CityType = CityType.Brown },
         new Territory { Id = "Mumbai", Name = "Mumbai", Nation = Nation.India, CityType = CityType.LightBlue },
         new Territory { Id = "Kolkata", Name = "Kolkata", Nation = Nation.India, CityType = CityType.LightBlue },
-        new Territory { Id = "Chennai", Name = "Chennai", Nation = Nation.India, CityType = CityType.LightBlue },
+        new Territory { Id = "Chennai", Name = "Chennai", Nation = Nation.India, CityType = CityType.Brown },
 
         // Brazil
         new Territory { Id = "Brasilia", Name = "Brasilia", Nation = Nation.Brazil, CityType = CityType.Brown },

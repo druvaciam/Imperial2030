@@ -9,6 +9,7 @@ public class NationStateDto
     public string? ControllerName { get; set; }
     public bool HasBuiltThisTurn { get; set; }
     public int TaxChartPosition { get; set; }
+    public int PreviousTaxChartPosition { get; set; }
     public bool HasMovedThisTurn { get; set; }
     public bool HasProducedThisTurn { get; set; }
     public bool HasImportedThisTurn { get; set; }

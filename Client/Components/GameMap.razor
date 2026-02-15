@@ -906,8 +906,8 @@
         }
 
         // FACTORY LOGIC (Existing)
-        // check if Factory action (Slot 1)
-        if (ns.RondelPosition == 1) 
+        // check if Factory action (Slot 1) - must have moved on rondel this turn first
+        if (ns.RondelPosition == 1 && ns.HasMovedThisTurn) 
         {
             await HandleFactoryClick(territoryId, nation, ns);
         }
@@ -1178,7 +1178,7 @@
         {
             var nation = Game.CurrentTurnNation;
             var ns = Game.NationStates.FirstOrDefault(n => n.Nation == nation);
-            if (ns != null && ns.RondelPosition == 1) // Factory
+            if (ns != null && ns.RondelPosition == 1 && ns.HasMovedThisTurn && !ns.HasBuiltThisTurn) // Factory - only highlight after moving on rondel
             {
                 var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
                 if (territoryDef != null && territoryDef.IsHomeCity(nation))
