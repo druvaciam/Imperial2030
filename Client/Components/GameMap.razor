@@ -711,10 +711,13 @@
                         string color = GetNationColor(unit.Nation);
                         string strokeColor = (selectedUnitId == unit.Id) ? "#ffff00" : "white"; // Highlight selected
                         string strokeWidth = (selectedUnitId == unit.Id) ? "3" : "2";
+                        bool isDimmed = (unit.UnitType == Imperial2030.Shared.Models.UnitType.Fleet && unit.HasConvoyed) ||
+                                        (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army && unit.HasMoved);
+                        string dimmedOpacity = isDimmed ? "0.4" : "1.0";
 
                         if (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army)
                         {
-                            <g style="pointer-events: none;">
+                            <g style="pointer-events: none;" opacity="@dimmedOpacity">
                                 <rect x="@(coords.X + offsetX - 8)" y="@(coords.Y + offsetY - 8)" width="16" height="16" 
                                       fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
                                 <text x="@(coords.X + offsetX)" y="@(coords.Y + offsetY)" 
@@ -723,7 +726,7 @@
                         }
                         else
                         {
-                            <g style="pointer-events: none;">
+                            <g style="pointer-events: none;" opacity="@dimmedOpacity">
                                 <circle cx="@(coords.X + offsetX)" cy="@(coords.Y + offsetY)" r="8" 
                                         fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
                                 <text x="@(coords.X + offsetX)" y="@(coords.Y + offsetY)" 
@@ -957,9 +960,12 @@
                 isRail = railDestinations.Contains(territoryId);
             }
 
+            Console.WriteLine($"[MOVE] UnitType={selectedUnit.UnitType} From={selectedUnit.TerritoryId} To={territoryId} isStandard={isStandard} isRail={isRail}");
+
             if (isStandard || isRail || selectedUnit.UnitType == UnitType.Fleet)
             {
                 // Standard or Rail Move
+                Console.WriteLine($"[MOVE] Executing standard/rail move (no convoy fleets)");
                 await MoveUnit(selectedUnit, territoryId); 
                 DeselectUnit();
             }
@@ -1052,44 +1058,79 @@
         return allDestinations;
     }
 
-    private List<string> GetRailReachableTerritories(string startId, Imperial2030.Shared.Models.Nation nation)
+    private List<string> GetRailReachableTerritories(string startId, Imperial2030.Shared.Models.Nation nation, bool includeExitPoints = true)
     {
-        var reachable = new List<string>();
-        if (Game == null) return reachable;
+        var reachable = new HashSet<string>();
+        if (Game == null) return reachable.ToList();
 
-        var queue = new Queue<string>();
-        var visited = new HashSet<string>();
+        // Queue stores (id, cost). Cost represents number of border crossings/non-rail steps.
+        var queue = new Queue<(string id, int cost)>();
+        // Visited stores min cost found so far to reach a territory
+        var minCosts = new Dictionary<string, int>();
 
-        // Start BFS
-        // if (!IsTerritoryRailValid(startId, nation)) return reachable; // REMOVED: Allow entry from outside
-
-        queue.Enqueue(startId);
-        visited.Add(startId);
+        // Start with cost 0
+        queue.Enqueue((startId, 0));
+        minCosts[startId] = 0;
 
         while (queue.Count > 0)
         {
-            var currentId = queue.Dequeue();
-            
-            // Get LAND neighbors for rail propagation
-            var neighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentId, false);
+            var (currentId, currentCost) = queue.Dequeue();
 
-            foreach (var neighborId in neighbors)
+            // Optimization: If we found a better path to this node already, skip
+            if (minCosts.TryGetValue(currentId, out var recordedCost) && currentCost > recordedCost)
+                continue;
+
+            // Get LAND neighbors for rail propagation
+            var adjacent = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentId, false);
+            
+            if (adjacent.Any())
             {
-                // Fix: Rail movement must end IN the rail network (Home/Controlled)
-                if (IsTerritoryRailValid(neighborId, nation))
+                var currentDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == currentId);
+                // Check if Current is Home (for Rail Step Logic)
+                bool isCurrentHome = currentDef != null && currentDef.IsHomeCity(nation);
+
+                foreach (var neighborId in adjacent)
                 {
+                    var neighborDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == neighborId);
+                    if (neighborDef == null || neighborDef.Type != TerritoryType.Land) continue;
+
+                    // Determine Edge Cost
+                    bool isNeighborHome = neighborDef.IsHomeCity(nation);
+                    
+                    var tState = Game.Territories.FirstOrDefault(t => t.TerritoryId == neighborId);
+                    var effectiveController = tState?.Controller ?? neighborDef.Nation;
+                    bool isControlledByUs = effectiveController == nation;
+                    // Check for Hostile Armies (matches Server UnitType check)
+                    bool hasHostileUnits = Game.Units.Any(u => u.TerritoryId == neighborId && u.Nation != nation && u.UnitType == UnitType.Army);
+
+                    bool isRailStep = false;
+                    // Rail Step requires moving from Home to Home through Controlled/Safe territory
+                    if (isCurrentHome && isNeighborHome && isControlledByUs && !hasHostileUnits)
+                    {
+                        isRailStep = true;
+                    }
+
+                    int edgeCost = isRailStep ? 0 : 1;
+                    int newCost = currentCost + edgeCost;
+
+                    // If Exit is not allowed (e.g. Convoy check?), enforce Home only?
+                    // But includeExitPoints usually means "Allow reaching non-rail destinations".
+                    if (!includeExitPoints && !isNeighborHome) continue;
+
+                    if (newCost > 1) continue; // Cannot exceed 1 border crossing/non-rail step
+
                     reachable.Add(neighborId);
 
-                    if (!visited.Contains(neighborId))
+                    if (!minCosts.TryGetValue(neighborId, out var oldCost) || newCost < oldCost)
                     {
-                        visited.Add(neighborId);
-                        queue.Enqueue(neighborId);
+                        minCosts[neighborId] = newCost;
+                        queue.Enqueue((neighborId, newCost));
                     }
                 }
             }
         }
 
-        return reachable;
+        return reachable.ToList();
     }
 
     private bool IsTerritoryRailValid(string territoryId, Imperial2030.Shared.Models.Nation nation)
@@ -1108,6 +1149,12 @@
             // Console.WriteLine($"RailValid {territoryId}? NO (Not Home)");
             return false;
         }
+
+        // 2. Control Check (Must be controlled by us)
+        var tState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryId);
+        // Fallback to Owner if Controller is null (Zombie State handling)
+        var effectiveController = tState?.Controller ?? tDef.Nation;
+        if (effectiveController != nation) return false;
 
         // 2. Hostile Unit Check (Suspends Rail)
         var hostileUnits = Game.Units.Any(u => u.TerritoryId == territoryId && u.Nation != nation && u.UnitType == UnitType.Army);
@@ -1380,6 +1427,15 @@
 
     private async Task MoveUnit(Unit unit, string destinationId, List<Guid>? convoyFleets = null)
     {
+        Console.WriteLine($"[MoveUnit] UnitType={unit.UnitType} From={unit.TerritoryId} To={destinationId} ConvoyFleets={convoyFleets?.Count ?? 0}");
+        if (convoyFleets != null)
+        {
+            foreach (var fId in convoyFleets)
+            {
+                var fl = Game?.Units.FirstOrDefault(u => u.Id == fId);
+                Console.WriteLine($"[MoveUnit]   Fleet {fId} at {fl?.TerritoryId} HasConvoyed={fl?.HasConvoyed}");
+            }
+        }
         bool success;
         if (unit.UnitType == UnitType.Fleet)
         {
@@ -1394,6 +1450,20 @@
         {
              await JSRuntime.InvokeVoidAsync("alert", "Move failed (validation error).");
         }
+        else
+        {
+            // Optimistic local update: mark unit as moved and convoy fleets as used
+            unit.HasMoved = true;
+            unit.TerritoryId = destinationId;
+            if (convoyFleets != null && Game != null)
+            {
+                foreach (var fleetId in convoyFleets)
+                {
+                    var fleet = Game.Units.FirstOrDefault(u => u.Id == fleetId);
+                    if (fleet != null) fleet.HasConvoyed = true;
+                }
+            }
+        }
     }
 
     private List<List<Unit>> GetAllConvoyPaths(GameDetailDto game, string startId, string endId, Imperial2030.Shared.Models.Nation nation)
@@ -1407,9 +1477,24 @@
 
         if (!availableFleets.Any()) return paths;
 
-        // Seas adjacent to start (Army Start -> Sea)
-        var startNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(startId, true);
-        var seasAdjacentToStart = startNeighbors.Where(n => availableFleets.ContainsKey(n)).ToList();
+        // Collect embarkation points: current position + rail-reachable (only if army starts on rail-valid territory)
+        var embarkationPoints = new HashSet<string> { startId };
+        if (IsTerritoryRailValid(startId, nation))
+        {
+            var railReachable = GetRailReachableTerritories(startId, nation, includeExitPoints: false);
+            foreach (var t in railReachable) embarkationPoints.Add(t);
+        }
+
+        // Seas adjacent to any embarkation point (Army Start/Rail -> Sea)
+        var seasAdjacentToStart = new HashSet<string>();
+        foreach (var embark in embarkationPoints)
+        {
+            var seaNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(embark, true);
+            foreach (var sea in seaNeighbors.Where(n => availableFleets.ContainsKey(n)))
+            {
+                seasAdjacentToStart.Add(sea);
+            }
+        }
         
         // Seas adjacent to end (Sea -> Army End)
         var endNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(endId, true);
@@ -1424,12 +1509,6 @@
             queue.Enqueue((sea, new List<Unit> { fleet }));
         }
         
-        // As we want *all* paths, we need to be careful with cycles but allow re-visiting nodes for different paths?
-        // Actually, for "options" we usually just want shortest unique paths.
-        // Let's stick to simple BFS for now, maybe finding just ONE path per entry point?
-        // Or find all non-cyclic paths?
-        // Let's implement a BFS that tracks visited in path context.
-        
         while (queue.Count > 0)
         {
             var (currentSea, path) = queue.Dequeue();
@@ -1437,15 +1516,13 @@
             if (targetSeas.Contains(currentSea))
             {
                 paths.Add(path);
-                // If we have enough options, stop to update UI faster
                 if (paths.Count >= 5) break;
                 continue;
             }
             
-            // Limit path length to prevent infinite search
             if (path.Count >= 5) continue;
 
-            var seaNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentSea, true); // Sea-Sea
+            var seaNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentSea, true);
             
             foreach (var nextSea in seaNeighbors)
             {
@@ -1463,28 +1540,46 @@
 
     private List<string> GetConvoyDestinations(string startId, Imperial2030.Shared.Models.Nation nation)
     {
-        var destinations = new List<string>();
-        if (Game == null) return destinations;
+        var destinations = new HashSet<string>();
+        if (Game == null) return destinations.ToList();
 
-        var availableFleets = Game.Units
-            .Where(u => u.UnitType == UnitType.Fleet && u.Nation == nation && !u.HasConvoyed)
+        var allFleets = Game.Units.Where(u => u.UnitType == UnitType.Fleet && u.Nation == nation).ToList();
+        Console.WriteLine($"[GetConvoyDestinations] All fleets for {nation}: {allFleets.Count}");
+        foreach (var f in allFleets)
+        {
+            Console.WriteLine($"[GetConvoyDestinations]   Fleet {f.Id} at {f.TerritoryId} HasConvoyed={f.HasConvoyed} HasMoved={f.HasMoved}");
+        }
+        var availableFleets = allFleets
+            .Where(u => !u.HasConvoyed)
             .Select(u => u.TerritoryId)
             .ToHashSet();
+        Console.WriteLine($"[GetConvoyDestinations] Available fleet territories: {string.Join(", ", availableFleets)}");
 
-        if (!availableFleets.Any()) return destinations;
+        if (!availableFleets.Any()) return destinations.ToList();
 
-        // BFS through Fleets
+        // Embarkation points: current position + rail-reachable (only if army starts on rail-valid territory)
+        var embarkationPoints = new HashSet<string> { startId };
+        if (IsTerritoryRailValid(startId, nation))
+        {
+            var railReachable = GetRailReachableTerritories(startId, nation, includeExitPoints: false);
+            foreach (var t in railReachable) embarkationPoints.Add(t);
+        }
+
+        // BFS through Fleets starting from all embarkation points
         var queue = new Queue<string>();
         var visitedSeas = new HashSet<string>();
 
-        // 1. Embark: Land -> Sea
-        var startNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(startId, true);
-        foreach (var sea in startNeighbors)
+        // 1. Embark: Find seas adjacent to any embarkation point that have a friendly fleet
+        foreach (var embark in embarkationPoints)
         {
-            if (availableFleets.Contains(sea))
+            var seaNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(embark, true);
+            foreach (var sea in seaNeighbors)
             {
-                queue.Enqueue(sea);
-                visitedSeas.Add(sea);
+                if (availableFleets.Contains(sea) && !visitedSeas.Contains(sea))
+                {
+                    queue.Enqueue(sea);
+                    visitedSeas.Add(sea);
+                }
             }
         }
 
@@ -1493,10 +1588,9 @@
             var currentSea = queue.Dequeue();
 
             // 2. Disembark: Sea -> Land
-            var landNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentSea, false); // Get adjacent lands
+            var landNeighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentSea, false);
             foreach (var land in landNeighbors)
             {
-                // Cannot move back to start via convoy (rule: A -> B, A != B)
                 if (land != startId)
                 {
                     destinations.Add(land);
@@ -1515,6 +1609,6 @@
             }
         }
 
-        return destinations.Distinct().ToList();
+        return destinations.ToList();
     }
 }

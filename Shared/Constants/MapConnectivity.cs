@@ -16,7 +16,7 @@ public static class MapConnectivity
         { "Mexico", new List<string> { "SanFrancisco", "NewOrleans", "Colombia", "NorthPacific", "CaribbeanSea" } },
 
         // --- SOUTH AMERICA (Brazil + Independent) ---
-        { "Colombia", new List<string> { "Mexico", "Manaus", "Peru", "CaribbeanSea", "SouthPacific" } },
+        { "Colombia", new List<string> { "Mexico", "Manaus", "Peru", "CaribbeanSea", "NorthPacific" } },
         { "Peru", new List<string> { "Colombia", "Manaus", "Brasilia", "Argentina", "SouthPacific" } },
         { "Manaus", new List<string> { "Colombia", "Peru", "Brasilia", "Fortaleza", "CaribbeanSea" } },
         { "Fortaleza", new List<string> { "Manaus", "Brasilia", "RioDeJaneiro", "CaribbeanSea" } },
@@ -25,32 +25,31 @@ public static class MapConnectivity
         { "Argentina", new List<string> { "RioDeJaneiro", "Brasilia", "Peru", "SouthPacific", "SouthAtlantic" } },
 
         // --- AFRICA ---
-        { "North-Africa", new List<string> { "Guinea", "Nigeria", "MediterraneanSea", "NorthAtlantic", "East-Africa", "NearEast" } },
+        { "North-Africa", new List<string> { "Guinea", "Nigeria", "MediterraneanSea", "NorthAtlantic", "IndianOcean", "East-Africa", "NearEast" } },
         { "Guinea", new List<string> { "North-Africa", "Nigeria", "NorthAtlantic", "GulfOfGuinea" } },
-        { "Nigeria", new List<string> { "North-Africa", "Guinea", "Congo", "SouthAtlantic", "GulfOfGuinea" } },
-        { "Congo", new List<string> { "Nigeria", "South-Africa", "East-Africa", "SouthAtlantic", "GulfOfGuinea" } },
-        { "South-Africa", new List<string> { "Congo", "East-Africa", "SouthAtlantic", "IndianOcean" } },
-        { "East-Africa", new List<string> { "South-Africa", "North-Africa", "Congo", "IndianOcean", "MediterraneanSea" } },
+        { "Nigeria", new List<string> { "North-Africa", "East-Africa", "Guinea", "Congo", "GulfOfGuinea" } },
+        { "Congo", new List<string> { "Nigeria", "South-Africa", "East-Africa", "GulfOfGuinea" } },
+        { "South-Africa", new List<string> { "Congo", "East-Africa", "IndianOcean", "GulfOfGuinea"   } },
+        { "East-Africa", new List<string> { "South-Africa", "North-Africa", "Congo", "Nigeria", "IndianOcean" } },
 
         // --- EUROPE ---
         { "London", new List<string> { "NorthAtlantic" } },
-        { "Paris", new List<string> { "Berlin", "Rome", "Switzerland", "MediterraneanSea", "NorthAtlantic" } }, 
-        { "Switzerland", new List<string> { "Paris", "Berlin", "Rome" } },
-        { "Rome", new List<string> { "Paris", "Berlin", "Switzerland", "MediterraneanSea", "Turkey" } }, 
-        { "Berlin", new List<string> { "Paris", "Rome", "Switzerland", "Ukraine", "NorthAtlantic", "Murmansk" } }, 
+        { "Paris", new List<string> { "Berlin", "Rome", "MediterraneanSea", "NorthAtlantic" } }, 
+        { "Rome", new List<string> { "Paris", "Berlin", "MediterraneanSea", "Turkey" } }, 
+        { "Berlin", new List<string> { "Paris", "Rome", "Ukraine", "NorthAtlantic", "Murmansk" } }, 
         { "Ukraine", new List<string> { "Moscow", "Berlin" } },
         
         // --- RUSSIA & ASIA ---
         { "Moscow", new List<string> { "Ukraine", "Novosibirsk", "Murmansk", "Kazakhstan", "Turkey" } },
         { "Murmansk", new List<string> { "Moscow", "Novosibirsk", "NorthAtlantic", "Berlin" } },
         { "Novosibirsk", new List<string> { "Moscow", "Murmansk", "Vladivostok", "Kazakhstan", "Mongolia" } },
-        { "Vladivostok", new List<string> { "Novosibirsk", "Mongolia", "Beijing", "NorthPacific", "SeaOfJapan", "Korea" } },
+        { "Vladivostok", new List<string> { "Novosibirsk", "Mongolia", "Beijing", "SeaOfJapan", "Korea" } },
         { "Mongolia", new List<string> { "Novosibirsk", "Vladivostok", "Beijing", "Urumqi", "Kazakhstan" } },
         { "Kazakhstan", new List<string> { "Moscow", "Novosibirsk", "Urumqi", "Mongolia", "Afghanistan" } },
         { "Urumqi", new List<string> { "Kazakhstan", "Beijing", "Chongqing", "NewDelhi", "Mongolia", "Afghanistan" } },
         { "Korea", new List<string> { "Beijing", "Vladivostok", "SeaOfJapan" } },
-        { "Beijing", new List<string> { "Urumqi", "Chongqing", "Shanghai", "Vladivostok", "Korea", "SeaOfJapan", "Mongolia" } },
-        { "Shanghai", new List<string> { "Beijing", "Chongqing", "SeaOfJapan", "ChinaSea" } },
+        { "Beijing", new List<string> { "Urumqi", "Chongqing", "Shanghai", "Vladivostok", "Korea", "Mongolia" } },
+        { "Shanghai", new List<string> { "Beijing", "Chongqing", "ChinaSea" } },
         { "Chongqing", new List<string> { "Beijing", "Shanghai", "Urumqi", "Kolkata", "Indochina" } },
         
         // --- INDIA & MIDDLE EAST ---
@@ -72,17 +71,17 @@ public static class MapConnectivity
         { "NewZealand", new List<string> { "TasmanSea" } },
 
         // --- SEA REGIONS (Interconnectivity) ---
-        { "NorthAtlantic", new List<string> { "Canada", "NewYork", "Fortaleza", "RioDeJaneiro", "Guinea", "North-Africa", "Paris", "London", "Berlin", "MediterraneanSea", "CaribbeanSea", "Murmansk", "GulfOfGuinea", "Quebec" } },
-        { "MediterraneanSea", new List<string> { "NorthAtlantic", "IndianOcean", "Paris", "Rome", "Turkey", "East-Africa", "North-Africa", "NearEast" } },
-        { "IndianOcean", new List<string> { "South-Africa", "East-Africa", "Mumbai", "Chennai", "Kolkata", "Indonesia", "GulfOfGuinea", "Indochina", "ChinaSea", "Iran", "MediterraneanSea", "NearEast", "SouthAtlantic", "TasmanSea" } },
-        { "SouthAtlantic", new List<string> { "Fortaleza", "RioDeJaneiro", "Argentina", "South-Africa", "Congo", "Nigeria", "Guinea", "IndianOcean", "GulfOfGuinea", "CaribbeanSea" } },
-        { "NorthPacific", new List<string> { "Alaska", "Canada", "SanFrancisco", "Mexico", "Vladivostok", "SeaOfJapan", "ChinaSea", "SouthPacific" } },
-        { "SouthPacific", new List<string> { "NorthPacific", "SanFrancisco", "Colombia", "Peru", "Argentina", "TasmanSea", "ChinaSea" } },
-        { "CaribbeanSea", new List<string> { "NewOrleans", "Colombia", "NorthAtlantic", "SouthAtlantic", "Mexico", "GulfOfGuinea" } },
-        { "SeaOfJapan", new List<string> { "Vladivostok", "Japan", "NorthPacific", "Beijing", "Shanghai", "Korea", "ChinaSea" } },
+        { "NorthAtlantic", new List<string> { "Canada", "NewYork", "Quebec", "Guinea", "North-Africa", "Paris", "London", "Berlin", "MediterraneanSea", "CaribbeanSea", "Murmansk", "GulfOfGuinea" } },
+        { "MediterraneanSea", new List<string> { "NorthAtlantic", "IndianOcean", "Paris", "Rome", "Turkey", "North-Africa", "NearEast" } },
+        { "IndianOcean", new List<string> { "South-Africa", "East-Africa", "North-Africa", "Mumbai", "Chennai", "Kolkata", "Indonesia", "GulfOfGuinea", "Indochina", "ChinaSea", "Iran", "MediterraneanSea", "NearEast", "SouthAtlantic", "TasmanSea" } },
+        { "SouthAtlantic", new List<string> { "RioDeJaneiro", "Argentina", "IndianOcean", "GulfOfGuinea", "CaribbeanSea", "SouthPacific" } },
+        { "NorthPacific", new List<string> { "Alaska", "Canada", "SanFrancisco", "Mexico", "Colombia", "SeaOfJapan", "ChinaSea", "SouthPacific" } },
+        { "SouthPacific", new List<string> { "NorthPacific", "Peru", "Argentina", "TasmanSea", "ChinaSea", "SouthAtlantic" } },
+        { "CaribbeanSea", new List<string> { "NewOrleans", "Colombia", "Manaus", "Fortaleza", "NorthAtlantic", "SouthAtlantic", "Mexico", "GulfOfGuinea" } },
+        { "SeaOfJapan", new List<string> { "Vladivostok", "Japan", "NorthPacific", "Korea", "ChinaSea" } },
         { "ChinaSea", new List<string> { "Shanghai", "Indochina", "Indonesia", "Philippines", "SeaOfJapan", "IndianOcean", "SouthPacific", "NorthPacific", "TasmanSea" } },
         { "TasmanSea", new List<string> { "Australia", "NewZealand", "SouthPacific", "Indonesia", "IndianOcean", "ChinaSea" } },
-        { "GulfOfGuinea", new List<string> { "Nigeria", "Guinea", "Congo", "SouthAtlantic", "NorthAtlantic", "CaribbeanSea", "IndianOcean" } },
+        { "GulfOfGuinea", new List<string> { "Nigeria", "Guinea", "Congo", "South-Africa", "SouthAtlantic", "NorthAtlantic", "CaribbeanSea", "IndianOcean" } },
     };
 
     public static IEnumerable<string> GetNeighbors(string territoryId, bool isFleet)

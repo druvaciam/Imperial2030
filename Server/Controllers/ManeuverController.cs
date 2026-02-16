@@ -175,6 +175,7 @@ public class ManeuverController : ControllerBase
         unit.HasMoved = true;
 
         await _context.SaveChangesAsync();
+        Console.WriteLine("[MoveArmy] Changes Saved.");
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
         return Ok();
@@ -318,64 +319,31 @@ public class ManeuverController : ControllerBase
 
     private bool CanMoveByRail(Game game, string startId, string endId, Nation nation)
     {
-        var queue = new Queue<string>();
-        var visited = new HashSet<string>();
-
-        queue.Enqueue(startId);
-        visited.Add(startId);
-
-        while (queue.Count > 0)
-        {
-            var currentId = queue.Dequeue();
-            if (currentId == endId) return true;
-
-            if (MapConnectivity.Adjacency.TryGetValue(currentId, out var neighbors))
-            {
-                foreach (var neighborId in neighbors)
-                {
-                    // Shortcut REMOVED: Must traverse only valid rail nodes.
-                    // if (neighborId == endId) return true;
-
-                    if (visited.Contains(neighborId)) continue;
-                    
-                    var neighborDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == neighborId);
-                    if (neighborDef == null || neighborDef.Type != TerritoryType.Land) continue;
-                    
-                    // Check Friendly Control (Home or Flag)
-                    bool isHome = neighborDef.Nation == nation;
-                    // TerritoryStates might be null if no flags placed yet?
-                    var tState = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == neighborId);
-                    
-                    // Controlled if (Home AND Not Occupied by enemy?) - simplified:
-                    // If Home, controlled unless flagged by enemy. 
-                    // If Neutral, controlled if flagged by me.
-                    
-                    // Simplified logic from before:
-                    bool isControlled = (isHome && (tState == null || tState.Controller == nation)) ||
-                                        (tState != null && tState.Controller == nation);
-                    
-                    // If not home and not controlled by us, it's not part of our rail network (cannot pass THROUGH)
-                    if (!isHome && !isControlled) continue;
-
-                    // Check Hostile Units (Any foreign unit blocks rail traversal)
-                    bool hasHostileUnits = game.Units.Any(u => u.TerritoryId == neighborId && u.Nation != nation);
-                    if (hasHostileUnits) continue;
-
-                    visited.Add(neighborId);
-                    queue.Enqueue(neighborId);
-                }
-            }
-        }
-        return false;
+        // Use GetRailReachableTerritories which already includes exit points
+        var reachable = GetRailReachableTerritories(game, startId, nation);
+        return reachable.Contains(endId);
     }
     private List<Unit>? GetConvoyFleets(Game game, string startId, string destId, Nation nation)
     {
         // 1. Identify all valid "Launch Points" (Current + Rail Reachable)
         var launchPoints = new HashSet<string>();
         launchPoints.Add(startId);
-        
-        var railReachable = GetRailReachableTerritories(game, startId, nation);
-        foreach (var r in railReachable) launchPoints.Add(r);
+        // Only use rail for convoy embarkation if army starts on a rail-valid territory
+        var startDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == startId);
+        if (startDef != null && startDef.Type == TerritoryType.Land)
+        {
+            bool isStartHome = startDef.Nation == nation;
+            var startState = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == startId);
+            bool isStartControlled = (isStartHome && (startState == null || startState.Controller == nation)) ||
+                                     (startState != null && startState.Controller == nation);
+            bool startHasHostiles = game.Units.Any(u => u.TerritoryId == startId && u.Nation != nation);
+
+            if ((isStartHome || isStartControlled) && !startHasHostiles)
+            {
+                var railReachable = GetRailReachableTerritories(game, startId, nation, includeExitPoints: false);
+                foreach (var r in railReachable) launchPoints.Add(r);
+            }
+        }
 
         // 2. BFS from Launch Points seeking Destination via Sea
         // State: (CurrentTerritory, UsedFleets)
@@ -441,61 +409,100 @@ public class ManeuverController : ControllerBase
         return null;
     }
 
-    private List<string> GetRailReachableTerritories(Game game, string startId, Nation nation)
+    private List<string> GetRailReachableTerritories(Game game, string startId, Nation nation, bool includeExitPoints = true)
     {
-        var reachable = new List<string>();
-        var queue = new Queue<string>();
-        var visited = new HashSet<string>();
+        var reachable = new HashSet<string>();
+        // Queue stores (id, cost). Cost represents number of border crossings/non-rail steps.
+        var queue = new Queue<(string id, int cost)>();
+        // Visited stores min cost found so far to reach a territory
+        var minCosts = new Dictionary<string, int>();
 
-        // Start BFS (Same logic as CanMoveByRail but collecting)
-        // If start is not valid rail? 
-        // CanMoveByRail assumed checks inside loop.
-        
-        queue.Enqueue(startId);
-        visited.Add(startId);
+        // Start with cost 0 (Start node itself is always reachable)
+        queue.Enqueue((startId, 0));
+        minCosts[startId] = 0;
 
         while (queue.Count > 0)
         {
-            var currentId = queue.Dequeue();
-            
+            var (currentId, currentCost) = queue.Dequeue();
+
+            // Optimization: If we found a better path to this node already, skip
+            if (minCosts.TryGetValue(currentId, out var recordedCost) && currentCost > recordedCost)
+                continue;
+
             if (MapConnectivity.Adjacency.TryGetValue(currentId, out var neighbors))
             {
+                var currentDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == currentId);
+                bool isCurrentHome = currentDef?.Nation == nation;
+
                 foreach (var neighborId in neighbors)
                 {
-                    if (visited.Contains(neighborId)) continue;
-                    
                     var neighborDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == neighborId);
                     if (neighborDef == null || neighborDef.Type != TerritoryType.Land) continue;
+
+                    // Determine Edge Cost
+                    // Rail Step = (Current Is Home) AND (Neighbor Is Home) AND (Neighbor Is Safe/Controlled).
+                    // If it's a Rail Step, Cost is 0.
+                    // Otherwise (Border Crossing, Entry, Exit, or Hostile/Uncontrolled Home), Cost is 1.
+
+                    bool isNeighborHome = neighborDef.Nation == nation;
                     
-                    // Logic from CanMoveByRail
-                    bool isHome = neighborDef.Nation == nation;
                     var tState = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == neighborId);
-                    bool isControlled = (isHome && (tState == null || tState.Controller == nation)) ||
-                                        (tState != null && tState.Controller == nation);
-                    
-                    if (!isHome && !isControlled) continue;
+                    // Fallback to Owner if Controller is null
+                    var effectiveController = tState?.Controller ?? neighborDef.Nation;
+                    bool isControlledByUs = effectiveController == nation;
+                    bool hasHostileUnits = game.Units.Any(u => u.TerritoryId == neighborId && u.Nation != nation && u.UnitType == UnitType.Army);
 
-                    bool hasHostileUnits = game.Units.Any(u => u.TerritoryId == neighborId && u.Nation != nation);
-                    if (hasHostileUnits) continue;
+                    bool isRailStep = false;
+                    if (isCurrentHome && isNeighborHome && isControlledByUs && !hasHostileUnits)
+                    {
+                        isRailStep = true;
+                    }
 
-                    visited.Add(neighborId);
+                    int edgeCost = isRailStep ? 0 : 1;
+                    int newCost = currentCost + edgeCost;
+
+                    // Helper logic: If includeExitPoints is False, we forbid ANY Non-Home destination?
+                    // Previous logic: Forbidden Exit.
+                    // New User Logic: Allow Exit (Cost 1).
+                    // But if includeExitPoints is FALSE (convoy), maybe we enforce STRICT home?
+                    // If includeExitPoints is FALSE, we should perhaps force newCost to be 0 for it to be valid?
+                    // Or check isNeighborHome explicitly?
+                    if (!includeExitPoints && !isNeighborHome)
+                    {
+                       // If we don't include exit points (e.g. Convoy validation?), we typically only want Rail Nodes.
+                       // So skip Foreign.
+                       continue;
+                    }
+
+                    if (newCost > 1) continue; // Cannot exceed 1 border crossing
+
+                    // Add to Reachable
                     reachable.Add(neighborId);
-                    queue.Enqueue(neighborId);
+
+                    // Add to Queue if better path
+                    if (!minCosts.TryGetValue(neighborId, out var oldCost) || newCost < oldCost)
+                    {
+                        minCosts[neighborId] = newCost;
+                        queue.Enqueue((neighborId, newCost));
+                    }
                 }
             }
         }
-        return reachable;
+        return reachable.ToList();
     }
 
     private List<Unit>? ValidateSpecificConvoyFleets(Game game, string startId, string destId, Nation nation, List<Guid> fleetIds)
     {
+        Console.WriteLine($"[ValidateSpecificConvoyFleets] Start={startId} Dest={destId} Fleets={fleetIds.Count}");
         // 1. Retrieve Fleets
         var fleets = new List<Unit>();
         foreach(var fId in fleetIds)
         {
             var f = game.Units.FirstOrDefault(u => u.Id == fId);
-            if(f == null || f.Nation != nation || f.UnitType != UnitType.Fleet || f.HasConvoyed) 
-                return null; // Invalid fleet (not found, wrong nation, not fleet, or already used)
+            if(f == null) { Console.WriteLine($"[ValidateSpecificConvoyFleets] Fleet {fId} Not Found"); return null; }
+            if (f.Nation != nation) { Console.WriteLine($"[ValidateSpecificConvoyFleets] Fleet {fId} Wrong Nation"); return null; }
+            if (f.UnitType != UnitType.Fleet) { Console.WriteLine($"[ValidateSpecificConvoyFleets] Fleet {fId} Not Fleet"); return null; }
+            if (f.HasConvoyed) { Console.WriteLine($"[ValidateSpecificConvoyFleets] Fleet {fId} HasConvoyed=True"); return null; }
             fleets.Add(f);
         }
 
@@ -503,8 +510,24 @@ public class ManeuverController : ControllerBase
         // Start from launch points
         var launchPoints = new HashSet<string>();
         launchPoints.Add(startId);
-        var railReachable = GetRailReachableTerritories(game, startId, nation);
-        foreach (var r in railReachable) launchPoints.Add(r);
+        // Only use rail for convoy embarkation if army starts on a rail-valid territory
+        var startDef2 = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == startId);
+        if (startDef2 != null && startDef2.Type == TerritoryType.Land)
+        {
+            bool isStartHome2 = startDef2.Nation == nation;
+            var startState2 = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == startId);
+            // Fix: Strict Home Rule for consistency. Handle null controller by defaulting to Nation.
+            var effectiveController2 = startState2?.Controller ?? startDef2.Nation;
+            bool isControlledByUs = effectiveController2 == nation;
+            
+            bool startHasHostiles2 = game.Units.Any(u => u.TerritoryId == startId && u.Nation != nation);
+
+            if (isStartHome2 && isControlledByUs && !startHasHostiles2)
+            {
+                var railReachable = GetRailReachableTerritories(game, startId, nation, includeExitPoints: false);
+                foreach (var r in railReachable) launchPoints.Add(r);
+            }
+        }
 
         var queue = new Queue<string>();
         var visited = new HashSet<string>();
@@ -545,6 +568,7 @@ public class ManeuverController : ControllerBase
             }
         }
 
+        Console.WriteLine("[ValidateSpecificConvoyFleets] Destination NOT reached");
         return null; // Chain broken or destination unreachable with these fleets
     }
 }
