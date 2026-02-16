@@ -62,6 +62,54 @@ public class ManeuverController : ControllerBase
         if (!neighbors.Contains(request.DestinationId))
             return BadRequest("Destination is not adjacent.");
 
+        // Canal Logic: Check if moving through Panama or Suez
+        var canal = MapConnectivity.CanalLinks.FirstOrDefault(c => 
+            (c.Region1 == unit.TerritoryId && c.Region2 == request.DestinationId) ||
+            (c.Region1 == request.DestinationId && c.Region2 == unit.TerritoryId));
+
+        if (canal != default)
+        {
+            // Check Controller of the Canal Land Territory
+            var controllerId = canal.ControllerId;
+            var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == controllerId);
+            
+            // If Territory has a Flag (Controller is not null) AND Controller is NOT us
+            // "The owner of that nation controls the passage... and may prevent or allow...
+            // If ... marked with a flag, the owner ... controls ... may prevent or allow."
+            // Implicitly: HOSTILE flag blocks. FRIENDLY or OWN flag allows.
+            // What if it is a "Friendly" nation (Peace)?
+            // "may prevent or allow". Usually in Imperial, you can move through unless Hostile?
+            // "Armies may be convoyed... as long as the nation controlling the canal... allows it."
+            // "At the beginning... no flag... therefore no restriction."
+            // Standard Imperial 2030 implementation:
+            // - If you control it: Yes.
+            // - If nobody controls it (No flag): Yes.
+            // - If SOMEONE ELSE controls it:
+            //   - Is it "Passive" allow? Or "Active" block?
+            //   - BoardGameGeek/Rules: "Canals are open unless validly closed by the owner."
+            //   - Actually: "The owner... MAY prevent." implies choice. 
+            //   - But in digital implementation, usually implies "Block if Hostile"?
+            //   - Or "Block if not matching nation"?
+            //   - "prevent or allow a fleet to move through."
+            //   - If we assume Standard Imperial Rules: "Passage is allowed unless the controller enforces a blockade."
+            //   - However, simplified logic often: "Blocked if owned by another nation."
+            //   - Let's assume: **Blocked if Controller != Nation**. (Strict)
+            //   - Or should we check Game Relation (War/Peace)?
+            //   - Imperial 2030 doesn't have formal War/Peace states like Diplomacy.
+            //   - It has "Hostile" (War) status if you fight.
+            //   - But for Canals: "Owner ... may prevent."
+            //   - If I am Brazil, and EU controls Panama. EU player decides.
+            //   - In this implementation, likely **Force Block if different controller** to be safe/strict, 
+            //     UNLESS user wants a dialogue.
+            //     Given "Refining Rail Logic" was strict, I will stick to Strict Control.
+            //     **Passage Allowed ONLY IF: Controller == null OR Controller == Nation.**
+            
+            if (tState != null && tState.Controller != null && tState.Controller != nation)
+            {
+                return BadRequest($"Passage through {controllerId} blocked by {tState.Controller}.");
+            }
+        }
+
         var currentT = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == unit.TerritoryId);
         var destT = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
 
@@ -373,6 +421,25 @@ public class ManeuverController : ControllerBase
             foreach (var neighbor in neighbors)
             {
                 if (visited.Contains(neighbor)) continue;
+
+                // Canal Check for Convoy Path (Sea <-> Sea or Land <-> Sea?)
+                // Usually Convoy Path is Sea <-> Sea. 
+                // But neighbors could be Land (Destination).
+                // Check if (currentId -> neighbor) is a Canal Link.
+                var canal = MapConnectivity.CanalLinks.FirstOrDefault(c => 
+                    (c.Region1 == currentId && c.Region2 == neighbor) ||
+                    (c.Region1 == neighbor && c.Region2 == currentId));
+
+                if (canal != default)
+                {
+                   var controllerId = canal.ControllerId;
+                   var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == controllerId);
+                   if (tState != null && tState.Controller != null && tState.Controller != nation)
+                   {
+                       // Canal Blocked
+                       continue;
+                   }
+                }
 
                 var neighborDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == neighbor);
                 if (neighborDef == null) continue;

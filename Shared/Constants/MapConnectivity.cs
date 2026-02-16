@@ -75,9 +75,9 @@ public static class MapConnectivity
         { "MediterraneanSea", new List<string> { "NorthAtlantic", "IndianOcean", "Paris", "Rome", "Turkey", "North-Africa", "NearEast" } },
         { "IndianOcean", new List<string> { "South-Africa", "East-Africa", "North-Africa", "Mumbai", "Chennai", "Kolkata", "Indonesia", "GulfOfGuinea", "Indochina", "ChinaSea", "Iran", "MediterraneanSea", "NearEast", "SouthAtlantic", "TasmanSea" } },
         { "SouthAtlantic", new List<string> { "RioDeJaneiro", "Argentina", "IndianOcean", "GulfOfGuinea", "CaribbeanSea", "SouthPacific" } },
-        { "NorthPacific", new List<string> { "Alaska", "Canada", "SanFrancisco", "Mexico", "Colombia", "SeaOfJapan", "ChinaSea", "SouthPacific" } },
+        { "NorthPacific", new List<string> { "Alaska", "Canada", "SanFrancisco", "Mexico", "Colombia", "SeaOfJapan", "ChinaSea", "SouthPacific", "CaribbeanSea" } },
         { "SouthPacific", new List<string> { "NorthPacific", "Peru", "Argentina", "TasmanSea", "ChinaSea", "SouthAtlantic" } },
-        { "CaribbeanSea", new List<string> { "NewOrleans", "Colombia", "Manaus", "Fortaleza", "NorthAtlantic", "SouthAtlantic", "Mexico", "GulfOfGuinea" } },
+        { "CaribbeanSea", new List<string> { "NewOrleans", "Colombia", "Manaus", "Fortaleza", "NorthAtlantic", "SouthAtlantic", "Mexico", "GulfOfGuinea", "NorthPacific" } },
         { "SeaOfJapan", new List<string> { "Vladivostok", "Japan", "NorthPacific", "Korea", "ChinaSea" } },
         { "ChinaSea", new List<string> { "Shanghai", "Indochina", "Indonesia", "Philippines", "SeaOfJapan", "IndianOcean", "SouthPacific", "NorthPacific", "TasmanSea" } },
         { "TasmanSea", new List<string> { "Australia", "NewZealand", "SouthPacific", "Indonesia", "IndianOcean", "ChinaSea" } },
@@ -107,4 +107,9 @@ public static class MapConnectivity
             });
         }
     }
+    public static readonly List<(string Region1, string Region2, string ControllerId)> CanalLinks = new()
+    {
+        ("CaribbeanSea", "NorthPacific", "Colombia"), // Panama Canal
+        ("MediterraneanSea", "IndianOcean", "North-Africa") // Suez Canal
+    };
 }

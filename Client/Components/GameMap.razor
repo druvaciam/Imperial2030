@@ -1046,7 +1046,35 @@
         // 1. Standard Adjacency
         var neighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentTerritoryId, unit.UnitType == UnitType.Fleet).ToList();
         
-        if (unit.UnitType == UnitType.Fleet) return neighbors;
+        if (unit.UnitType == UnitType.Fleet) 
+        {
+            // Filter blocked canals
+            var validNeighbors = new List<string>();
+            foreach (var dest in neighbors)
+            {
+                var canal = Imperial2030.Shared.Constants.MapConnectivity.CanalLinks.FirstOrDefault(c => 
+                    (c.Region1 == currentTerritoryId && c.Region2 == dest) ||
+                    (c.Region1 == dest && c.Region2 == currentTerritoryId));
+
+                if (canal != default)
+                {
+                   // Check Controller
+                   var controllerId = canal.ControllerId;
+                   var tState = Game.Territories.FirstOrDefault(ts => ts.TerritoryId == controllerId);
+                   // Logic: Block if Controller is NOT null AND NOT us
+                   var controller = tState?.Controller;
+                   
+                   if (controller != null && controller != unit.Nation)
+                   {
+                       // Blocked
+                       Console.WriteLine($"[Canal] Passage through {controllerId} blocked by {controller}");
+                       continue;
+                   }
+                }
+                validNeighbors.Add(dest);
+            }
+            return validNeighbors;
+        }
 
         // 2. Army Rail Logic
         // Combine neighbors with rail-reachable territories
@@ -1526,6 +1554,22 @@
             
             foreach (var nextSea in seaNeighbors)
             {
+                // Canal Check
+                var canal = Imperial2030.Shared.Constants.MapConnectivity.CanalLinks.FirstOrDefault(c => 
+                    (c.Region1 == currentSea && c.Region2 == nextSea) ||
+                    (c.Region1 == nextSea && c.Region2 == currentSea));
+
+                if (canal != default)
+                {
+                   var controllerId = canal.ControllerId;
+                   var tState = Game.Territories.FirstOrDefault(ts => ts.TerritoryId == controllerId);
+                   if (tState != null && tState.Controller != null && tState.Controller != nation)
+                   {
+                       // Canal Blocked
+                       continue;
+                   }
+                }
+
                 if (availableFleets.ContainsKey(nextSea) && !path.Any(f => f.TerritoryId == nextSea))
                 {
                      var fleet = availableFleets[nextSea].First();
@@ -1601,7 +1645,26 @@
             var nextSeas = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentSea, true);
             foreach (var next in nextSeas)
             {
-                if (availableFleets.Contains(next) && !visitedSeas.Contains(next))
+                if (visitedSeas.Contains(next)) continue;
+                
+                // Canal Check
+                var canal = Imperial2030.Shared.Constants.MapConnectivity.CanalLinks.FirstOrDefault(c => 
+                    (c.Region1 == currentSea && c.Region2 == next) ||
+                    (c.Region1 == next && c.Region2 == currentSea));
+
+                if (canal != default)
+                {
+                   var controllerId = canal.ControllerId;
+                   // Use Game.Territories (List<TerritoryStateDto>)
+                   var tState = Game.Territories.FirstOrDefault(ts => ts.TerritoryId == controllerId);
+                   if (tState != null && tState.Controller != null && tState.Controller != nation)
+                   {
+                       // Canal Blocked
+                       continue;
+                   }
+                }
+
+                if (availableFleets.Contains(next))
                 {
                     visitedSeas.Add(next);
                     queue.Enqueue(next);
