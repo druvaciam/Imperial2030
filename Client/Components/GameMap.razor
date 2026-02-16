@@ -32,6 +32,62 @@
             </div>
         </div>
     }
+
+    @if (ShowBattleModal)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 3000;">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Foreign Fleets Detected</h5>
+                    </div>
+                    <div class="modal-body">
+                        <p>You are moving into a sea region occupied by foreign fleets.</p>
+                        <p>Choose your action:</p>
+                        <div class="d-grid gap-2">
+                             <button class="btn btn-success" @onclick="ConfirmPeace">
+                                 Coexist (Peace)
+                             </button>
+                             @foreach (var nation in BattleOptions)
+                             {
+                                 <button class="btn btn-danger" @onclick="() => ConfirmBattle(nation)">
+                                     Attack @nation
+                                 </button>
+                             }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (ShowStationaryBattleModal)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 3000;">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Stationary Battle</h5>
+                        <button type="button" class="btn-close" @onclick="CancelStationaryBattle"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Select a fleet to attack:</p>
+                        <div class="d-grid gap-2">
+                             @foreach (var nation in BattleOptions)
+                             {
+                                 <button class="btn btn-danger" @onclick="() => ExecuteStationaryBattle(nation)">
+                                     Attack @nation
+                                 </button>
+                             }
+                        </div>
+                    </div>
+                     <div class="modal-footer">
+                        <button class="btn btn-secondary" @onclick="CancelStationaryBattle">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
 <svg
    version="1.1"
    id="svg1"
@@ -814,6 +870,13 @@
             <button class="btn btn-primary btn-sm" @onclick="NextPhase">End Phase</button>
         </div>
     }
+
+    @if (CanInitiateStationaryBattle())
+    {
+        <div class="card p-2 bg-light shadow" style="position: absolute; top: 60px; right: 10px; z-index: 500;">
+             <button class="btn btn-danger" @onclick="OpenStationaryBattleModal">Battle!</button>
+        </div>
+    }
 </div>
 
 <style>
@@ -891,6 +954,119 @@
     private Guid? selectedUnitId;
     private List<string> validDestinations = new();
 
+    // Battle Modal State
+    private bool ShowBattleModal = false;
+    private bool ShowStationaryBattleModal = false;
+    private Unit? PendingBattleUnit = null;
+    private string PendingBattleDest = "";
+    private List<Imperial2030.Shared.Models.Nation> BattleOptions = new();
+
+    private bool CanInitiateStationaryBattle()
+    {
+        if (selectedUnitId == null || Game == null) return false;
+        var unit = Game.Units.FirstOrDefault(u => u.Id == selectedUnitId.Value);
+        if (unit == null || unit.HasMoved) return false;
+        // Must be Fleet or Army
+        if (unit.UnitType != UnitType.Fleet && unit.UnitType != UnitType.Army) return false;
+        
+        // Check for enemies of same type
+        var enemies = Game.Units
+            .Where(u => u.TerritoryId == unit.TerritoryId && u.Nation != unit.Nation && u.UnitType == unit.UnitType)
+            .Any();
+            
+        return enemies;
+    }
+
+    private void OpenStationaryBattleModal()
+    {
+        if (selectedUnitId == null || Game == null) return;
+        var unit = Game.Units.FirstOrDefault(u => u.Id == selectedUnitId.Value);
+        if (unit == null) return;
+
+        PendingBattleUnit = unit;
+        BattleOptions = Game.Units
+            .Where(u => u.TerritoryId == unit.TerritoryId && u.Nation != unit.Nation && u.UnitType == unit.UnitType)
+            .Select(u => u.Nation)
+            .Distinct()
+            .ToList();
+            
+        ShowStationaryBattleModal = true;
+    }
+
+    private async Task ConfirmPeace()
+    {
+        if (PendingBattleUnit != null)
+        {
+            if (PendingBattleUnit.UnitType == UnitType.Fleet)
+            {
+                 await ManeuverService.MoveFleet(Game.Id, PendingBattleUnit.Id, PendingBattleDest, null);
+            }
+            else if (PendingBattleUnit.UnitType == UnitType.Army)
+            {
+                 // For armies, check if we need to pass convoy IDs? 
+                 // Current UI doesn't preserve convoy/rail choices well in this modal flow if logic is separated.
+                 // However, handled logic handles Convoy Modal separately?
+                 // Wait, if it was a Convoy move, "PendingBattleDest" is just destination.
+                 // MoveArmy needs "convoyFleetIds". 
+                 // If we are here, we might have lost the convoy context if we didn't save it.
+                 // BUT: The Battle Modal interrupts the click.
+                 // If it's a Convoy move, we haven't selected convoys yet?
+                 // Logic order: Click -> Battle Check -> Move Type -> Convoy Check.
+                 // So Battle Check happens BEFORE Convoy Check.
+                 // If we say "Peace", we call MoveArmy.
+                 // MoveArmy will fail if it needs convoys and we don't provide them.
+                 // FIX: "Peace" should probably RESUME the click logic?
+                 // Or we call `MoveArmy` which triggers auto-convoy selection logic on server? 
+                 // Server `MoveArmy` handles auto-selection if `convoyFleetIds` is null! (Lines 278-281 in Controller).
+                 // So calling MoveArmy(..., null) is SAFE for auto-convoy.
+                 await ManeuverService.MoveArmy(Game.Id, PendingBattleUnit.Id, PendingBattleDest, null, null);
+            }
+        }
+        ShowBattleModal = false;
+        PendingBattleUnit = null;
+        DeselectUnit();
+    }
+
+    private async Task ConfirmBattle(Imperial2030.Shared.Models.Nation target)
+    {
+        if (PendingBattleUnit != null)
+        {
+             // If we are in movement mode (ShowBattleModal true)
+             if (ShowBattleModal)
+             {
+                 if (PendingBattleUnit.UnitType == UnitType.Fleet)
+                 {
+                    await ManeuverService.MoveFleet(Game.Id, PendingBattleUnit.Id, PendingBattleDest, target);
+                 }
+                 else
+                 {
+                    // Army Battle Move
+                    await ManeuverService.MoveArmy(Game.Id, PendingBattleUnit.Id, PendingBattleDest, null, target);
+                 }
+             }
+        }
+        ShowBattleModal = false;
+        PendingBattleUnit = null;
+        DeselectUnit();
+    }
+
+    private async Task ExecuteStationaryBattle(Imperial2030.Shared.Models.Nation target)
+    {
+        if (PendingBattleUnit != null)
+        {
+            await ManeuverService.BattleAsync(Game.Id, PendingBattleUnit.Id, target);
+        }
+        ShowStationaryBattleModal = false;
+        PendingBattleUnit = null;
+        DeselectUnit();
+    }
+
+    private void CancelStationaryBattle()
+    {
+        ShowStationaryBattleModal = false;
+        PendingBattleUnit = null;
+    }
+
     private async Task OnTerritoryClick(string territoryId)
     {
         Console.WriteLine($"Player clicked on: {territoryId}");
@@ -946,6 +1122,25 @@
                  return;
             }
 
+            // BATTLE CHECK (Fleets & Armies)
+            {
+                var potentialEnemies = Game.Units
+                    .Where(u => u.TerritoryId == territoryId && u.Nation != selectedUnit.Nation && u.UnitType == selectedUnit.UnitType)
+                    .Select(u => u.Nation)
+                    .Distinct()
+                    .ToList();
+                
+                if (potentialEnemies.Any())
+                {
+                    PendingBattleUnit = selectedUnit;
+                    PendingBattleDest = territoryId;
+                    BattleOptions = potentialEnemies;
+                    ShowBattleModal = true;
+                    StateHasChanged();
+                    return;
+                }
+            }
+
             // Determine Move Type
             bool isStandard = false; 
             if (MapConnectivity.Adjacency.TryGetValue(selectedUnit.TerritoryId, out var neighbors))
@@ -965,6 +1160,9 @@
             if (isStandard || isRail || selectedUnit.UnitType == UnitType.Fleet)
             {
                 // Standard or Rail Move
+                
+
+
                 Console.WriteLine($"[MOVE] Executing standard/rail move (no convoy fleets)");
                 await MoveUnit(selectedUnit, territoryId); 
                 DeselectUnit();
@@ -1038,8 +1236,20 @@
     {
         selectedUnitId = null;
         validDestinations.Clear();
+        // Clear Battle Modals
+        ShowBattleModal = false;
+        ShowStationaryBattleModal = false;
+        PendingBattleUnit = null;
         StateHasChanged();
     }
+    
+
+    
+    // Trigger logic for Stationary Battle (e.g. context menu or button)
+    // For now, let's add a "Battle" button to the selected unit UI or Phase UI?
+    // Or maybe just right-click? 
+    // Simpler: If unit selected, and enemies in same region -> Show "Battle" button in floating UI?
+    
 
     private List<string> GetValidDestinations(Unit unit, string currentTerritoryId)
     {

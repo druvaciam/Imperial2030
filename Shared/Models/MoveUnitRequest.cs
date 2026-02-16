@@ -8,4 +8,5 @@ public class MoveUnitRequest
     public Guid UnitId { get; set; }
     public string DestinationId { get; set; } = string.Empty;
     public List<Guid>? ConvoyFleetIds { get; set; }
+    public Imperial2030.Shared.Models.Nation? BattleTargetNation { get; set; } // If set, resolve battle against this nation after move
 }

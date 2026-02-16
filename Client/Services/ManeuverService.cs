@@ -16,10 +16,28 @@ public class ManeuverService
         _http = http;
     }
 
-    public async Task<bool> MoveFleet(Guid gameId, Guid unitId, string destinationId)
+
+    public async Task<bool> MoveFleet(Guid gameId, Guid unitId, string destinationId, Imperial2030.Shared.Models.Nation? battleTarget = null)
     {
-        var request = new { UnitId = unitId, DestinationId = destinationId };
+        var request = new MoveUnitRequest 
+        { 
+            UnitId = unitId, 
+            DestinationId = destinationId,
+            BattleTargetNation = battleTarget
+        };
+        // var request = new { UnitId = unitId, DestinationId = destinationId }; // Replaced with typed request
         var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/move-fleet", request);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> BattleAsync(Guid gameId, Guid unitId, Imperial2030.Shared.Models.Nation targetNation)
+    {
+        var request = new MoveUnitRequest 
+        { 
+            UnitId = unitId, 
+            BattleTargetNation = targetNation 
+        };
+        var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/battle", request);
         return response.IsSuccessStatusCode;
     }
 
@@ -29,13 +47,14 @@ public class ManeuverService
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<bool> MoveArmy(Guid gameId, Guid unitId, string destinationId, List<Guid>? convoyFleetIds = null)
+    public async Task<bool> MoveArmy(Guid gameId, Guid unitId, string destinationId, List<Guid>? convoyFleetIds = null, Imperial2030.Shared.Models.Nation? battleTarget = null)
     {
         var request = new MoveUnitRequest 
         { 
             UnitId = unitId, 
             DestinationId = destinationId,
-            ConvoyFleetIds = convoyFleetIds
+            ConvoyFleetIds = convoyFleetIds,
+            BattleTargetNation = battleTarget
         };
         var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/move-army", request);
         return response.IsSuccessStatusCode;

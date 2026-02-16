@@ -33,6 +33,7 @@ public class ManeuverController : ControllerBase
         var game = await _context.Games
             .Include(g => g.Units)
             .Include(g => g.NationStates)
+            .Include(g => g.TerritoryStates)
             .Include(g => g.Players)
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
@@ -121,6 +122,84 @@ public class ManeuverController : ControllerBase
         // Execute Move
         unit.TerritoryId = request.DestinationId;
         unit.HasMoved = true;
+
+        // Auto-Battle Logic (If specified)
+        if (request.BattleTargetNation.HasValue)
+        {
+            var targetNation = request.BattleTargetNation.Value;
+            // Find a fleet of target nation in destination
+            var enemyFleet = game.Units.FirstOrDefault(u => 
+                u.TerritoryId == request.DestinationId && 
+                u.Nation == targetNation && 
+                u.UnitType == UnitType.Fleet);
+
+            if (enemyFleet != null)
+            {
+                // Destroy Both
+                game.Units.Remove(unit);
+                game.Units.Remove(enemyFleet);
+                Console.WriteLine($"[Battle] {nation} Fleet attacked {targetNation} in {request.DestinationId}. Both destroyed.");
+            }
+            else
+            {
+                // Target not found? Maybe race condition or UI error. 
+                // Just log it. The move still happened.
+                Console.WriteLine($"[Battle] {nation} targeted {targetNation} in {request.DestinationId} but no fleet found.");
+            }
+        }
+        
+        await _context.SaveChangesAsync();
+        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+
+        return Ok();
+    }
+
+    [HttpPost("{gameId}/battle")]
+    public async Task<IActionResult> Battle(Guid gameId, [FromBody] MoveUnitRequest request)
+    {
+        // Stationary Battle (Fleets that do not move)
+        // Request uses UnitId (Self) and BattleTargetNation (Enemy)
+        // DestinationId is ignored or used as confirmation of location? Location inferred from Unit.
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.Units)
+            .Include(g => g.NationStates)
+            .Include(g => g.Players)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+        
+        // Validate Turn/Control
+        var nation = game.CurrentTurnNation;
+        var nationState = game.NationStates.First(n => n.Nation == nation);
+        var controller = game.Players.FirstOrDefault(p => p.Id == nationState.ControllerId);
+        
+        if (controller == null || controller.UserId != userId) return Forbid();
+
+        var unit = game.Units.FirstOrDefault(u => u.Id == request.UnitId);
+        if (unit == null) return NotFound("Unit not found.");
+        if (unit.Nation != nation) return BadRequest("Not your unit.");
+
+        
+        if (unit.HasMoved) return BadRequest("Unit already moved this turn."); 
+        
+        if (!request.BattleTargetNation.HasValue) return BadRequest("Target nation required.");
+        var targetNation = request.BattleTargetNation.Value;
+
+        // Find enemy in same territory
+        var enemyUnit = game.Units.FirstOrDefault(u => 
+            u.TerritoryId == unit.TerritoryId && 
+            u.Nation == targetNation && 
+            u.UnitType == unit.UnitType); // Armies fight Armies, Fleets fight Fleets
+
+        if (enemyUnit == null) return BadRequest($"No {targetNation} {unit.UnitType} in {unit.TerritoryId}.");
+
+        // Destroy Both
+        game.Units.Remove(unit);
+        game.Units.Remove(enemyUnit);
         
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -222,6 +301,27 @@ public class ManeuverController : ControllerBase
         unit.TerritoryId = request.DestinationId;
         unit.HasMoved = true;
 
+        // Auto-Battle Logic (MoveArmy)
+        if (request.BattleTargetNation.HasValue)
+        {
+            var targetNation = request.BattleTargetNation.Value;
+            var enemyUnit = game.Units.FirstOrDefault(u => 
+                u.TerritoryId == request.DestinationId && 
+                u.Nation == targetNation && 
+                u.UnitType == UnitType.Army); 
+
+            if (enemyUnit != null)
+            {
+                game.Units.Remove(unit);
+                game.Units.Remove(enemyUnit);
+                Console.WriteLine($"[Battle] {nation} Army attacked {targetNation} in {request.DestinationId}. Both destroyed.");
+            }
+            else
+            {
+                Console.WriteLine($"[Battle] {nation} targeted {targetNation} in {request.DestinationId} but no army found.");
+            }
+        }
+
         await _context.SaveChangesAsync();
         Console.WriteLine("[MoveArmy] Changes Saved.");
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -252,7 +352,15 @@ public class ManeuverController : ControllerBase
             if (controller == null || controller.UserId != userId) return Forbid();
             
             // Resolve Battles First (Before Flags or Phase Change)
-            ResolveBattles(game, _context);
+            // Fix: Do NOT auto-resolve battles for Fleets. Fleet battles are handled by MoveFleet/Battle endpoint.
+            // Coexisting fleets should survive to next phase.
+            // Fix: Do NOT auto-resolve battles for Fleets OR Armies. 
+            // Fleet/Army battles are handled by Move/Battle endpoint.
+            // Coexisting units should survive to next phase.
+            if (game.CurrentManeuverPhase != ManeuverPhase.Fleets && game.CurrentManeuverPhase != ManeuverPhase.Armies)
+            {
+                ResolveBattles(game, _context);
+            }
 
             // Advance Phase
             switch (game.CurrentManeuverPhase)
