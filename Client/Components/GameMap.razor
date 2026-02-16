@@ -1481,16 +1481,7 @@
 
     private string GetNationColor(Imperial2030.Shared.Models.Nation nation)
     {
-        return nation switch
-        {
-            Imperial2030.Shared.Models.Nation.Russia => "#800080", // Purple
-            Imperial2030.Shared.Models.Nation.China => "#FFD700", // Gold/Yellow
-            Imperial2030.Shared.Models.Nation.India => "#000000", // Black
-            Imperial2030.Shared.Models.Nation.Brazil => "#006400", // DarkGreen
-            Imperial2030.Shared.Models.Nation.USA => "#FF4500", // OrangeRed
-            Imperial2030.Shared.Models.Nation.Europe => "#0000FF", // Blue
-            _ => "gray"
-        };
+        return Imperial2030.Shared.Constants.NationData.GetColor(nation);
     }
 
     // Hardcoded coordinates for the power track rects (x, y, width, height)

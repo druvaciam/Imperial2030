@@ -228,6 +228,7 @@ public class GamesController : ControllerBase
                 HasProducedThisTurn = ns.HasProducedThisTurn,
                 HasMovedThisTurn = ns.HasMovedThisTurn,
                 HasImportedThisTurn = ns.HasImportedThisTurn,
+                TaxChartPosition = ns.TaxChartPosition,
                 PreviousTaxChartPosition = ns.PreviousTaxChartPosition
             }).ToList(),
             AvailableBonds = game.Bonds.Where(b => b.HolderId == null).Select(b => new BondDto

@@ -149,16 +149,7 @@
         _ => ("", "#000")
     };
 
-    private string GetNationColor(Nation nation) => nation switch
-    {
-        Nation.Russia => "#cf2a2a", // Red
-        Nation.China => "#f1c40f", // Yellow
-        Nation.India => "#95a5a6", // Grey/Silver for India (usually white/grey in Imperial)
-        Nation.Brazil => "#2ecc71", // Green
-        Nation.USA => "#2980b9", // Blue
-        Nation.Europe => "#8e44ad", // Purple
-        _ => "#000"
-    };
+    private string GetNationColor(Nation nation) => Imperial2030.Shared.Constants.NationData.GetColor(nation);
 }
 
 <style>
