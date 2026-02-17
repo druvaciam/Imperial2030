@@ -1298,6 +1298,8 @@ public class GamesController : ControllerBase
              game.Status = GameStatus.Finished;
              _context.Entry(game).State = EntityState.Modified;
              await _context.SaveChangesAsync();
+             await _context.SaveChangesAsync();
+             await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); // Notify update FIRST so clients see 25 Power
              await _hubContext.Clients.All.SendAsync("GameEnded", gameId); // Notify end
              return Ok(new { Message = "Game Over", Winner = nation });
         }
