@@ -59,4 +59,15 @@ public class ManeuverService
         var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/move-army", request);
         return response.IsSuccessStatusCode;
     }
+
+    public async Task<bool> DestroyFactoryAsync(Guid gameId, string territoryId, List<Guid> unitIds)
+    {
+        var request = new DestroyFactoryRequest 
+        { 
+            TerritoryId = territoryId, 
+            UnitIds = unitIds 
+        };
+        var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/destroy-factory", request);
+        return response.IsSuccessStatusCode;
+    }
 }

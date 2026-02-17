@@ -87,27 +87,19 @@ public class ManeuverController : ControllerBase
             // - If nobody controls it (No flag): Yes.
             // - If SOMEONE ELSE controls it:
             //   - Is it "Passive" allow? Or "Active" block?
-            //   - BoardGameGeek/Rules: "Canals are open unless validly closed by the owner."
-            //   - Actually: "The owner... MAY prevent." implies choice. 
-            //   - But in digital implementation, usually implies "Block if Hostile"?
-            //   - Or "Block if not matching nation"?
-            //   - "prevent or allow a fleet to move through."
-            //   - If we assume Standard Imperial Rules: "Passage is allowed unless the controller enforces a blockade."
-            //   - However, simplified logic often: "Blocked if owned by another nation."
-            //   - Let's assume: **Blocked if Controller != Nation**. (Strict)
-            //   - Or should we check Game Relation (War/Peace)?
-            //   - Imperial 2030 doesn't have formal War/Peace states like Diplomacy.
-            //   - It has "Hostile" (War) status if you fight.
-            //   - But for Canals: "Owner ... may prevent."
-            //   - If I am Brazil, and EU controls Panama. EU player decides.
-            //   - In this implementation, likely **Force Block if different controller** to be safe/strict, 
-            //     UNLESS user wants a dialogue.
-            //     Given "Refining Rail Logic" was strict, I will stick to Strict Control.
-            //     **Passage Allowed ONLY IF: Controller == null OR Controller == Nation.**
+
             
             if (tState != null && tState.Controller != null && tState.Controller != nation)
             {
-                return BadRequest($"Passage through {controllerId} blocked by {tState.Controller}.");
+                // Check if the same player controls both nations
+                var canalNation = tState.Controller.Value;
+                var canalNationState = game.NationStates.FirstOrDefault(ns => ns.Nation == canalNation);
+                var isSamePlayer = canalNationState != null && canalNationState.ControllerId == controller.Id;
+
+                if (!isSamePlayer)
+                {
+                    return BadRequest($"Passage through {controllerId} blocked by {tState.Controller}.");
+                }
             }
         }
 
@@ -130,8 +122,7 @@ public class ManeuverController : ControllerBase
             // Find a fleet of target nation in destination
             var enemyFleet = game.Units.FirstOrDefault(u => 
                 u.TerritoryId == request.DestinationId && 
-                u.Nation == targetNation && 
-                u.UnitType == UnitType.Fleet);
+                u.Nation == targetNation);
 
             if (enemyFleet != null)
             {
@@ -192,8 +183,7 @@ public class ManeuverController : ControllerBase
         // Find enemy in same territory
         var enemyUnit = game.Units.FirstOrDefault(u => 
             u.TerritoryId == unit.TerritoryId && 
-            u.Nation == targetNation && 
-            u.UnitType == unit.UnitType); // Armies fight Armies, Fleets fight Fleets
+            u.Nation == targetNation); // Armies fight Armies, Fleets fight Fleets
 
         if (enemyUnit == null) return BadRequest($"No {targetNation} {unit.UnitType} in {unit.TerritoryId}.");
 
@@ -307,8 +297,7 @@ public class ManeuverController : ControllerBase
             var targetNation = request.BattleTargetNation.Value;
             var enemyUnit = game.Units.FirstOrDefault(u => 
                 u.TerritoryId == request.DestinationId && 
-                u.Nation == targetNation && 
-                u.UnitType == UnitType.Army); 
+                u.Nation == targetNation); 
 
             if (enemyUnit != null)
             {
@@ -329,6 +318,93 @@ public class ManeuverController : ControllerBase
         return Ok();
     }
     
+    [HttpPost("{gameId}/destroy-factory")]
+    public async Task<IActionResult> DestroyFactory(Guid gameId, [FromBody] DestroyFactoryRequest request)
+    {
+        var userId = HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.Units)
+            .Include(g => g.NationStates)
+            .Include(g => g.TerritoryStates)
+            .Include(g => g.Players)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+
+        // 1. Validate Turn/Control
+        var nation = game.CurrentTurnNation;
+        var nationState = game.NationStates.First(n => n.Nation == nation);
+        var controller = game.Players.FirstOrDefault(p => p.Id == nationState.ControllerId);
+        
+        if (controller == null || controller.UserId != userId) return Forbid();
+
+        // 2. Validate Territory & Factory
+        var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.TerritoryId);
+        if (territoryDef == null) return BadRequest("Invalid territory.");
+        
+        var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == request.TerritoryId);
+        if (tState == null || !tState.HasFactory) return BadRequest("No factory here.");
+
+        // 3. Identify Defender
+        if (!territoryDef.Nation.HasValue) return BadRequest("Not a home province.");
+        var defenderNation = territoryDef.Nation.Value;
+
+        // 4. Validate Foreign (Attacker != Defender)
+        if (nation == defenderNation) return BadRequest("Cannot destroy your own factory.");
+
+        // 5. Check No Defenders
+        bool hasDefenders = game.Units.Any(u => u.TerritoryId == request.TerritoryId && u.Nation == defenderNation);
+        if (hasDefenders) return BadRequest("Cannot destroy factory while defenders are present.");
+
+        // 6. Check 3 Armies provided
+        if (request.UnitIds == null || request.UnitIds.Count != 3) return BadRequest("Must provide exactly 3 armies.");
+        
+        var attackingUnits = new List<Unit>();
+        foreach (var uid in request.UnitIds)
+        {
+            var u = game.Units.FirstOrDefault(unit => unit.Id == uid);
+            if (u == null) return BadRequest($"Unit {uid} not found.");
+            if (u.Nation != nation) return BadRequest("Not your unit.");
+            if (u.UnitType != UnitType.Army) return BadRequest("Must use armies.");
+            if (u.TerritoryId != request.TerritoryId) return BadRequest("Army not in territory.");
+            attackingUnits.Add(u);
+        }
+
+        // 7. Check Minimum Factory Exception (Defender must have > 1 factory)
+        // We need to count how many factories the defender currently has
+        // We look at TerritoryStates for this game where HasFactory is true AND it is a home province of defender
+        // Note: We need to rely on TerritoryData for "Home Province" check
+        var defenderFactoryCount = 0;
+        foreach (var ts in game.TerritoryStates.Where(s => s.HasFactory))
+        {
+             var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
+             if (def != null && def.Nation == defenderNation)
+             {
+                 defenderFactoryCount++;
+             }
+        }
+
+        if (defenderFactoryCount <= 1) return BadRequest("Cannot destroy the last factory of a nation.");
+
+        // Execution
+        // Remove Armies
+        foreach (var u in attackingUnits)
+        {
+            _context.Units.Remove(u);
+            game.Units.Remove(u);
+        }
+
+        // Remove Factory
+        tState.HasFactory = false;
+
+        await _context.SaveChangesAsync();
+        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+
+        return Ok();
+    }
+
     [HttpPost("{gameId}/next-phase")]
     public async Task<IActionResult> NextPhase(Guid gameId)
     {

@@ -88,6 +88,31 @@
             </div>
         </div>
     }
+
+    @if (ShowDestroyFactoryModal)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 3000;">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Destroy Factory?</h5>
+                        <button type="button" class="btn-close" @onclick="CancelDestroyFactory"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>You have occupied a foreign factory in @PendingDestroyFactoryName.</p>
+                        <p>Do you want to destroy it?</p>
+                        <div class="alert alert-warning">
+                            Warning: This will remove your 3 attacking armies and the factory.
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" @onclick="CancelDestroyFactory">Cancel</button>
+                        <button class="btn btn-danger" @onclick="ConfirmDestroyFactory">Destroy Factory</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
 <svg
    version="1.1"
    id="svg1"
@@ -873,7 +898,7 @@
 
     @if (CanInitiateStationaryBattle())
     {
-        <div class="card p-2 bg-light shadow" style="position: absolute; top: 60px; right: 10px; z-index: 500;">
+        <div class="card p-2 bg-light shadow" style="position: absolute; top: 100px; right: 10px; z-index: 500;">
              <button class="btn btn-danger" @onclick="OpenStationaryBattleModal">Battle!</button>
         </div>
     }
@@ -957,8 +982,12 @@
     // Battle Modal State
     private bool ShowBattleModal = false;
     private bool ShowStationaryBattleModal = false;
+    private bool ShowDestroyFactoryModal = false;
     private Unit? PendingBattleUnit = null;
     private string PendingBattleDest = "";
+    private string PendingDestroyFactoryId = "";
+    private string PendingDestroyFactoryName = "";
+    private List<Unit> PendingDestroyFactoryUnits = new();
     private List<Imperial2030.Shared.Models.Nation> BattleOptions = new();
 
     private bool CanInitiateStationaryBattle()
@@ -997,29 +1026,11 @@
     {
         if (PendingBattleUnit != null)
         {
-            if (PendingBattleUnit.UnitType == UnitType.Fleet)
+            // If we are in movement mode (ShowBattleModal true)
+            if (ShowBattleModal)
             {
-                 await ManeuverService.MoveFleet(Game.Id, PendingBattleUnit.Id, PendingBattleDest, null);
-            }
-            else if (PendingBattleUnit.UnitType == UnitType.Army)
-            {
-                 // For armies, check if we need to pass convoy IDs? 
-                 // Current UI doesn't preserve convoy/rail choices well in this modal flow if logic is separated.
-                 // However, handled logic handles Convoy Modal separately?
-                 // Wait, if it was a Convoy move, "PendingBattleDest" is just destination.
-                 // MoveArmy needs "convoyFleetIds". 
-                 // If we are here, we might have lost the convoy context if we didn't save it.
-                 // BUT: The Battle Modal interrupts the click.
-                 // If it's a Convoy move, we haven't selected convoys yet?
-                 // Logic order: Click -> Battle Check -> Move Type -> Convoy Check.
-                 // So Battle Check happens BEFORE Convoy Check.
-                 // If we say "Peace", we call MoveArmy.
-                 // MoveArmy will fail if it needs convoys and we don't provide them.
-                 // FIX: "Peace" should probably RESUME the click logic?
-                 // Or we call `MoveArmy` which triggers auto-convoy selection logic on server? 
-                 // Server `MoveArmy` handles auto-selection if `convoyFleetIds` is null! (Lines 278-281 in Controller).
-                 // So calling MoveArmy(..., null) is SAFE for auto-convoy.
-                 await ManeuverService.MoveArmy(Game.Id, PendingBattleUnit.Id, PendingBattleDest, null, null);
+                // Just execute the move without a battle target (Peace/Coexist)
+                await MoveUnit(PendingBattleUnit, PendingBattleDest);
             }
         }
         ShowBattleModal = false;
@@ -1067,6 +1078,57 @@
         PendingBattleUnit = null;
     }
 
+    private void CancelDestroyFactory()
+    {
+        ShowDestroyFactoryModal = false;
+        PendingDestroyFactoryId = "";
+        PendingDestroyFactoryUnits.Clear();
+    }
+
+    private async Task ConfirmDestroyFactory()
+    {
+        if (!string.IsNullOrEmpty(PendingDestroyFactoryId) && PendingDestroyFactoryUnits.Count == 3)
+        {
+            var unitIds = PendingDestroyFactoryUnits.Select(u => u.Id).ToList();
+            bool success = await ManeuverService.DestroyFactoryAsync(Game.Id, PendingDestroyFactoryId, unitIds);
+            if (!success)
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Failed to destroy factory. (Server validation failed)");
+            }
+        }
+        ShowDestroyFactoryModal = false;
+        PendingDestroyFactoryId = "";
+        PendingDestroyFactoryUnits.Clear();
+    }
+
+    private bool CheckCanDestroyFactory(string territoryId, Imperial2030.Shared.Models.Nation nation, out List<Unit> attackingUnits)
+    {
+        attackingUnits = new List<Unit>();
+        if (Game == null) return false;
+
+        // 1. Check if Territory has Factory
+        var tState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryId);
+        if (tState == null || !tState.HasFactory) return false;
+
+        // 2. Check if Foreign Home Province
+        var tDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
+        if (tDef == null || !tDef.Nation.HasValue || tDef.Nation.Value == nation || tDef.CityType == CityType.None) return false;
+
+        // 3. Check for Defenders (Any unit of Territory Owner)
+        var defenders = Game.Units.Any(u => u.TerritoryId == territoryId && u.Nation == tDef.Nation.Value);
+        if (defenders) return false;
+
+        // 4. Check for 3 Attacking Armies
+        var myArmies = Game.Units.Where(u => u.TerritoryId == territoryId && u.Nation == nation && u.UnitType == UnitType.Army).ToList();
+        if (myArmies.Count >= 3)
+        {
+            attackingUnits = myArmies.Take(3).ToList();
+            return true;
+        }
+
+        return false;
+    }
+
     private async Task OnTerritoryClick(string territoryId)
     {
         Console.WriteLine($"Player clicked on: {territoryId}");
@@ -1094,13 +1156,15 @@
 
     private async Task HandleManeuverClick(string territoryId, Imperial2030.Shared.Models.Nation nation)
     {
+        if (Game == null) return;
+
         // 1. Execute Move if valid (PRIORITY: If we have a selection and clicked a valid target, MOVE)
         if (selectedUnitId.HasValue)
         {
             var selectedUnit = Game.Units.FirstOrDefault(u => u.Id == selectedUnitId.Value);
             if (selectedUnit == null) 
             {
-                DeselectUnit();
+                DeselectUnit(); // Invalid unit (maybe destroyed?)
                 return;
             }
 
@@ -1110,22 +1174,14 @@
             // Is Destination standard neighbor?
             if (!validDestinations.Contains(territoryId))
             {
-                 DeselectUnit(); // Invalid move target -> Deselect
-                 
-                 // OR: If clicking another unit, maybe select that instead? 
-                 // Current logic: Deselect. 
-                 // We could check if we clicked a friendly unit to select it?
-                 // But for now, stick to deselect.
-                 
-                 // Wait, if I click my own unit to deselect, that's handled in selection. 
-                 // If I click here, it's a move attempt.
+                 DeselectUnit();
                  return;
             }
 
             // BATTLE CHECK (Fleets & Armies)
             {
                 var potentialEnemies = Game.Units
-                    .Where(u => u.TerritoryId == territoryId && u.Nation != selectedUnit.Nation && u.UnitType == selectedUnit.UnitType)
+                    .Where(u => u.TerritoryId == territoryId && u.Nation != selectedUnit.Nation)
                     .Select(u => u.Nation)
                     .Distinct()
                     .ToList();
@@ -1194,6 +1250,18 @@
         }
         else
         {
+             // Check for Destroy Factory Opportunity
+             if (CheckCanDestroyFactory(territoryId, nation, out var attackingUnits))
+             {
+                 PendingDestroyFactoryId = territoryId;
+                 var tDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
+                 PendingDestroyFactoryName = tDef?.Name ?? territoryId;
+                 PendingDestroyFactoryUnits = attackingUnits;
+                 ShowDestroyFactoryModal = true;
+                 StateHasChanged();
+                 return;
+             }
+
              // Select Unit Logic
              await SelectUnitAt(territoryId, nation);
         }
@@ -1239,20 +1307,16 @@
         // Clear Battle Modals
         ShowBattleModal = false;
         ShowStationaryBattleModal = false;
+        ShowDestroyFactoryModal = false;
         PendingBattleUnit = null;
         StateHasChanged();
     }
     
-
-    
-    // Trigger logic for Stationary Battle (e.g. context menu or button)
-    // For now, let's add a "Battle" button to the selected unit UI or Phase UI?
-    // Or maybe just right-click? 
-    // Simpler: If unit selected, and enemies in same region -> Show "Battle" button in floating UI?
-    
-
     private List<string> GetValidDestinations(Unit unit, string currentTerritoryId)
     {
+        var destinations = new HashSet<string>();
+        if (Game == null) return destinations.ToList();
+
         // 1. Standard Adjacency
         var neighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(currentTerritoryId, unit.UnitType == UnitType.Fleet).ToList();
         
@@ -1276,9 +1340,20 @@
                    
                    if (controller != null && controller != unit.Nation)
                    {
-                       // Blocked
-                       Console.WriteLine($"[Canal] Passage through {controllerId} blocked by {controller}");
-                       continue;
+                       // Check if same player controls both nations
+                       var movingNationState = Game.NationStates.FirstOrDefault(n => n.Nation == unit.Nation);
+                       var canalNationState = Game.NationStates.FirstOrDefault(n => n.Nation == controller.Value);
+                       
+                       bool isSamePlayer = movingNationState?.ControllerName != null 
+                                           && canalNationState?.ControllerName != null 
+                                           && movingNationState.ControllerName == canalNationState.ControllerName;
+
+                       if (!isSamePlayer)
+                       {
+                           // Blocked
+                           Console.WriteLine($"[Canal] Passage through {controllerId} blocked by {controller}");
+                           continue;
+                       }
                    }
                 }
                 validNeighbors.Add(dest);
@@ -1384,7 +1459,6 @@
         
         if (!isHome) 
         {
-            // Console.WriteLine($"RailValid {territoryId}? NO (Not Home)");
             return false;
         }
 
@@ -1398,14 +1472,13 @@
         var hostileUnits = Game.Units.Any(u => u.TerritoryId == territoryId && u.Nation != nation && u.UnitType == UnitType.Army);
         if (hostileUnits) return false;
 
-    // Console.WriteLine($"RailValid {territoryId}? YES");
         return true;
     }
 
-
-
     private async Task HandleFactoryClick(string territoryId, Imperial2030.Shared.Models.Nation nation, Imperial2030.Shared.Models.NationStateDto ns)
     {
+        if (Game == null) return;
+
         // Validate
         var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
         if (territoryDef == null) return;
@@ -1441,10 +1514,6 @@
             }
         }
     }
-
-    private string? hoveredTerritoryId;
-    
-
 
     private string GetTerritoryClass(string territoryId)
     {
@@ -1763,11 +1832,22 @@
                 if (canal != default)
                 {
                    var controllerId = canal.ControllerId;
-                   var tState = Game.Territories.FirstOrDefault(ts => ts.TerritoryId == controllerId);
+                   var tState = game.Territories.FirstOrDefault(ts => ts.TerritoryId == controllerId);
                    if (tState != null && tState.Controller != null && tState.Controller != nation)
                    {
-                       // Canal Blocked
-                       continue;
+                       // Check if same player controls both nations (Convoy context: 'nation' is the moving nation)
+                       var movingNationState = game.NationStates.FirstOrDefault(n => n.Nation == nation);
+                       var canalNationState = game.NationStates.FirstOrDefault(n => n.Nation == tState.Controller.Value);
+                       
+                       bool isSamePlayer = movingNationState?.ControllerName != null 
+                                           && canalNationState?.ControllerName != null 
+                                           && movingNationState.ControllerName == canalNationState.ControllerName;
+
+                       if (!isSamePlayer)
+                       {
+                           // Canal Blocked
+                           continue;
+                       }
                    }
                 }
 
@@ -1860,8 +1940,19 @@
                    var tState = Game.Territories.FirstOrDefault(ts => ts.TerritoryId == controllerId);
                    if (tState != null && tState.Controller != null && tState.Controller != nation)
                    {
-                       // Canal Blocked
-                       continue;
+                       // Check if same player controls both nations (Convoy context: 'nation' is the moving nation)
+                       var movingNationState = Game.NationStates.FirstOrDefault(n => n.Nation == nation);
+                       var canalNationState = Game.NationStates.FirstOrDefault(n => n.Nation == tState.Controller.Value);
+                       
+                       bool isSamePlayer = movingNationState?.ControllerName != null 
+                                           && canalNationState?.ControllerName != null 
+                                           && movingNationState.ControllerName == canalNationState.ControllerName;
+
+                       if (!isSamePlayer)
+                       {
+                           // Canal Blocked
+                           continue;
+                       }
                    }
                 }
 
