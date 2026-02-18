@@ -29,4 +29,5 @@ public class Game
     public virtual ICollection<NationState> NationStates { get; set; } = new List<NationState>();
     public virtual ICollection<TerritoryState> TerritoryStates { get; set; } = new List<TerritoryState>();
     public virtual ICollection<Unit> Units { get; set; } = new List<Unit>();
+    public virtual ICollection<GameAction> Actions { get; set; } = new List<GameAction>();
 }

@@ -16,6 +16,7 @@ public class GameDetailDto : GameDto
     public Guid? ActingPlayerId { get; set; }
 
     public ManeuverState? ManeuverState { get; set; }
+    public List<GameActionDto> Actions { get; set; } = new List<GameActionDto>();
 }
 
 public enum ManeuverPhase

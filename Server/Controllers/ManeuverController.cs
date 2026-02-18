@@ -139,6 +139,12 @@ public class ManeuverController : ControllerBase
             }
         }
         
+        if (request.BattleTargetNation.HasValue)
+        {
+             // ... existing battle log ...
+        }
+        
+        LogAction(game, $"{nation} fleet moved to {request.DestinationId}.", "MoveFleet", nation);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
@@ -311,6 +317,12 @@ public class ManeuverController : ControllerBase
             }
         }
 
+        if (request.BattleTargetNation.HasValue)
+        {
+            // ... existing battle log ...
+        }
+
+        LogAction(game, $"{nation} army moved to {request.DestinationId}.", "MoveArmy", nation);
         await _context.SaveChangesAsync();
         Console.WriteLine("[MoveArmy] Changes Saved.");
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -399,6 +411,11 @@ public class ManeuverController : ControllerBase
         // Remove Factory
         tState.HasFactory = false;
 
+        // Remove Factory
+        tState.HasFactory = false;
+
+        LogAction(game, $"{nation} destroyed factory in {tState.TerritoryId}.", "DestroyFactory", nation);
+
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
@@ -453,6 +470,8 @@ public class ManeuverController : ControllerBase
                     return BadRequest("Invalid phase transition.");
             }
         
+        LogAction(game, $"{nation} ended maneuver phase ({game.CurrentManeuverPhase}).", "NextPhase", nation);
+
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
         
@@ -821,6 +840,20 @@ public class ManeuverController : ControllerBase
 
         Console.WriteLine("[ValidateSpecificConvoyFleets] Destination NOT reached");
         return null; // Chain broken or destination unreachable with these fleets
+    }
+    private void LogAction(Game game, string message, string type, Nation? nation = null)
+    {
+        var action = new GameAction
+        {
+            GameId = game.Id,
+            Timestamp = DateTime.UtcNow,
+            PlayerName = User.Identity?.Name ?? "System",
+            Message = message,
+            ActionType = type,
+            Nation = nation
+        };
+        _context.GameActions.Add(action);
+        // Note: Caller must SaveChanges
     }
 }
 

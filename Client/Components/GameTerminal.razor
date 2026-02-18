@@ -1,0 +1,47 @@
+@using Imperial2030.Shared.Models
+@inject IJSRuntime JSRuntime
+
+<div class="game-terminal-container">
+    <div class="terminal-header">
+        <span>> COMMAND LOG</span>
+        <span class="blinking-cursor">_</span>
+    </div>
+    <div class="terminal-body" @ref="terminalBodyRef">
+        @if (Actions == null || !Actions.Any())
+        {
+            <div class="terminal-line text-muted">// No history recorded</div>
+        }
+        else
+        {
+            @foreach (var action in Actions.OrderBy(a => a.Timestamp))
+            {
+                <div class="terminal-line">
+                    <span class="timestamp">[@action.Timestamp.ToLocalTime().ToString("HH:mm:ss")]</span>
+                    <span class="player">@action.PlayerName</span>
+                    @if (action.Nation.HasValue)
+                    {
+                        <span class="nation-tag nation-@action.Nation.ToString()?.ToLower()">@action.Nation</span>
+                    }
+                    <span class="message">@action.Message</span>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public List<GameActionDto> Actions { get; set; } = new();
+
+    private ElementReference terminalBodyRef;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Auto-scroll on any update
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("scrollToBottom", terminalBodyRef);
+        }
+        catch (Exception) { /* Ignored if element invalid */ }
+    }
+}

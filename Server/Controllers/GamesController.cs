@@ -103,6 +103,7 @@ public class GamesController : ControllerBase
             IsHost = false
         };
         _context.Players.Add(player);
+        LogAction(game, $"{User.Identity?.Name} joined the game.", "JoinGame");
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -158,6 +159,7 @@ public class GamesController : ControllerBase
             }
         }
 
+        LogAction(game, $"{User.Identity?.Name} left the game.", "LeaveGame");
         await _context.SaveChangesAsync();
 
         // If no players left, delete the game
@@ -188,6 +190,7 @@ public class GamesController : ControllerBase
                     .ThenInclude(h => h.User)
             .Include(g => g.TerritoryStates)
             .Include(g => g.Units)
+            .Include(g => g.Actions)
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
@@ -249,7 +252,16 @@ public class GamesController : ControllerBase
             IsInvestorTurn = game.IsInvestorTurn,
             ActingPlayerId = game.ActingPlayerId,
             Units = game.Units.ToList(),
-            ManeuverState = new ManeuverState { Phase = game.CurrentManeuverPhase }
+            ManeuverState = new ManeuverState { Phase = game.CurrentManeuverPhase },
+            Actions = game.Actions.OrderBy(a => a.Timestamp).Select(a => new GameActionDto
+            {
+                Id = a.Id,
+                Timestamp = a.Timestamp,
+                PlayerName = a.PlayerName,
+                Nation = a.Nation,
+                ActionType = a.ActionType,
+                Message = a.Message
+            }).ToList()
         };
     }
 
@@ -533,6 +545,13 @@ public class GamesController : ControllerBase
 
             await _context.SaveChangesAsync();
             
+            var startedGame = await _context.Games.FindAsync(gameId);
+            if (startedGame != null)
+            {
+                LogAction(startedGame, "Game Started", "StartGame");
+                await _context.SaveChangesAsync();
+            }
+
             await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameStarted", gameId);
 
@@ -822,6 +841,8 @@ public class GamesController : ControllerBase
 
         await _context.SaveChangesAsync();
         
+        LogAction(game, $"{nation} moved to slot {targetSlot} (Cost: {cost}M)", "Move", nation);
+        await _context.SaveChangesAsync();
         
         // Check for Investor Slot (Index 4)
         bool triggeredInvestor = false;
@@ -940,6 +961,9 @@ public class GamesController : ControllerBase
         {
             nationState.HasProducedThisTurn = true;
             _context.Entry(nationState).State = EntityState.Modified;
+            
+            LogAction(game, $"{currentNation} produced {createdUnits} units.", "Production", currentNation);
+
             await _context.SaveChangesAsync();
             await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
             return Ok($"Produced {createdUnits} units.");
@@ -1010,6 +1034,12 @@ public class GamesController : ControllerBase
              
              // Update Controller Logic
              UpdateNationController(game, ns.Nation);
+
+             LogAction(game, $"{actingPlayer.User?.UserName ?? "Someone"} bought {bond.Nation} {bond.Cost}M bond.", "Investment", bond.Nation);
+        }
+        else
+        {
+             LogAction(game, $"{actingPlayer.User?.UserName ?? "Someone"} passed.", "Investment");
         }
         
         // Pass Investor Card
@@ -1096,6 +1126,8 @@ public class GamesController : ControllerBase
         _context.Entry(nationState).State = EntityState.Modified;
         _context.Entry(territoryState).State = EntityState.Modified;
 
+        LogAction(game, $"{nation} built a factory in {territoryDef.Name}.", "Factory", nation);
+
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
 
@@ -1137,6 +1169,8 @@ public class GamesController : ControllerBase
         nationState.HasImportedThisTurn = false;
 
         _context.Entry(game).State = EntityState.Modified;
+        
+        LogAction(game, $"{nation} ended their turn.", "EndTurn", nation);
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -1290,6 +1324,7 @@ public class GamesController : ControllerBase
 
         // Save Changes
         _context.Entry(nationState).State = EntityState.Modified;
+        LogAction(game, $"{nation} collected taxes: {totalTaxRevenue}M (Bonus: {bonus}M, Power: +{powerGain}).", "Taxation", nation);
         await _context.SaveChangesAsync();
         
         // --- Game End Check ---
@@ -1404,10 +1439,26 @@ public class GamesController : ControllerBase
         }
 
         _context.Entry(nationState).State = EntityState.Modified;
+        
+        LogAction(game, $"{game.CurrentTurnNation} imported {request.Units.Count} units.", "Import", game.CurrentTurnNation);
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
         
         return Ok($"Imported {request.Units.Count} units.");
+    }
+    private void LogAction(Game game, string message, string type, Nation? nation = null)
+    {
+        var action = new GameAction
+        {
+            GameId = game.Id,
+            Timestamp = DateTime.UtcNow,
+            PlayerName = User.Identity?.Name ?? "System",
+            Message = message,
+            ActionType = type,
+            Nation = nation
+        };
+        _context.GameActions.Add(action);
+        // Note: Caller must SaveChanges
     }
 }
