@@ -942,6 +942,7 @@ public class GamesController : ControllerBase
             .ToList();
 
         var createdUnits = 0;
+        var producedDetails = new List<string>();
 
         foreach (var tState in factoryTerritories)
         {
@@ -968,6 +969,7 @@ public class GamesController : ControllerBase
             
             _context.Units.Add(newUnit);
             createdUnits++;
+            producedDetails.Add($"{(typeToProduce == UnitType.Army ? "army" : "fleet")} in {def.Name}");
         }
 
         if (createdUnits > 0)
@@ -975,11 +977,11 @@ public class GamesController : ControllerBase
             nationState.HasProducedThisTurn = true;
             _context.Entry(nationState).State = EntityState.Modified;
             
-            LogAction(game, $"produced {createdUnits} units", "Production", currentNation);
+            LogAction(game, $"produced {string.Join(", ", producedDetails)}", "Production", currentNation);
 
             await _context.SaveChangesAsync();
             await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
-            return Ok($"Produced {createdUnits} units.");
+            return Ok($"Produced {string.Join(", ", producedDetails)}.");
         }
         else
         {
@@ -994,9 +996,9 @@ public class GamesController : ControllerBase
         if (userId == null) return Unauthorized();
 
         var game = await _context.Games
-            .Include(g => g.Players)
             .Include(g => g.Bonds)
             .Include(g => g.NationStates)
+            .Include(g => g.Players)
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -1048,11 +1050,11 @@ public class GamesController : ControllerBase
              // Update Controller Logic
              UpdateNationController(game, ns.Nation);
 
-             LogAction(game, $"{actingPlayer.User?.UserName ?? "Someone"} bought {bond.Nation} {bond.Cost}M bond", "Investment", bond.Nation);
+             LogAction(game, $"bought {bond.Nation} {bond.Cost}M bond", "Investment");
         }
         else
         {
-             LogAction(game, $"{actingPlayer.User?.UserName ?? "Someone"} passed", "Investment");
+             LogAction(game, "passed on investment", "Investment");
         }
         
         // Pass Investor Card

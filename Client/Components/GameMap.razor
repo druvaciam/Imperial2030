@@ -974,7 +974,10 @@
     public GameDetailDto? Game { get; set; }
 
     [Parameter] 
-    public bool IsMyTurn { get; set; }
+    public bool IsMyTurn { get; set; } = false;
+
+    [Parameter]
+    public Action<string, bool>? ShowToastAction { get; set; }
 
     private Guid? selectedUnitId;
     private List<string> validDestinations = new();
@@ -1216,9 +1219,6 @@
             if (isStandard || isRail || selectedUnit.UnitType == UnitType.Fleet)
             {
                 // Standard or Rail Move
-                
-
-
                 Console.WriteLine($"[MOVE] Executing standard/rail move (no convoy fleets)");
                 await MoveUnit(selectedUnit, territoryId); 
                 DeselectUnit();
@@ -1485,15 +1485,14 @@
 
         if (!territoryDef.IsHomeCity(nation))
         {
-             // Maybe show toast? For now console
-             Console.WriteLine("Not a home city");
+             await ShowToast("Not a home city", true);
              return;
         }
 
         var territoryState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryId);
         if (territoryState != null && territoryState.HasFactory)
         {
-             Console.WriteLine("Factory already exists");
+             await ShowToast("Factory already exists", true);
              return;
         }
 
@@ -1965,5 +1964,11 @@
         }
 
         return destinations.ToList();
+    }
+
+    private async Task ShowToast(string message, bool isError)
+    {
+        ShowToastAction?.Invoke(message, isError);
+        await Task.CompletedTask;
     }
 }
