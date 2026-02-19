@@ -103,7 +103,7 @@ public class GamesController : ControllerBase
             IsHost = false
         };
         _context.Players.Add(player);
-        LogAction(game, $"{User.Identity?.Name} joined the game.", "JoinGame");
+        LogAction(game, $"{User.Identity?.Name} joined the game", "JoinGame");
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -159,7 +159,7 @@ public class GamesController : ControllerBase
             }
         }
 
-        LogAction(game, $"{User.Identity?.Name} left the game.", "LeaveGame");
+        LogAction(game, $"{User.Identity?.Name} left the game", "LeaveGame");
         await _context.SaveChangesAsync();
 
         // If no players left, delete the game
@@ -841,7 +841,7 @@ public class GamesController : ControllerBase
 
         await _context.SaveChangesAsync();
         
-        LogAction(game, $"{nation} moved to slot {targetSlot} (Cost: {cost}M)", "Move", nation);
+        LogAction(game, $"moved to {GetRondelSlotName(targetSlot)} (Cost: {cost}M)", "Move", nation);
         await _context.SaveChangesAsync();
         
         // Check for Investor Slot (Index 4)
@@ -893,6 +893,19 @@ public class GamesController : ControllerBase
         
         return Ok();
     }
+
+    private string GetRondelSlotName(int index) => index switch
+    {
+        0 => "Taxation",
+        1 => "Factory",
+        2 => "Production",
+        3 => "Maneuver",
+        4 => "Investor",
+        5 => "Import",
+        6 => "Production",
+        7 => "Maneuver",
+        _ => $"Slot {index}"
+    };
 
     [HttpPost("{gameId}/production")]
     public async Task<IActionResult> ExecuteProduction(Guid gameId)
@@ -962,7 +975,7 @@ public class GamesController : ControllerBase
             nationState.HasProducedThisTurn = true;
             _context.Entry(nationState).State = EntityState.Modified;
             
-            LogAction(game, $"{currentNation} produced {createdUnits} units.", "Production", currentNation);
+            LogAction(game, $"produced {createdUnits} units", "Production", currentNation);
 
             await _context.SaveChangesAsync();
             await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -1035,11 +1048,11 @@ public class GamesController : ControllerBase
              // Update Controller Logic
              UpdateNationController(game, ns.Nation);
 
-             LogAction(game, $"{actingPlayer.User?.UserName ?? "Someone"} bought {bond.Nation} {bond.Cost}M bond.", "Investment", bond.Nation);
+             LogAction(game, $"{actingPlayer.User?.UserName ?? "Someone"} bought {bond.Nation} {bond.Cost}M bond", "Investment", bond.Nation);
         }
         else
         {
-             LogAction(game, $"{actingPlayer.User?.UserName ?? "Someone"} passed.", "Investment");
+             LogAction(game, $"{actingPlayer.User?.UserName ?? "Someone"} passed", "Investment");
         }
         
         // Pass Investor Card
@@ -1126,7 +1139,7 @@ public class GamesController : ControllerBase
         _context.Entry(nationState).State = EntityState.Modified;
         _context.Entry(territoryState).State = EntityState.Modified;
 
-        LogAction(game, $"{nation} built a factory in {territoryDef.Name}.", "Factory", nation);
+        LogAction(game, $"built a factory in {territoryDef.Name}", "Factory", nation);
 
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -1148,6 +1161,7 @@ public class GamesController : ControllerBase
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
         if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
+        if (game.CurrentManeuverPhase != ManeuverPhase.None) return BadRequest($"Finish your maneuver phase ({game.CurrentManeuverPhase}) first.");
 
         var nation = game.CurrentTurnNation;
         var nationState = game.NationStates.First(n => n.Nation == nation);
@@ -1170,7 +1184,7 @@ public class GamesController : ControllerBase
 
         _context.Entry(game).State = EntityState.Modified;
         
-        LogAction(game, $"{nation} ended their turn.", "EndTurn", nation);
+        LogAction(game, $"ended their turn", "EndTurn", nation);
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -1324,7 +1338,7 @@ public class GamesController : ControllerBase
 
         // Save Changes
         _context.Entry(nationState).State = EntityState.Modified;
-        LogAction(game, $"{nation} collected taxes: {totalTaxRevenue}M (Bonus: {bonus}M, Power: +{powerGain}).", "Taxation", nation);
+        LogAction(game, $"collected taxes: {totalTaxRevenue}M (Bonus: {bonus}M, Power: +{powerGain})", "Taxation", nation);
         await _context.SaveChangesAsync();
         
         // --- Game End Check ---
@@ -1440,7 +1454,7 @@ public class GamesController : ControllerBase
 
         _context.Entry(nationState).State = EntityState.Modified;
         
-        LogAction(game, $"{game.CurrentTurnNation} imported {request.Units.Count} units.", "Import", game.CurrentTurnNation);
+        LogAction(game, $"imported {request.Units.Count} units", "Import", game.CurrentTurnNation);
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);

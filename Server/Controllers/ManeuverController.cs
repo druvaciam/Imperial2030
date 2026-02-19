@@ -70,25 +70,8 @@ public class ManeuverController : ControllerBase
 
         if (canal != default)
         {
-            // Check Controller of the Canal Land Territory
             var controllerId = canal.ControllerId;
             var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == controllerId);
-            
-            // If Territory has a Flag (Controller is not null) AND Controller is NOT us
-            // "The owner of that nation controls the passage... and may prevent or allow...
-            // If ... marked with a flag, the owner ... controls ... may prevent or allow."
-            // Implicitly: HOSTILE flag blocks. FRIENDLY or OWN flag allows.
-            // What if it is a "Friendly" nation (Peace)?
-            // "may prevent or allow". Usually in Imperial, you can move through unless Hostile?
-            // "Armies may be convoyed... as long as the nation controlling the canal... allows it."
-            // "At the beginning... no flag... therefore no restriction."
-            // Standard Imperial 2030 implementation:
-            // - If you control it: Yes.
-            // - If nobody controls it (No flag): Yes.
-            // - If SOMEONE ELSE controls it:
-            //   - Is it "Passive" allow? Or "Active" block?
-
-            
             if (tState != null && tState.Controller != null && tState.Controller != nation)
             {
                 // Check if the same player controls both nations
@@ -112,6 +95,7 @@ public class ManeuverController : ControllerBase
             return BadRequest("Fleets cannot move between inland territories.");
 
         // Execute Move
+        var sourceTerritory = unit.TerritoryId;
         unit.TerritoryId = request.DestinationId;
         unit.HasMoved = true;
 
@@ -139,12 +123,7 @@ public class ManeuverController : ControllerBase
             }
         }
         
-        if (request.BattleTargetNation.HasValue)
-        {
-             // ... existing battle log ...
-        }
-        
-        LogAction(game, $"{nation} fleet moved to {request.DestinationId}.", "MoveFleet", nation);
+        LogAction(game, $"fleet moved to {request.DestinationId} from {sourceTerritory}", "MoveFleet", nation);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
@@ -294,6 +273,7 @@ public class ManeuverController : ControllerBase
         }
 
         // Execute Move
+        var sourceTerritory = unit.TerritoryId;
         unit.TerritoryId = request.DestinationId;
         unit.HasMoved = true;
 
@@ -317,12 +297,7 @@ public class ManeuverController : ControllerBase
             }
         }
 
-        if (request.BattleTargetNation.HasValue)
-        {
-            // ... existing battle log ...
-        }
-
-        LogAction(game, $"{nation} army moved to {request.DestinationId}.", "MoveArmy", nation);
+        LogAction(game, $"army moved to {request.DestinationId} from {sourceTerritory}", "MoveArmy", nation);
         await _context.SaveChangesAsync();
         Console.WriteLine("[MoveArmy] Changes Saved.");
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -414,7 +389,7 @@ public class ManeuverController : ControllerBase
         // Remove Factory
         tState.HasFactory = false;
 
-        LogAction(game, $"{nation} destroyed factory in {tState.TerritoryId}.", "DestroyFactory", nation);
+        LogAction(game, $"destroyed factory in {tState.TerritoryId}", "DestroyFactory", nation);
 
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -455,6 +430,8 @@ public class ManeuverController : ControllerBase
                 ResolveBattles(game, _context);
             }
 
+            var oldPhase = game.CurrentManeuverPhase;
+
             // Advance Phase
             switch (game.CurrentManeuverPhase)
             {
@@ -470,7 +447,7 @@ public class ManeuverController : ControllerBase
                     return BadRequest("Invalid phase transition.");
             }
         
-        LogAction(game, $"{nation} ended maneuver phase ({game.CurrentManeuverPhase}).", "NextPhase", nation);
+        LogAction(game, $"ended {oldPhase} maneuver phase", "NextPhase", nation);
 
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);

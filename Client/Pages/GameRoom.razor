@@ -26,8 +26,8 @@ else
         {
             <div class="turn-alert-overlay">
                 <div class="alert-content">
-                    <h1>IT IS YOUR MOVE!</h1>
-                    <p>You control @game.CurrentTurnNation</p>
+                    <h3>IT IS YOUR MOVE!</h3>
+                    <small>You control @game.CurrentTurnNation</small>
                 </div>
             </div>
         }
@@ -517,28 +517,46 @@ else
 
     .turn-alert-overlay {
         position: fixed;
-        top: 20px;
+        top: 55px; /* Positioned just below the top nav bar */
         left: 50%;
         transform: translateX(-50%);
         width: auto;
         height: auto;
-        padding: 10px 40px;
-        border-radius: 50px;
+        padding: 5px 20px;
+        border-radius: 8px; /* Compact radius */
         background: linear-gradient(180deg, rgba(231, 76, 60, 0.95) 0%, rgba(192, 57, 43, 0.95) 100%);
         z-index: 2000;
         display: flex;
         align-items: center;
         justify-content: center;
         color: white;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.4);
-        border: 2px solid rgba(255,255,255,0.3);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        border: 1px solid rgba(255,255,255,0.2);
         animation: slideDown 0.5s ease-out, pulse 2s infinite;
         pointer-events: none;
     }
     
     .alert-content {
         text-align: center;
-        text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .alert-content h3 {
+        margin: 0;
+        font-size: 1.1rem;
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    .alert-content small {
+        font-size: 0.85rem;
+        opacity: 0.9;
+        border-left: 1px solid rgba(255,255,255,0.4);
+        padding-left: 10px;
     }
     
     @@keyframes slideDown {
