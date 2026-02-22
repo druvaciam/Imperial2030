@@ -21,12 +21,14 @@ public class GamesController : ControllerBase
     private readonly ApplicationDbContext _context;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
+    private readonly Imperial2030.Server.Services.PresenceTracker _presenceTracker;
 
-    public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext)
+    public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.PresenceTracker presenceTracker)
     {
         _context = context;
         _userManager = userManager;
         _hubContext = hubContext;
+        _presenceTracker = presenceTracker;
     }
 
     [HttpGet]
@@ -248,6 +250,7 @@ public class GamesController : ControllerBase
                 UserName = p.User?.UserName ?? "Unknown",
                 IsHost = p.IsHost,
                 Cash = p.Cash,
+                IsOnline = _presenceTracker.IsUserOnline(p.UserId),
                 Bonds = game.Bonds.Where(b => b.HolderId == p.Id).Select(b => new BondDto
                 {
                     Id = b.Id,

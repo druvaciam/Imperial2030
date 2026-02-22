@@ -110,8 +110,16 @@
 
         await LoadGames();
 
+        var token = await JS.InvokeAsync<string>("localStorage.getItem", "authToken");
+
         hubConnection = new HubConnectionBuilder()
-            .WithUrl(NavigationManager.ToAbsoluteUri("/gamehub"))
+            .WithUrl(NavigationManager.ToAbsoluteUri("/gamehub"), options =>
+            {
+                if (!string.IsNullOrEmpty(token))
+                {
+                    options.AccessTokenProvider = () => Task.FromResult((string?)token);
+                }
+            })
             .Build();
 
         hubConnection.On<GameDto>("GameCreated", (game) =>

@@ -9,5 +9,6 @@ public class PlayerDto
     public string UserName { get; set; } = string.Empty;
     public bool IsHost { get; set; }
     public int Cash { get; set; }
+    public bool IsOnline { get; set; }
     public List<BondDto> Bonds { get; set; } = new List<BondDto>();
 }

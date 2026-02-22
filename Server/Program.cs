@@ -12,6 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllersWithViews();
 builder.Services.AddRazorPages();
 builder.Services.AddSignalR();
+builder.Services.AddSingleton<Imperial2030.Server.Services.PresenceTracker>();
 
 builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext>(options =>
     options.UseSqlite("Data Source=imperial2030.db"));
