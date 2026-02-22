@@ -251,6 +251,7 @@ public class GamesController : ControllerBase
                 IsHost = p.IsHost,
                 Cash = p.Cash,
                 IsOnline = _presenceTracker.IsUserOnline(p.UserId),
+                IsActiveInGame = _presenceTracker.IsUserActiveInGame(gameId.ToString(), p.UserId),
                 Bonds = game.Bonds.Where(b => b.HolderId == p.Id).Select(b => new BondDto
                 {
                     Id = b.Id,

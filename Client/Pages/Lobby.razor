@@ -81,6 +81,12 @@
                                     disabled="@(game.IsFull || game.Status != GameStatus.Lobby)">
                                     @(game.Status == GameStatus.Finished ? "Finished" : game.Status == GameStatus.InProgress ? "In Progress" : game.IsFull ? "Full" : "Join Game")
                                 </button>
+                                @if (game.Status == GameStatus.InProgress || game.Status == GameStatus.Finished)
+                                {
+                                    <button class="btn btn-outline-info btn-sm ms-2" @onclick="@(() => NavigationManager.NavigateTo($"/game/{game.Id}"))">
+                                        Watch
+                                    </button>
+                                }
                             }
                         </div>
                     </div>

@@ -10,5 +10,6 @@ public class PlayerDto
     public bool IsHost { get; set; }
     public int Cash { get; set; }
     public bool IsOnline { get; set; }
-    public List<BondDto> Bonds { get; set; } = new List<BondDto>();
+    public bool IsActiveInGame { get; set; }
+    public List<BondDto> Bonds { get; set; } = [];
 }

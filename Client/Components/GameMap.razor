@@ -977,6 +977,9 @@
     public bool IsMyTurn { get; set; } = false;
 
     [Parameter]
+    public bool IsObserver { get; set; } = false;
+
+    [Parameter]
     public Action<string, bool>? ShowToastAction { get; set; }
 
     private Guid? selectedUnitId;
@@ -1136,7 +1139,7 @@
     {
         Console.WriteLine($"Player clicked on: {territoryId}");
 
-        if (Game == null || !IsMyTurn) return;
+        if (Game == null || !IsMyTurn || IsObserver) return;
 
         var nation = Game.CurrentTurnNation;
         var ns = Game.NationStates.FirstOrDefault(n => n.Nation == nation);

@@ -34,7 +34,19 @@ public class GameHub : Hub
     {
         var userId = Context.UserIdentifier ?? Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         
-        _presenceTracker.UserDisconnected(Context.ConnectionId);
+        var (observerUpdates, playerUpdates) = _presenceTracker.UserDisconnected(Context.ConnectionId);
+        foreach (var update in observerUpdates)
+        {
+            await Clients.Group(update.Key).SendAsync("ObserverCountChanged", update.Value);
+        }
+        foreach (var update in playerUpdates)
+        {
+            foreach (var pUserId in update.Value)
+            {
+                bool stillActive = _presenceTracker.IsUserActiveInGame(update.Key, pUserId);
+                await Clients.Group(update.Key).SendAsync("PlayerActiveChanged", pUserId, stillActive);
+            }
+        }
 
         if (!string.IsNullOrEmpty(userId) && !_presenceTracker.IsUserOnline(userId))
         {
@@ -44,13 +56,47 @@ public class GameHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task JoinGameGroup(string gameId)
+    public async Task<int> JoinGameGroup(string gameId, bool isObserver = false)
     {
         await Groups.AddToGroupAsync(Context.ConnectionId, gameId);
+        var userId = Context.UserIdentifier ?? Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        
+        int count = 0;
+        if (!string.IsNullOrEmpty(userId))
+        {
+            if (isObserver)
+            {
+                count = _presenceTracker.AddObserver(gameId, userId, Context.ConnectionId);
+                await Clients.Group(gameId).SendAsync("ObserverCountChanged", count);
+            }
+            else
+            {
+                _presenceTracker.AddActivePlayer(gameId, userId, Context.ConnectionId);
+                count = _presenceTracker.GetObserverCount(gameId);
+                await Clients.Group(gameId).SendAsync("PlayerActiveChanged", userId, true);
+            }
+        }
+        return count;
     }
 
-    public async Task LeaveGameGroup(string gameId)
+    public async Task LeaveGameGroup(string gameId, bool isObserver = false)
     {
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, gameId);
+        var userId = Context.UserIdentifier ?? Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (!string.IsNullOrEmpty(userId))
+        {
+            if (isObserver)
+            {
+                int count = _presenceTracker.RemoveObserver(gameId, userId, Context.ConnectionId);
+                await Clients.Group(gameId).SendAsync("ObserverCountChanged", count);
+            }
+            else
+            {
+                _presenceTracker.RemoveActivePlayer(gameId, userId, Context.ConnectionId);
+                bool stillActive = _presenceTracker.IsUserActiveInGame(gameId, userId);
+                await Clients.Group(gameId).SendAsync("PlayerActiveChanged", userId, stillActive);
+            }
+        }
     }
 }
