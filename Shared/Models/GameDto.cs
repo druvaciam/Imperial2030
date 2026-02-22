@@ -14,4 +14,5 @@ public class GameDto
     public bool IsFull => PlayerCount >= MaxPlayers;
     public List<string> UserIds { get; set; } = [];
     public string? HostId { get; set; }
+    public int MaxPower { get; set; }
 }

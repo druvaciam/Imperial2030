@@ -36,6 +36,7 @@ public class GamesController : ControllerBase
     {
         return await _context.Games
             .Include(g => g.Players)
+            .Include(g => g.NationStates)
             .OrderByDescending(g => g.CreatedAt)
             .Select(g => new GameDto
             {
@@ -45,7 +46,8 @@ public class GamesController : ControllerBase
                 CreatedAt = g.CreatedAt,
                 PlayerCount = g.Players.Count,
                 UserIds = g.Players.Select(p => p.UserId).ToList(),
-                HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault()
+                HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault(),
+                MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0
             })
             .ToListAsync();
     }
@@ -211,6 +213,7 @@ public class GamesController : ControllerBase
         _context.Games.Remove(game);
         await _context.SaveChangesAsync();
 
+        await _hubContext.Clients.All.SendAsync("GameDeleted", gameId);
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
         return Ok();
     }

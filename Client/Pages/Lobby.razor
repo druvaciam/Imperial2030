@@ -52,7 +52,16 @@
                             <h6 class="card-subtitle mb-2 text-muted">Created: @game.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy h:mm tt")
                             </h6>
                             <p class="card-text">
-                                Status: <span class="badge bg-@GetStatusColor(game.Status)">@game.Status</span><br />
+                                Status: <span class="badge bg-@GetStatusColor(game.Status)">
+                                    @if (game.Status == GameStatus.InProgress)
+                                    {
+                                        @($"In Progress ({(int)(game.MaxPower / 25.0 * 100)}%)")
+                                    }
+                                    else
+                                    {
+                                        @game.Status
+                                    }
+                                </span><br />
                                 Players: @game.PlayerCount / @game.MaxPlayers
                             </p>
                         </div>

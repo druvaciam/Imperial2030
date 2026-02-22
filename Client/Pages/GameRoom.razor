@@ -12,6 +12,13 @@
 
 <PageTitle>@(IsMyTurn() ? "⚠️ YOUR TURN! - " : "")@(game != null ? $"{game.Name} - " : "")Imperial 2030</PageTitle>
 
+@if (!string.IsNullOrEmpty(toastMessage))
+{
+    <div class="toast-notification @(isToastError ? "bg-danger" : "bg-success")">
+        @toastMessage
+    </div>
+}
+
 @if (game == null)
 {
     <div class="text-center mt-5">
@@ -29,13 +36,6 @@ else
                     <h3>IT IS YOUR MOVE!</h3>
                     <small>You control @game.CurrentTurnNation</small>
                 </div>
-            </div>
-        }
-
-        @if (!string.IsNullOrEmpty(toastMessage))
-        {
-            <div class="toast-notification @(isToastError ? "bg-danger" : "bg-success")">
-                @toastMessage
             </div>
         }
 
@@ -804,6 +804,15 @@ else
             StateHasChanged();
         });
 
+        hubConnection.On<Guid>("GameDeleted", async (id) =>
+        {
+            if (id == GameId)
+            {
+                await ShowToast("The game has been deleted by the host.", true);
+                Navigation.NavigateTo("/");
+            }
+        });
+
         await hubConnection.StartAsync();
         observerCount = await hubConnection.InvokeAsync<int>("JoinGameGroup", GameId.ToString(), MyPlayer == null);
     }
@@ -834,7 +843,9 @@ else
         catch (Exception ex)
         {
             Console.WriteLine($"Error loading game: {ex.Message}");
-            await ShowToast($"Error loading game: {ex.Message}", true);
+            await ShowToast($"Game not found or access denied.", true);
+            await Task.Delay(2000);
+            Navigation.NavigateTo("/");
         }
     }
 
