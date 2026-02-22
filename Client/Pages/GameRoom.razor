@@ -292,7 +292,14 @@ else
                  {
                      <button class="btn btn-success" @onclick="StartGame" disabled="@(game.Players.Count < 2)">Start Game</button>
                  }
-                 <button class="btn btn-danger" @onclick="ExitGame">Exit Game</button>
+                 @if (game.Status == GameStatus.Lobby)
+                 {
+                     <button class="btn btn-danger" @onclick="ExitGame">Leave Game</button>
+                 }
+                 else
+                 {
+                     <button class="btn btn-secondary" @onclick="@(() => Navigation.NavigateTo("/"))">Return to Lobby</button>
+                 }
             </div>
         </div>
 
@@ -749,7 +756,7 @@ else
         catch (Exception ex)
         {
             Console.WriteLine($"Error loading game: {ex.Message}");
-            ShowToast($"Error loading game: {ex.Message}", true);
+            await ShowToast($"Error loading game: {ex.Message}", true);
         }
     }
 
@@ -759,7 +766,7 @@ else
         if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync();
-            ShowToast($"Failed to start game: {error}", true);
+            await ShowToast($"Failed to start game: {error}", true);
         }
     }
 

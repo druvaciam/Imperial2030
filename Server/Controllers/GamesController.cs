@@ -42,7 +42,8 @@ public class GamesController : ControllerBase
                 Status = g.Status,
                 CreatedAt = g.CreatedAt,
                 PlayerCount = g.Players.Count,
-                UserIds = g.Players.Select(p => p.UserId).ToList()
+                UserIds = g.Players.Select(p => p.UserId).ToList(),
+                HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault()
             })
             .ToListAsync();
     }
@@ -73,7 +74,8 @@ public class GamesController : ControllerBase
             Status = game.Status,
             CreatedAt = game.CreatedAt,
             PlayerCount = 1,
-            UserIds = new List<string> { userId }
+            UserIds = new List<string> { userId },
+            HostId = userId
         };
 
         await _hubContext.Clients.All.SendAsync("GameCreated", gameDto);
@@ -89,6 +91,9 @@ public class GamesController : ControllerBase
 
         var game = await _context.Games.Include(g => g.Players).FirstOrDefaultAsync(g => g.Id == gameId);
         if (game == null) return NotFound();
+
+        if (game.Status != GameStatus.Lobby)
+            return BadRequest("Game has already started or is finished.");
 
         if (game.Players.Any(p => p.UserId == userId))
             return BadRequest("You are already in this game.");
@@ -124,6 +129,11 @@ public class GamesController : ControllerBase
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
+
+        if (game.Status == GameStatus.Finished || game.Status == GameStatus.InProgress)
+        {
+            return BadRequest("Cannot leave a game that has already started. It remains in your history.");
+        }
 
         var player = game.Players.FirstOrDefault(p => p.UserId == userId);
         if (player == null) return BadRequest("You are not in this game.");
@@ -165,7 +175,7 @@ public class GamesController : ControllerBase
         // If no players left, delete the game
         // We need to re-check count. Accessing game.Players might be stale if we didn't reload or if tracking didn't update list count immediately for Remove?
         // _context.Players.Remove DOES remove from the collection locally.
-        if (!game.Players.Any())
+        if (!game.Players.Any() && game.Status != GameStatus.Finished)
         {
             _context.Games.Remove(game);
             await _context.SaveChangesAsync();
@@ -173,6 +183,33 @@ public class GamesController : ControllerBase
         
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
 
+        return Ok();
+    }
+
+    [HttpDelete("{gameId}")]
+    public async Task<IActionResult> DeleteGame(Guid gameId)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.Players)
+            .Include(g => g.Bonds)
+            .Include(g => g.NationStates)
+            .Include(g => g.TerritoryStates)
+            .Include(g => g.Units)
+            .Include(g => g.Actions)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+
+        var player = game.Players.FirstOrDefault(p => p.UserId == userId);
+        if (player == null || !player.IsHost) return Forbid();
+
+        _context.Games.Remove(game);
+        await _context.SaveChangesAsync();
+
+        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
         return Ok();
     }
 
@@ -977,11 +1014,11 @@ public class GamesController : ControllerBase
             nationState.HasProducedThisTurn = true;
             _context.Entry(nationState).State = EntityState.Modified;
             
-            LogAction(game, $"produced {string.Join(", ", producedDetails)}", "Production", currentNation);
+            LogAction(game, $"produced {createdUnits} units: {string.Join(", ", producedDetails)}", "Production", currentNation);
 
             await _context.SaveChangesAsync();
             await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
-            return Ok($"Produced {string.Join(", ", producedDetails)}.");
+            return Ok($"Produced {createdUnits} units: {string.Join(", ", producedDetails)}.");
         }
         else
         {

@@ -113,13 +113,7 @@ public class ManeuverController : ControllerBase
                 // Destroy Both
                 game.Units.Remove(unit);
                 game.Units.Remove(enemyFleet);
-                Console.WriteLine($"[Battle] {nation} Fleet attacked {targetNation} in {request.DestinationId}. Both destroyed.");
-            }
-            else
-            {
-                // Target not found? Maybe race condition or UI error. 
-                // Just log it. The move still happened.
-                Console.WriteLine($"[Battle] {nation} targeted {targetNation} in {request.DestinationId} but no fleet found.");
+                LogAction(game, $"fleet attacked {targetNation} in {request.DestinationId}. Both destroyed", "Battle", nation);
             }
         }
         
@@ -175,6 +169,8 @@ public class ManeuverController : ControllerBase
         // Destroy Both
         game.Units.Remove(unit);
         game.Units.Remove(enemyUnit);
+        
+        LogAction(game, $"{unit.UnitType.ToString().ToLower()} attacked {targetNation} in {unit.TerritoryId}. Both destroyed", "Battle", nation);
         
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -289,11 +285,7 @@ public class ManeuverController : ControllerBase
             {
                 game.Units.Remove(unit);
                 game.Units.Remove(enemyUnit);
-                Console.WriteLine($"[Battle] {nation} Army attacked {targetNation} in {request.DestinationId}. Both destroyed.");
-            }
-            else
-            {
-                Console.WriteLine($"[Battle] {nation} targeted {targetNation} in {request.DestinationId} but no army found.");
+                LogAction(game, $"army attacked {targetNation} in {request.DestinationId}. Both destroyed", "Battle", nation);
             }
         }
 
@@ -382,9 +374,6 @@ public class ManeuverController : ControllerBase
             _context.Units.Remove(u);
             game.Units.Remove(u);
         }
-
-        // Remove Factory
-        tState.HasFactory = false;
 
         // Remove Factory
         tState.HasFactory = false;
