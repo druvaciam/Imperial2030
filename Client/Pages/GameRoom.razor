@@ -189,7 +189,23 @@ else
                         }
                         else
                         {
-                            <button class="btn btn-warning fw-bold" @onclick="EndTurn" disabled="@(!turnMoved || isSubmitting || game.IsInvestorTurn)">
+                            bool noActionsLeft = false;
+                            if (turnMoved && !isSubmitting && !game.IsInvestorTurn)
+                            {
+                                noActionsLeft = true;
+                                if (CanBuildFactory() && !alreadyBuilt) noActionsLeft = false;
+                                if (CanImport() && !ns.HasImportedThisTurn) noActionsLeft = false;
+                                if (CanProduce()) noActionsLeft = false;
+                                if (ns?.RondelPosition == 3 || ns?.RondelPosition == 7) 
+                                {
+                                    if (game.ManeuverState?.Phase != ManeuverPhase.None)
+                                    {
+                                        noActionsLeft = false;
+                                    }
+                                }
+                            }
+
+                            <button class="btn btn-warning fw-bold @(noActionsLeft ? "btn-endturn-pulse" : "")" @onclick="EndTurn" disabled="@(!turnMoved || isSubmitting || game.IsInvestorTurn)">
                                 End Turn
                                 @if (game.IsInvestorTurn) { <span>(Waiting for Investor)</span> }
                             </button>
@@ -715,6 +731,18 @@ else
         border-radius: 0 4px 4px 0;
         transition: all 0.3s ease;
     }
+    
+    .btn-endturn-pulse {
+        animation: pulse-endturn 1.5s infinite;
+        box-shadow: 0 0 15px rgba(241, 196, 15, 0.6);
+        border: 2px solid #fff;
+    }
+
+    @@keyframes pulse-endturn {
+        0% { transform: scale(1); box-shadow: 0 0 10px rgba(241, 196, 15, 0.4); }
+        50% { transform: scale(1.05); box-shadow: 0 0 25px rgba(241, 196, 15, 0.9); }
+        100% { transform: scale(1); box-shadow: 0 0 10px rgba(241, 196, 15, 0.4); }
+    }
 </style>
 
 @code {
@@ -1156,7 +1184,7 @@ else
     {
         if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        return ns?.RondelPosition == 5 && !ns.HasImportedThisTurn; 
+        return ns?.RondelPosition == 5 && !ns.HasImportedThisTurn && ns?.Treasury >= 1; 
     }
 
     private void AddImportUnit()

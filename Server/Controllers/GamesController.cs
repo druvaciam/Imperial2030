@@ -925,6 +925,22 @@ public class GamesController : ControllerBase
         if (targetSlot == 3 || targetSlot == 7)
         {
             game.CurrentManeuverPhase = ManeuverPhase.Fleets;
+            
+            bool hasFleets = game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved);
+            if (!hasFleets)
+            {
+                game.CurrentManeuverPhase = ManeuverPhase.Armies;
+                LogAction(game, "auto-skipped Fleets maneuver phase", "Maneuver", nation);
+            }
+            if (game.CurrentManeuverPhase == ManeuverPhase.Armies)
+            {
+                bool hasArmies = game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved);
+                if (!hasArmies)
+                {
+                    game.CurrentManeuverPhase = ManeuverPhase.None;
+                    LogAction(game, "auto-skipped Armies maneuver phase", "Maneuver", nation);
+                }
+            }
         }
         else
         {
@@ -1202,6 +1218,7 @@ public class GamesController : ControllerBase
         var game = await _context.Games
             .Include(g => g.NationStates)
             .Include(g => g.Players)
+            .Include(g => g.Units)
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -1227,6 +1244,16 @@ public class GamesController : ControllerBase
         nationState.HasBuiltThisTurn = false;
         nationState.HasMovedThisTurn = false;
         nationState.HasImportedThisTurn = false;
+
+        // Reset units movement states
+        if (game.Units != null)
+        {
+            foreach (var unit in game.Units.Where(u => u.Nation == nation))
+            {
+                unit.HasMoved = false;
+                unit.HasConvoyed = false;
+            }
+        }
 
         _context.Entry(game).State = EntityState.Modified;
         

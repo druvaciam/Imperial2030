@@ -118,6 +118,8 @@ public class ManeuverController : ControllerBase
         }
         
         LogAction(game, $"fleet moved to {request.DestinationId} from {sourceTerritory}", "MoveFleet", nation);
+        await TryAutoAdvanceManeuver(game, nation);
+
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
@@ -171,6 +173,8 @@ public class ManeuverController : ControllerBase
         game.Units.Remove(enemyUnit);
         
         LogAction(game, $"{unit.UnitType.ToString().ToLower()} attacked {targetNation} in {unit.TerritoryId}. Both destroyed", "Battle", nation);
+        
+        await TryAutoAdvanceManeuver(game, nation);
         
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -290,6 +294,7 @@ public class ManeuverController : ControllerBase
         }
 
         LogAction(game, $"army moved to {request.DestinationId} from {sourceTerritory}", "MoveArmy", nation);
+        await TryAutoAdvanceManeuver(game, nation);
         await _context.SaveChangesAsync();
         Console.WriteLine("[MoveArmy] Changes Saved.");
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -380,6 +385,8 @@ public class ManeuverController : ControllerBase
 
         LogAction(game, $"destroyed factory in {tState.TerritoryId}", "DestroyFactory", nation);
 
+        await TryAutoAdvanceManeuver(game, nation);
+
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
@@ -450,6 +457,34 @@ public class ManeuverController : ControllerBase
         return StatusCode(500, ex.Message);
     }
 }
+
+    private async Task TryAutoAdvanceManeuver(Game game, Nation nation)
+    {
+        if (game.CurrentManeuverPhase == ManeuverPhase.Fleets)
+        {
+            var unmovedFleets = game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved);
+            if (!unmovedFleets)
+            {
+                await UpdateTerritoryControl(game);
+                game.CurrentManeuverPhase = ManeuverPhase.Armies;
+                LogAction(game, "auto-ended Fleets maneuver phase", "NextPhase", nation);
+            }
+        }
+
+        if (game.CurrentManeuverPhase == ManeuverPhase.Armies)
+        {
+            var unmovedArmies = game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved);
+            if (!unmovedArmies)
+            {
+                await UpdateTerritoryControl(game);
+                game.CurrentManeuverPhase = ManeuverPhase.None;
+                LogAction(game, "auto-ended Armies maneuver phase", "NextPhase", nation);
+            }
+        }
+
+        // If we advanced beyond Armies, and there's logic that needs to run, we log it.
+        // Actually, no further changes needed since the caller will SaveChanges.
+    }
 
     private async Task UpdateTerritoryControl(Game game)
     {
