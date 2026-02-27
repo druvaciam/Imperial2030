@@ -1,7 +1,7 @@
 @using Imperial2030.Shared.Models
 @using System.Globalization
 
-<div class="rondel-container">
+<div class="rondel-container @(IsMyTurn && !IsLocked ? "my-turn-highlight" : "")">
     <svg viewBox="-120 -120 240 240" class="rondel-svg">
         <defs>
             <filter id="drop-shadow">
@@ -167,5 +167,16 @@
     }
     .rondel-slice.hoverable:hover {
         opacity: 0.8;
+    }
+    .my-turn-highlight {
+        animation: rondel-pulse 2s infinite;
+        border-radius: 50%;
+        box-shadow: 0 0 20px 5px rgba(241, 196, 15, 0.6); /* Gold glow */
+    }
+
+    @@keyframes rondel-pulse {
+        0% { box-shadow: 0 0 10px 2px rgba(241, 196, 15, 0.4); }
+        50% { box-shadow: 0 0 25px 8px rgba(241, 196, 15, 0.9); }
+        100% { box-shadow: 0 0 10px 2px rgba(241, 196, 15, 0.4); }
     }
 </style>
