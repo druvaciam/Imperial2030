@@ -96,7 +96,9 @@ else
                     CurrentTurnNation="@game.CurrentTurnNation"
                     IsMyTurn="@IsMyTurn()"
                     IsLocked="@isLocked"
-                    OnMoveSelected="@OnRondelMove" />
+                    OnMoveSelected="@OnRondelMove"
+                    Game="@game"
+                    CurrentPlayerId="@MyPlayer?.Id" />
                 
                 <div class="mt-3 text-center">
                     <span class="text-muted small text-uppercase">Current Turn</span>
@@ -194,7 +196,7 @@ else
                             {
                                 noActionsLeft = true;
                                 if (CanBuildFactory() && !alreadyBuilt) noActionsLeft = false;
-                                if (CanImport() && !ns.HasImportedThisTurn) noActionsLeft = false;
+                                if (CanImport() && ns != null && !ns.HasImportedThisTurn) noActionsLeft = false;
                                 if (CanProduce()) noActionsLeft = false;
                                 if (ns?.RondelPosition == 3 || ns?.RondelPosition == 7) 
                                 {
@@ -234,7 +236,7 @@ else
                                      bool canAffordFull = (MyPlayer?.Cash ?? 0) >= bond.Cost;
                                      
                                      // Check for upgrade
-                                     var ownedBonds = MyPlayer.Bonds.Where(b => b.Nation == bond.Nation).OrderByDescending(b => b.Cost).ToList();
+                                     var ownedBonds = (MyPlayer?.Bonds?.Where(b => b.Nation == bond.Nation).OrderByDescending(b => b.Cost) ?? Enumerable.Empty<Imperial2030.Shared.Models.BondDto>()).ToList();
                                      
                                      <div class="mb-1">
                                          <button class="btn btn-sm btn-outline-primary w-100 text-start" 
@@ -439,7 +441,7 @@ else
                     <div class="mb-3">
                          <h6 class="text-white border-bottom border-secondary pb-1"> Governments</h6>
                          @{
-                             var myGovernments = game.NationStates.Where(ns => ns.ControllerName == targetPlayer.UserName).ToList();
+                             var myGovernments = game?.NationStates.Where(ns => ns.ControllerName == targetPlayer.UserName).ToList() ?? new List<Imperial2030.Shared.Models.NationStateDto>();
                          }
                          @if (myGovernments.Any())
                          {

@@ -1,5 +1,6 @@
 @using Imperial2030.Shared.Models
 @using System.Globalization
+@using System.Linq
 
 <div class="rondel-container @(IsMyTurn && !IsLocked ? "my-turn-highlight" : "")">
     <svg viewBox="-120 -120 240 240" class="rondel-svg">
@@ -24,7 +25,7 @@
             <g transform="rotate(@rotation)" 
                class="rondel-slice @(isHoverable ? "hoverable" : "")"
                @onclick="@(() => OnSliceClick(index))">
-                
+                <title>@GetSliceTooltip(index)</title>
                 <!-- Slice Shape: Symmetric wedge centered at 0 deg (-22.5 to +22.5) -->
                 <!-- x = 100 * cos(22.5) = 92.388 -->
                 <!-- y = 100 * sin(22.5) = 38.268 -->
@@ -98,6 +99,8 @@
     [Parameter] public bool IsMyTurn { get; set; }
     [Parameter] public bool IsLocked { get; set; }
     [Parameter] public EventCallback<int> OnMoveSelected { get; set; }
+    [Parameter] public GameDetailDto? Game { get; set; }
+    [Parameter] public Guid? CurrentPlayerId { get; set; }
 
     private int? CurrentPosition => NationStates.FirstOrDefault(n => n.Nation == CurrentTurnNation)?.RondelPosition;
 
@@ -123,6 +126,207 @@
         {
             await OnMoveSelected.InvokeAsync(index);
         }
+    }
+
+    private string GetSliceTooltip(int index)
+    {
+        var segment = GetSegment(index);
+        string baseMsg = segment.Name switch
+        {
+            "Taxation" => "Collect taxes based on factories and flags, pay soldiers, and boost power.",
+            "Factory" => "Build a factory in a home city for 5M.",
+            "Production" => "Produce armies and fleets at your factories.",
+            "Maneuver" => "Move your fleets and armies.",
+            "Investor" => "Pay bond interest and trigger Investor action.",
+            "Import" => "Import up to 3 units for 1M each.",
+            _ => ""
+        };
+
+        if (Game == null || string.IsNullOrEmpty(baseMsg)) return baseMsg;
+
+        var nationState = Game.NationStates.FirstOrDefault(n => n.Nation == CurrentTurnNation);
+        if (nationState == null) return baseMsg;
+
+        if (index == 0) // Taxation Calculation
+        {
+            int factoryRevenue = 0;
+            var territoriesWithFactories = Game.Territories.Where(ts => ts.HasFactory).ToList();
+            foreach (var ts in territoriesWithFactories)
+            {
+                var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
+                if (territoryDef != null && territoryDef.Nation == CurrentTurnNation)
+                {
+                    bool hasHostileArmy = Game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != CurrentTurnNation);
+                    if (!hasHostileArmy) factoryRevenue += 2;
+                }
+            }
+            int flagRevenue = Game.Territories.Count(ts => ts.Controller == CurrentTurnNation);
+            int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
+            int unitCount = Game.Units.Count(u => u.Nation == CurrentTurnNation);
+            int soldiersPay = unitCount * 1;
+            
+            int bonus = 0;
+            if (totalTaxRevenue >= 16) bonus = 5;
+            else if (totalTaxRevenue >= 14) bonus = 4;
+            else if (totalTaxRevenue >= 12) bonus = 3;
+            else if (totalTaxRevenue >= 10) bonus = 2;
+            else if (totalTaxRevenue >= 6) bonus = 1;
+            else bonus = 0;
+            
+            // Expected Treasury after tax but before pay
+            int tempTreasury = nationState.Treasury + totalTaxRevenue;
+            int actualPay = Math.Min(tempTreasury, soldiersPay);
+            tempTreasury -= actualPay;
+            int actualBonus = Math.Min(tempTreasury, bonus);
+
+            int powerGain = 0;
+            if (totalTaxRevenue <= 5) powerGain = 0;
+            else if (totalTaxRevenue <= 7) powerGain = 1;
+            else if (totalTaxRevenue <= 9) powerGain = 2;
+            else if (totalTaxRevenue == 10) powerGain = 3;
+            else if (totalTaxRevenue == 11) powerGain = 4;
+            else if (totalTaxRevenue == 12) powerGain = 5;
+            else if (totalTaxRevenue == 13) powerGain = 6;
+            else if (totalTaxRevenue == 14) powerGain = 7;
+            else if (totalTaxRevenue == 15) powerGain = 8;
+            else if (totalTaxRevenue <= 17) powerGain = 9;
+            else powerGain = 10;
+
+            string controllerName = nationState.ControllerName ?? "None";
+            string youIndicator = Game.Players.FirstOrDefault(p => p.Id == CurrentPlayerId)?.UserName == controllerName ? " (You)" : "";
+            int newTreasury = tempTreasury - actualBonus;
+            int treasuryGain = newTreasury - nationState.Treasury;
+
+            return $"{baseMsg}\n\nRevenue: {totalTaxRevenue}M\nSoldiers' Pay: -{actualPay}M\nNation Treasury Gain: {(treasuryGain >= 0 ? "+" : "")}{treasuryGain}M\nController {controllerName}{youIndicator} Bonus: +{actualBonus}M\nPower Gain: +{powerGain}";
+        }
+        else if (index == 4) // Investor Calculation
+        {
+            var payouts = new System.Collections.Generic.Dictionary<string, int>();
+            int totalOwed = 0;
+            
+            foreach (var p in Game.Players)
+            {
+                int pInterest = p.Bonds?.Where(b => b.Nation == CurrentTurnNation).Sum(b => b.Interest) ?? 0;
+                if (pInterest > 0)
+                {
+                    payouts[p.UserName] = pInterest;
+                    totalOwed += pInterest;
+                }
+            }
+
+            int treasuryAmount = nationState.Treasury;
+            string details = $"{baseMsg}\n\nTreasury: {treasuryAmount}M\n";
+            string meUserName = Game.Players.FirstOrDefault(p => p.Id == CurrentPlayerId)?.UserName ?? "";
+
+            if (payouts.Count == 0)
+            {
+                details += "No bonds outstanding. No payouts.";
+                return details;
+            }
+
+            string ctrlName = nationState.ControllerName ?? "None";
+            string ctrlSuffix = ctrlName == meUserName ? " (You)" : "";
+
+            if (treasuryAmount >= totalOwed)
+            {
+                details += "Payouts:\n";
+                foreach (var kvp in payouts.OrderByDescending(p => p.Value))
+                {
+                    string suffix = kvp.Key == meUserName ? " (You)" : "";
+                    details += $"- {kvp.Key}{suffix}: {kvp.Value}M\n";
+                }
+            }
+            else
+            {
+                int owedToOthers = 0;
+                int owedToController = 0;
+                foreach (var kvp in payouts)
+                {
+                    if (kvp.Key == ctrlName) owedToController += kvp.Value;
+                    else owedToOthers += kvp.Value;
+                }
+
+                if (treasuryAmount >= owedToOthers)
+                {
+                    // Treasury can pay others, controller gets whatever is left.
+                    details += "Payouts:\n";
+                    int actualControllerPay = treasuryAmount - owedToOthers;
+                    foreach (var kvp in payouts.OrderByDescending(p => p.Value))
+                    {
+                        string suffix = kvp.Key == meUserName ? " (You)" : "";
+                        int receiveAmount = kvp.Key == ctrlName ? actualControllerPay : kvp.Value;
+                        details += $"- {kvp.Key}{suffix}: {receiveAmount}M{(kvp.Key == ctrlName && actualControllerPay < kvp.Value ? " (Treasury max)" : "")}\n";
+                    }
+                }
+                else
+                {
+                    // Treasury cannot even pay others. Controller gets nothing, AND pays out of pocket.
+                    int deficit = owedToOthers - treasuryAmount;
+                    details += "Insufficient Treasury Funds!\nController must cover deficit.\n\nPayouts:\n";
+                    foreach (var kvp in payouts.OrderByDescending(p => p.Value))
+                    {
+                        string suffix = kvp.Key == meUserName ? " (You)" : "";
+                        int receiveAmount = kvp.Key == ctrlName ? 0 : kvp.Value;
+                        details += $"- {kvp.Key}{suffix}: {receiveAmount}M{(kvp.Key == ctrlName ? " (0M received)" : "")}\n";
+                    }
+                    details += $"\n{ctrlName}{ctrlSuffix} (Controller) pays deficit: {deficit}M out of pocket";
+                }
+            }
+            return details;
+        }
+        else if (index == 1) // Factory
+        {
+            var myHomeCities = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.Where(t => t.Nation == CurrentTurnNation).ToList();
+            int myFactories = Game.Territories.Count(ts => ts.HasFactory && myHomeCities.Any(hc => hc.Id == ts.TerritoryId));
+            int maxFactories = myHomeCities.Count;
+            
+            string canBuild;
+            if (myFactories >= maxFactories) canBuild = "No (Max Factories Reached)";
+            else if (nationState.Treasury < 5) canBuild = "No (Need 5M)";
+            else canBuild = "Yes";
+
+            return $"{baseMsg}\n\nTreasury: {nationState.Treasury}M\nCurrent Factories: {myFactories} / {maxFactories}\nCan Build: {canBuild}";
+        }
+        else if (index == 5) // Import
+        {
+            string canImport = nationState.Treasury >= 1 ? "Yes" : "No (Need 1M)";
+            int maxUnits = Math.Min(3, nationState.Treasury);
+            return $"{baseMsg}\n\nTreasury: {nationState.Treasury}M\nCan Import: {canImport}\nMax Units: {maxUnits}";
+        }
+        else if (index == 2 || index == 6) // Production
+        {
+            var myFactories = Game.Territories.Where(ts => ts.HasFactory).Select(ts => ts.TerritoryId).ToList();
+            var myHomeFactories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.Where(t => t.Nation == CurrentTurnNation && myFactories.Contains(t.Id)).ToList();
+            
+            int armyProd = myHomeFactories.Count(f => f.CityType == Imperial2030.Shared.Models.CityType.Brown);
+            int fleetProd = myHomeFactories.Count(f => f.CityType == Imperial2030.Shared.Models.CityType.LightBlue);
+            
+            // Check hostiles that might block production
+            int blockedArmies = 0;
+            int blockedFleets = 0;
+            foreach (var f in myHomeFactories)
+            {
+                bool hasHostile = Game.Units.Any(u => u.TerritoryId == f.Id && u.UnitType == Imperial2030.Shared.Models.UnitType.Army && u.Nation != CurrentTurnNation);
+                if (hasHostile)
+                {
+                    if (f.CityType == Imperial2030.Shared.Models.CityType.Brown) blockedArmies++;
+                    else if (f.CityType == Imperial2030.Shared.Models.CityType.LightBlue) blockedFleets++;
+                }
+            }
+
+            string details = $"{baseMsg}\n";
+            details += $"\nArmies to Produce: {armyProd - blockedArmies} (Blocked: {blockedArmies})";
+            details += $"\nFleets to Produce: {fleetProd - blockedFleets} (Blocked: {blockedFleets})";
+            return details;
+        }
+        else if (index == 3 || index == 7) // Maneuver
+        {
+            int armies = Game.Units.Count(u => u.Nation == CurrentTurnNation && u.UnitType == Imperial2030.Shared.Models.UnitType.Army);
+            int fleets = Game.Units.Count(u => u.Nation == CurrentTurnNation && u.UnitType == Imperial2030.Shared.Models.UnitType.Fleet);
+            return $"{baseMsg}\n\nFleets ready to move: {fleets}\nArmies ready to move: {armies}";
+        }
+
+        return baseMsg;
     }
 
     private string GetNationAbbreviation(Nation nation) => nation switch
