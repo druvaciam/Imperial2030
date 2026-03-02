@@ -271,6 +271,7 @@ public class GamesController : ControllerBase
                 Power = ns.Power,
                 RondelPosition = ns.RondelPosition,
                 ControllerName = ns.Controller?.User?.UserName,
+                ControllerId = ns.ControllerId,
                 HasBuiltThisTurn = ns.HasBuiltThisTurn,
                 HasProducedThisTurn = ns.HasProducedThisTurn,
                 HasMovedThisTurn = ns.HasMovedThisTurn,
@@ -297,6 +298,9 @@ public class GamesController : ControllerBase
             ActingPlayerId = game.ActingPlayerId,
             Units = game.Units.ToList(),
             ManeuverState = new ManeuverState { Phase = game.CurrentManeuverPhase },
+            PendingBattleTerritoryId = game.PendingBattleTerritoryId,
+            PendingBattleAggressorNation = game.PendingBattleAggressorNation,
+            PendingBattleDefenders = game.PendingBattleDefenders.ToList(),
             Actions = game.Actions.OrderBy(a => a.Timestamp).Select(a => new GameActionDto
             {
                 Id = a.Id,

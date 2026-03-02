@@ -7,6 +7,7 @@
 @using Imperial2030.Client.Components
 @inject NavigationManager Navigation
 @inject HttpClient Http
+@inject Imperial2030.Client.Services.ManeuverService ManeuverService
 @inject AuthenticationStateProvider AuthStateProvider
 @implements IAsyncDisposable
 
@@ -51,6 +52,49 @@ else
                 <h3 class="m-0 text-white">@game.Name</h3>
                 <small class="text-muted">Game ID: @GameId.ToString().Substring(0, 8)...</small>
             </div>
+
+            @if (game.PendingBattleTerritoryId != null)
+            {
+                <div class="panel mb-3 border border-warning" style="background-color: rgba(230, 126, 34, 0.1);">
+                    <div class="text-center">
+                        <h4 class="text-warning mb-2 fw-bold"><i class="oi oi-warning"></i> PENDING BATTLE</h4>
+                        @{
+                            var pendingTerritoryName = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == game.PendingBattleTerritoryId)?.Name ?? game.PendingBattleTerritoryId;
+                        }
+                        <h5 class="text-white">@pendingTerritoryName.ToUpper()</h5>
+                        <hr class="border-warning" />
+                        
+                        @{
+                            // Check if current player controls any of the defending nations
+                            var myDefendingNations = game.PendingBattleDefenders
+                                .Where(d => game.NationStates.Any(ns => ns.Nation == d && ns.ControllerId == MyPlayer?.Id))
+                                .ToList();
+                                
+                            bool amIDefender = myDefendingNations.Any();
+                        }
+
+                        @if (amIDefender)
+                        {
+                            <p class="mb-3 small"><strong>@game.PendingBattleAggressorNation</strong> forces have entered your territory peacefully. Do you accept coexistence, or choose to fight?</p>
+                            <div class="d-flex flex-column gap-2 mt-2">
+                                <button class="btn btn-sm btn-success fw-bold" @onclick="() => RespondToBattle(false)">
+                                    <i class="oi oi-thumb-up"></i> Accept Peace
+                                </button>
+                                <button class="btn btn-sm btn-danger fw-bold" @onclick="() => RespondToBattle(true)">
+                                    <i class="oi oi-fire"></i> FIGHT!
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="small mb-0">Waiting for <strong>@string.Join(", ", game.PendingBattleDefenders)</strong> to respond to <strong>@game.PendingBattleAggressorNation's</strong> peace offer...</p>
+                            <div class="spinner-border spinner-border-sm text-warning mt-2" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
 
             <div class="panel">
                 <div class="d-flex justify-content-between align-items-center mb-2">
@@ -1018,6 +1062,29 @@ else
                 var error = await response.Content.ReadAsStringAsync();
                 await ShowToast($"Failed to end turn: {error}", true);
             }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast($"Error: {ex.Message}", true);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private async Task RespondToBattle(bool isFight)
+    {
+        if (game == null || isSubmitting) return;
+        isSubmitting = true;
+        try
+        {
+            var success = await ManeuverService.BattleResponseAsync(GameId, isFight);
+            if (!success)
+            {
+                await ShowToast("Failed to submit battle response.", true);
+            }
+            // If successful, SignalR will push the GameUpdated event and the UI will refresh automatically.
         }
         catch (Exception ex)
         {

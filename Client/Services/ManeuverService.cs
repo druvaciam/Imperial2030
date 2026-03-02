@@ -70,4 +70,11 @@ public class ManeuverService
         var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/destroy-factory", request);
         return response.IsSuccessStatusCode;
     }
+
+    public async Task<bool> BattleResponseAsync(Guid gameId, bool isFight)
+    {
+        var request = new BattleResponseRequest { IsFight = isFight };
+        var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/battle-response", request);
+        return response.IsSuccessStatusCode;
+    }
 }

@@ -111,14 +111,41 @@ public class ManeuverController : ControllerBase
             if (enemyFleet != null)
             {
                 // Destroy Both
+                _context.Units.Remove(unit);
+                _context.Units.Remove(enemyFleet);
                 game.Units.Remove(unit);
                 game.Units.Remove(enemyFleet);
                 LogAction(game, $"fleet attacked {targetNation} in {request.DestinationId}. Both destroyed", "Battle", nation);
             }
         }
+        else
+        {
+            // Peace Move - Check for foreign fleets in the destination
+            var foreignFleets = game.Units
+                .Where(u => u.TerritoryId == request.DestinationId && u.UnitType == UnitType.Fleet && u.Nation != nation)
+                .Select(u => u.Nation)
+                .Distinct()
+                .ToList();
+
+            if (foreignFleets.Any())
+            {
+                // Enter Pending Battle Negotiation Phase
+                game.PendingBattleTerritoryId = request.DestinationId;
+                game.PendingBattleAggressorNation = nation;
+                game.PendingBattleDefenders = foreignFleets.ToList();
+
+                LogAction(game, $"fleet moved peacefully to {request.DestinationId}, awaiting response from {string.Join(", ", foreignFleets)}", "MoveFleet", nation);
+            }
+        }
         
-        LogAction(game, $"fleet moved to {request.DestinationId} from {sourceTerritory}", "MoveFleet", nation);
-        await TryAutoAdvanceManeuver(game, nation);
+        if (!game.PendingBattleDefenders.Any())
+        {
+            // Only log standard move and TryAutoAdvance if there's no pending battle blocking the phase.
+            // If Pending, advancement and standard logging is delayed.
+            LogAction(game, $"fleet moved to {request.DestinationId} from {sourceTerritory}", "MoveFleet", nation);
+            await UpdateTerritoryControl(game);
+            await TryAutoAdvanceManeuver(game, nation);
+        }
 
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -169,11 +196,14 @@ public class ManeuverController : ControllerBase
         if (enemyUnit == null) return BadRequest($"No {targetNation} {unit.UnitType} in {unit.TerritoryId}.");
 
         // Destroy Both
+        _context.Units.Remove(unit);
+        _context.Units.Remove(enemyUnit);
         game.Units.Remove(unit);
         game.Units.Remove(enemyUnit);
         
         LogAction(game, $"{unit.UnitType.ToString().ToLower()} attacked {targetNation} in {unit.TerritoryId}. Both destroyed", "Battle", nation);
         
+        await UpdateTerritoryControl(game);
         await TryAutoAdvanceManeuver(game, nation);
         
         await _context.SaveChangesAsync();
@@ -287,14 +317,41 @@ public class ManeuverController : ControllerBase
 
             if (enemyUnit != null)
             {
+                // Destroy Both
+                _context.Units.Remove(unit);
+                _context.Units.Remove(enemyUnit);
                 game.Units.Remove(unit);
                 game.Units.Remove(enemyUnit);
                 LogAction(game, $"army attacked {targetNation} in {request.DestinationId}. Both destroyed", "Battle", nation);
             }
         }
+        else
+        {
+            // Peace Move - Check for foreign armies in the destination
+            var foreignArmies = game.Units
+                .Where(u => u.TerritoryId == request.DestinationId && u.UnitType == UnitType.Army && u.Nation != nation)
+                .Select(u => u.Nation)
+                .Distinct()
+                .ToList();
 
-        LogAction(game, $"army moved to {request.DestinationId} from {sourceTerritory}", "MoveArmy", nation);
-        await TryAutoAdvanceManeuver(game, nation);
+            if (foreignArmies.Any())
+            {
+                // Enter Pending Battle Negotiation Phase
+                game.PendingBattleTerritoryId = request.DestinationId;
+                game.PendingBattleAggressorNation = nation;
+                game.PendingBattleDefenders = foreignArmies.ToList();
+
+                LogAction(game, $"army moved peacefully to {request.DestinationId}, awaiting response from {string.Join(", ", foreignArmies)}", "MoveArmy", nation);
+            }
+        }
+        
+        if (!game.PendingBattleDefenders.Any())
+        {
+            LogAction(game, $"army moved to {request.DestinationId} from {sourceTerritory}", "MoveArmy", nation);
+            await UpdateTerritoryControl(game);
+            await TryAutoAdvanceManeuver(game, nation);
+        }
+
         await _context.SaveChangesAsync();
         Console.WriteLine("[MoveArmy] Changes Saved.");
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -458,6 +515,96 @@ public class ManeuverController : ControllerBase
     }
 }
 
+    [HttpPost("{gameId}/battle-response")]
+    public async Task<IActionResult> BattleResponse(Guid gameId, [FromBody] BattleResponseRequest request)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.NationStates)
+            .Include(g => g.Players)
+            .Include(g => g.Units)
+            .Include(g => g.TerritoryStates)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+        if (game.PendingBattleTerritoryId == null || game.PendingBattleAggressorNation == null || !game.PendingBattleDefenders.Any())
+        {
+            return BadRequest("No pending battle.");
+        }
+
+        // Find the responding nation based on the user
+        var respondingNations = game.NationStates
+            .Where(ns => game.PendingBattleDefenders.Contains(ns.Nation))
+            .Where(ns => ns.ControllerId != null && game.Players.Any(p => p.Id == ns.ControllerId && p.UserId == userId))
+            .Select(ns => ns.Nation)
+            .ToList();
+
+        if (!respondingNations.Any()) return Forbid();
+
+        // For simplicity, we process the first valid nation this user controls in the defenders list
+        var respondingNation = respondingNations.First();
+
+        if (request.IsFight)
+        {
+            // Fight triggers immediately!
+            var territoryId = game.PendingBattleTerritoryId;
+            var aggressorNation = game.PendingBattleAggressorNation.Value;
+
+            // Resolve Battle between RespondingNation and AggressorNation
+            var myUnits = game.Units.Where(u => u.TerritoryId == territoryId && u.Nation == respondingNation).ToList();
+            var aggressorUnits = game.Units.Where(u => u.TerritoryId == territoryId && u.Nation == aggressorNation).ToList();
+
+            // Destroy 1v1
+            if (myUnits.Any() && aggressorUnits.Any())
+            {
+                var myUnit = myUnits.First();
+                var aggUnit = aggressorUnits.First();
+                _context.Units.Remove(myUnit);
+                _context.Units.Remove(aggUnit);
+                game.Units.Remove(myUnit);
+                game.Units.Remove(aggUnit);
+
+                LogAction(game, $"{respondingNation} chose FIGHT against {aggressorNation} in {territoryId}. Both units destroyed.", "BattleResponse", respondingNation);
+            }
+
+            // A single fight breaks the peace negotiation. Clear pending state.
+            game.PendingBattleTerritoryId = null;
+            game.PendingBattleAggressorNation = null;
+            game.PendingBattleDefenders.Clear();
+            
+            await UpdateTerritoryControl(game);
+            // Advance Maneuver if applicable
+            await TryAutoAdvanceManeuver(game, aggressorNation);
+        }
+        else
+        {
+            // Peace! Remove from defenders list
+            game.PendingBattleDefenders.Remove(respondingNation);
+            LogAction(game, $"{respondingNation} agreed to PEACE with {game.PendingBattleAggressorNation} in {game.PendingBattleTerritoryId}.", "BattleResponse", respondingNation);
+
+            if (!game.PendingBattleDefenders.Any())
+            {
+                // Everyone agreed to peace
+                LogAction(game, $"All parties agreed to PEACE in {game.PendingBattleTerritoryId}.", "BattleResponse");
+                var aggressorNation = game.PendingBattleAggressorNation.Value;
+                
+                game.PendingBattleTerritoryId = null;
+                game.PendingBattleAggressorNation = null;
+
+                await UpdateTerritoryControl(game);
+                // Advance Maneuver if applicable
+                await TryAutoAdvanceManeuver(game, aggressorNation);
+            }
+        }
+
+        await _context.SaveChangesAsync();
+        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+
+        return Ok();
+    }
+
     private async Task TryAutoAdvanceManeuver(Game game, Nation nation)
     {
         if (game.CurrentManeuverPhase == ManeuverPhase.Fleets)
@@ -522,7 +669,14 @@ public class ManeuverController : ControllerBase
 
                     if (!isHomeProvince && tState.Controller != firstNation)
                     {
+                        var oldController = tState.Controller;
                         tState.Controller = firstNation;
+                        
+                        string msg = oldController.HasValue 
+                            ? $"took control of {territoryDef.Name} from {oldController.Value}"
+                            : $"took control of {territoryDef.Name}";
+                            
+                        LogAction(game, msg, "FlagPlacement", firstNation);
                     }
                 }
             }
@@ -857,5 +1011,3 @@ public class ManeuverController : ControllerBase
         // Note: Caller must SaveChanges
     }
 }
-
-

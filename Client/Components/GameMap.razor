@@ -792,13 +792,21 @@
                         string color = GetNationColor(unit.Nation);
                         string strokeColor = (selectedUnitId == unit.Id) ? "#ffff00" : "white"; // Highlight selected
                         string strokeWidth = (selectedUnitId == unit.Id) ? "3" : "2";
+                        
+                        bool isPendingBattleAggressor = (unit.TerritoryId == Game.PendingBattleTerritoryId && unit.Nation == Game.PendingBattleAggressorNation);
+                        if (isPendingBattleAggressor)
+                        {
+                            strokeColor = "#ffa500"; // Orange highlight for aggressor
+                            strokeWidth = "3";
+                        }
+                        
                         bool isDimmed = (unit.UnitType == Imperial2030.Shared.Models.UnitType.Fleet && unit.HasConvoyed) ||
                                         (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army && unit.HasMoved);
-                        string dimmedOpacity = isDimmed ? "0.4" : "1.0";
+                        string dimmedOpacity = isDimmed && !isPendingBattleAggressor ? "0.4" : "1.0"; // Don't dim if involved in battle
 
                         if (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army)
                         {
-                            <g style="pointer-events: none;" opacity="@dimmedOpacity">
+                            <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "")">
                                 <rect x="@(coords.X + offsetX - 8)" y="@(coords.Y + offsetY - 8)" width="16" height="16" 
                                       fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
                                 <text x="@(coords.X + offsetX)" y="@(coords.Y + offsetY)" 
@@ -807,7 +815,7 @@
                         }
                         else
                         {
-                            <g style="pointer-events: none;" opacity="@dimmedOpacity">
+                            <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "")">
                                 <circle cx="@(coords.X + offsetX)" cy="@(coords.Y + offsetY)" r="8" 
                                         fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
                                 <text x="@(coords.X + offsetX)" y="@(coords.Y + offsetY)" 
@@ -953,6 +961,19 @@
         stroke: #ffd700 !important;
         stroke-width: 3px !important;
         filter: drop-shadow(0 0 5px yellow);
+    }
+
+    .pending-battle {
+        stroke: #ffa500 !important; /* Orange */
+        stroke-width: 3px !important;
+        animation: pulse-orange 2s infinite;
+        filter: drop-shadow(0 0 5px orange);
+    }
+
+    @@keyframes pulse-orange {
+        0% { stroke-opacity: 0.5; }
+        50% { stroke-opacity: 1.0; }
+        100% { stroke-opacity: 0.5; }
     }
 
     @@keyframes pulse-green {
@@ -1535,6 +1556,11 @@
         if (validDestinations != null && validDestinations.Contains(territoryId))
         {
             baseClass += " valid-target";
+        }
+
+        if (Game.PendingBattleTerritoryId == territoryId)
+        {
+            baseClass += " pending-battle";
         }
 
         var territoryState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryId);

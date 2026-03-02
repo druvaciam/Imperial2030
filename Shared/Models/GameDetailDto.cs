@@ -17,6 +17,10 @@ public class GameDetailDto : GameDto
 
     public ManeuverState? ManeuverState { get; set; }
     public List<GameActionDto> Actions { get; set; } = new List<GameActionDto>();
+
+    public string? PendingBattleTerritoryId { get; set; }
+    public Nation? PendingBattleAggressorNation { get; set; }
+    public List<Nation> PendingBattleDefenders { get; set; } = new List<Nation>();
 }
 
 public enum ManeuverPhase

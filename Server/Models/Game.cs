@@ -23,6 +23,14 @@ public class Game
 
     public ManeuverPhase CurrentManeuverPhase { get; set; } = ManeuverPhase.None;
 
+    // Pending Battle Negotiation State
+    public string? PendingBattleTerritoryId { get; set; }
+    public Nation? PendingBattleAggressorNation { get; set; }
+    
+    // Using a list of Nations that must still answer. If a Nation responds Fight, it triggers. 
+    // If Peace, they are removed. If empty, Peace prevails.
+    public List<Nation> PendingBattleDefenders { get; set; } = new List<Nation>();
+
 
     public virtual ICollection<Player> Players { get; set; } = new List<Player>();
     public virtual ICollection<Bond> Bonds { get; set; } = new List<Bond>();
