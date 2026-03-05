@@ -16,8 +16,21 @@ builder.Services.AddRazorPages();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<Imperial2030.Server.Services.PresenceTracker>();
 
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
 builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext>(options =>
-    options.UseSqlite("Data Source=imperial2030.db"));
+{
+    if (string.IsNullOrEmpty(connectionString))
+    {
+        // Fallback to SQLite if no SQL Server connection string is provided
+        options.UseSqlite("Data Source=imperial2030.db");
+    }
+    else
+    {
+        // Use SQL Server if connection string exists
+        options.UseSqlServer(connectionString);
+    }
+});
 
 builder.Services.AddIdentity<Imperial2030.Server.Models.ApplicationUser, Microsoft.AspNetCore.Identity.IdentityRole>()
     .AddEntityFrameworkStores<Imperial2030.Server.Data.ApplicationDbContext>()
