@@ -17,9 +17,28 @@
         </div>
         <div class="col-auto">
             <div class="input-group">
-                <input type="text" class="form-control" placeholder="New Game Name" @bind="newGameName" @bind:event="oninput" />
+                <input type="text" class="form-control" placeholder="Game Name" @bind="newGameName" @bind:event="oninput" />
                 <button class="btn btn-success" @onclick="CreateGame"
                     disabled="@string.IsNullOrWhiteSpace(newGameName)">Create Game</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col">
+            <div class="d-flex gap-3 text-white">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="filterLobby" @bind="showLobbyGames" />
+                    <label class="form-check-label" for="filterLobby">Lobby</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="filterInProgress" @bind="showInProgressGames" />
+                    <label class="form-check-label" for="filterInProgress">In Progress</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="filterFinished" @bind="showFinishedGames" />
+                    <label class="form-check-label" for="filterFinished">Finished</label>
+                </div>
             </div>
         </div>
     </div>
@@ -41,7 +60,7 @@
     else
     {
         <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
-            @foreach (var game in games)
+            @foreach (var game in GetFilteredGames())
             {
                 bool amIInGame = currentUserId != null && game.UserIds.Contains(currentUserId);
                 
@@ -114,6 +133,32 @@
     private string newGameName = string.Empty;
     private HubConnection? hubConnection;
     private string? currentUserId;
+
+    private bool showLobbyGames = true;
+    private bool showInProgressGames = true;
+    private bool showFinishedGames = true;
+
+    private IEnumerable<GameDto> GetFilteredGames()
+    {
+        if (games == null) return Enumerable.Empty<GameDto>();
+        
+        var query = games.AsEnumerable();
+
+        // Apply Status Filters
+        query = query.Where(g => 
+            (showLobbyGames && g.Status == GameStatus.Lobby) ||
+            (showInProgressGames && g.Status == GameStatus.InProgress) ||
+            (showFinishedGames && g.Status == GameStatus.Finished)
+        );
+
+        // Apply Name text filter
+        if (!string.IsNullOrWhiteSpace(newGameName))
+        {
+            query = query.Where(g => g.Name.Contains(newGameName, StringComparison.OrdinalIgnoreCase));
+        }
+            
+        return query;
+    }
 
     protected override async Task OnInitializedAsync()
     {
