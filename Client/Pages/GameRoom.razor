@@ -42,8 +42,11 @@ else
 
         @if (MyPlayer == null)
         {
-            <div class="alert alert-info text-center m-3 shadow" role="alert" style="grid-column: 1 / -1;">
-                <i class="oi oi-eye me-2"></i> <strong>Observer Mode:</strong> You are watching this game. You cannot interact with the game state.
+            <div class="turn-alert-overlay" style="background: linear-gradient(180deg, rgba(52, 152, 219, 0.95) 0%, rgba(41, 128, 185, 0.95) 100%);">
+                <div class="alert-content">
+                    <h3>OBSERVER MODE</h3>
+                    <small>You are watching this game</small>
+                </div>
             </div>
         }
         
@@ -551,6 +554,7 @@ else
         /* Adjust for header */
         gap: 1rem;
         padding: 1rem;
+        min-height: 0;
     }
 
     .panel {
@@ -560,6 +564,7 @@ else
         color: #ecf0f1;
         display: flex; 
         flex-direction: column;
+        flex-shrink: 0;
     }
     
     .sidebar-left, .sidebar-right {
@@ -569,6 +574,7 @@ else
         overflow-y: auto; 
         gap: 1rem;
         padding-right: 5px;
+        min-height: 0;
     }
 
     /* Custom Scrollbar for sidebars */

@@ -119,6 +119,7 @@
    width="1200"
    height="841"
    viewBox="0 0 1200 841"
+   style="overflow: visible;"
    xmlns:xlink="http://www.w3.org/1999/xlink"
    xmlns="http://www.w3.org/2000/svg"
    xmlns:svg="http://www.w3.org/2000/svg">
@@ -731,23 +732,27 @@
                   double centerX = rect.x + rect.w / 2;
                   double centerY = rect.y + rect.h / 2;
 
+                  int maxCols = 3;
+                  int totalRows = (count + maxCols - 1) / maxCols;
+                  double rowHeight = 12.0;
+                  double totalGridHeight = (totalRows - 1) * rowHeight;
+
                   for (int i = 0; i < count; i++)
                   {
                       var ns = nations[i];
-                      // Simple offset strategy: centered grid or linear
-                      // If 1: center
-                      // If 2: offset -6, +6
-                      // If 3: -10, 0, +10
                       
-                      double offsetX = 0;
-                      if (count > 1)
-                      {
-                          offsetX = (i - (count - 1) / 2.0) * 12; // 12px spacing
-                      }
+                      int row = i / maxCols;
+                      int col = i % maxCols;
+                      
+                      int itemsInThisRow = Math.Min(maxCols, count - row * maxCols);
+                      double rowWidth = (itemsInThisRow - 1) * 12.0;
 
-                      <circle cx="@(centerX + offsetX)" cy="@(centerY)" r="5" 
+                      double offsetX = col * 12.0 - rowWidth / 2.0;
+                      double offsetY = row * rowHeight - totalGridHeight / 2.0;
+
+                      <circle cx="@Fmt(centerX + offsetX)" cy="@Fmt(centerY + offsetY)" r="5" 
                               fill="@GetNationColor(ns.Nation)" 
-                              stroke="white" stroke-width="1.5" />
+                              stroke="white" stroke-width="1.5" style="opacity:0.9;" />
                   }
               }
           }
@@ -764,7 +769,7 @@
                     var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tState.TerritoryId);
                     string fill = def?.CityType == CityType.LightBlue ? "#00BFFF" : "#8B4513"; // DeepSkyBlue or SaddleBrown
                     
-                    <use href="#factory-icon" x="@(coords.X - 15)" y="@(coords.Y - 15)" width="30" height="30" style="fill:@fill; opacity: 0.9; pointer-events: none;" />
+                    <use href="#factory-icon" x="@Fmt(coords.X - 15)" y="@Fmt(coords.Y - 15)" width="30" height="30" style="fill:@fill; opacity: 0.9; pointer-events: none;" />
                 }
             }
         }
@@ -807,18 +812,18 @@
                         if (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army)
                         {
                             <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "")">
-                                <rect x="@(coords.X + offsetX - 8)" y="@(coords.Y + offsetY - 8)" width="16" height="16" 
+                                <rect x="@Fmt(coords.X + offsetX - 8)" y="@Fmt(coords.Y + offsetY - 8)" width="16" height="16" 
                                       fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
-                                <text x="@(coords.X + offsetX)" y="@(coords.Y + offsetY)" 
+                                <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y + offsetY)" 
                                       text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">A</text>
                             </g>
                         }
                         else
                         {
                             <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "")">
-                                <circle cx="@(coords.X + offsetX)" cy="@(coords.Y + offsetY)" r="8" 
+                                <circle cx="@Fmt(coords.X + offsetX)" cy="@Fmt(coords.Y + offsetY)" r="8" 
                                         fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
-                                <text x="@(coords.X + offsetX)" y="@(coords.Y + offsetY)" 
+                                <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y + offsetY)" 
                                       text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">F</text>
                             </g>
                         }
@@ -840,8 +845,8 @@
                     // Render Flag (Small rectangle + pole)
                     var flagX = flagCenter.X;
                     var flagY = flagCenter.Y - 14;
-                    <line x1="@flagX" y1="@flagY" x2="@flagX" y2="@(flagY + 14)" stroke="black" stroke-width="1" />
-                    <rect x="@flagX" y="@flagY" width="14" height="9"
+                    <line x1="@Fmt(flagX)" y1="@Fmt(flagY)" x2="@Fmt(flagX)" y2="@Fmt(flagY + 14)" stroke="black" stroke-width="1" />
+                    <rect x="@Fmt(flagX)" y="@Fmt(flagY)" width="14" height="9"
                           fill="@GetNationColor(ts.Controller.Value)"
                           stroke="black" stroke-width="0.5"
                           style="pointer-events: none;" />
@@ -885,7 +890,7 @@
                     double offsetX = col * 12.0 - rowWidth / 2.0;
                     double offsetY = row * rowHeight - totalGridHeight / 2.0;
 
-                    <circle cx="@(centerX + offsetX)" cy="@(centerY + offsetY)" r="5" 
+                    <circle cx="@Fmt(centerX + offsetX)" cy="@Fmt(centerY + offsetY)" r="5" 
                             fill="@GetNationColor(ns.Nation)" 
                             stroke="white" stroke-width="1.5" style="opacity:0.9;" />
                 }
@@ -991,6 +996,8 @@
 @inject Imperial2030.Client.Services.MapService MapService
 
 @code {
+    private string Fmt(double val) => val.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
     [Parameter]
     public GameDetailDto? Game { get; set; }
 
