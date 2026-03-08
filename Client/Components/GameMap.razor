@@ -2,8 +2,16 @@
 @using Imperial2030.Shared.Constants
 @using Imperial2030.Client.Constants
 
-<div class="map-container">
+<div class="map-container position-relative">
+    @if (selectedUnitId.HasValue)
+    {
+        <div class="position-absolute top-0 start-50 translate-middle-x mt-2 p-2 bg-warning text-dark rounded shadow fw-bold" style="z-index: 1000; opacity: 0.9; cursor: pointer;" @onclick="DeselectUnit">
+            Unit Selected. Click destination to move, or click here to deselect.
+        </div>
+    }
+
     @if (ShowConvoyModal)
+
     {
         <div class="modal fade show d-block" tabindex="-1" role="dialog" style="background-color: rgba(0,0,0,0.5); z-index: 3000;">
             <div class="modal-dialog" role="document">
@@ -108,6 +116,28 @@
                     <div class="modal-footer">
                         <button class="btn btn-secondary" @onclick="CancelDestroyFactory">Cancel</button>
                         <button class="btn btn-danger" @onclick="ConfirmDestroyFactory">Destroy Factory</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (ShowMoveWarningModal)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 3000;">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title text-warning">Confirm Move</h5>
+                        <button type="button" class="btn-close" @onclick="CancelWarningMove"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>@MoveWarningMessage</p>
+                        <p>Are you sure you want to proceed?</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" @onclick="CancelWarningMove">Cancel (Deselect)</button>
+                        <button class="btn btn-warning" @onclick="ConfirmWarningMove">Move Unit</button>
                     </div>
                 </div>
             </div>
@@ -1024,6 +1054,12 @@
     private List<Unit> PendingDestroyFactoryUnits = new();
     private List<Imperial2030.Shared.Models.Nation> BattleOptions = new();
 
+    private bool ShowMoveWarningModal = false;
+    private Unit? PendingWarningUnit = null;
+    private string PendingWarningDest = "";
+    private List<Guid>? PendingWarningConvoyPaths = null;
+    private string MoveWarningMessage = "";
+
     private bool CanInitiateStationaryBattle()
     {
         if (selectedUnitId == null || Game == null) return false;
@@ -1142,6 +1178,61 @@
         PendingDestroyFactoryUnits.Clear();
     }
 
+    private bool IsWarningMove(Unit movingUnit, string destTerritoryId, out string warningMessage)
+    {
+        warningMessage = "";
+        if (Game == null) return false;
+
+        var sourceDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == movingUnit.TerritoryId);
+        var destDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == destTerritoryId);
+
+        // 1. Home to Home
+        bool sourceIsHome = sourceDef != null && sourceDef.Nation == movingUnit.Nation;
+        bool destIsHome = destDef != null && destDef.Nation == movingUnit.Nation;
+
+        if (sourceIsHome && destIsHome)
+        {
+            warningMessage = $"You are moving a unit from a home territory ({movingUnit.TerritoryId}) to another home territory ({destTerritoryId}). This will consume its movement.";
+            return true;
+        }
+
+        // 2. Dest already has a friendly unit
+        bool destHasFriendlyUnit = Game.Units.Any(u => u.TerritoryId == destTerritoryId && u.Nation == movingUnit.Nation && u.Id != movingUnit.Id);
+        if (destHasFriendlyUnit)
+        {
+            warningMessage = $"A friendly unit is already present in {destTerritoryId}. Moving here will consume this unit's movement.";
+            return true;
+        }
+
+        return false;
+    }
+    
+    private async Task ConfirmWarningMove()
+    {
+        if (PendingWarningUnit != null && !string.IsNullOrEmpty(PendingWarningDest))
+        {
+            if (PendingWarningConvoyPaths != null && PendingWarningConvoyPaths.Any())
+            {
+                await MoveUnit(PendingWarningUnit, PendingWarningDest, PendingWarningConvoyPaths);
+            }
+            else
+            {
+                await MoveUnit(PendingWarningUnit, PendingWarningDest);
+            }
+        }
+        CancelWarningMove();
+    }
+
+    private void CancelWarningMove()
+    {
+        ShowMoveWarningModal = false;
+        PendingWarningUnit = null;
+        PendingWarningDest = "";
+        PendingWarningConvoyPaths = null;
+        MoveWarningMessage = "";
+        DeselectUnit();
+    }
+
     private bool CheckCanDestroyFactory(string territoryId, Imperial2030.Shared.Models.Nation nation, out List<Unit> attackingUnits)
     {
         attackingUnits = new List<Unit>();
@@ -1258,8 +1349,20 @@
             {
                 // Standard or Rail Move
                 Console.WriteLine($"[MOVE] Executing standard/rail move (no convoy fleets)");
-                await MoveUnit(selectedUnit, territoryId); 
-                DeselectUnit();
+                if (IsWarningMove(selectedUnit, territoryId, out string msg))
+                {
+                    PendingWarningUnit = selectedUnit;
+                    PendingWarningDest = territoryId;
+                    MoveWarningMessage = msg;
+                    PendingWarningConvoyPaths = null;
+                    ShowMoveWarningModal = true;
+                    StateHasChanged();
+                }
+                else
+                {
+                    await MoveUnit(selectedUnit, territoryId); 
+                    DeselectUnit();
+                }
             }
             else
             {
@@ -1273,8 +1376,20 @@
                 else if (convoyPaths.Count == 1)
                 {
                     // Single Convoy Path
-                    await MoveUnit(selectedUnit, territoryId, convoyPaths[0].Select(u => u.Id).ToList());
-                    DeselectUnit();
+                    if (IsWarningMove(selectedUnit, territoryId, out string msg))
+                    {
+                        PendingWarningUnit = selectedUnit;
+                        PendingWarningDest = territoryId;
+                        MoveWarningMessage = msg;
+                        PendingWarningConvoyPaths = convoyPaths[0].Select(u => u.Id).ToList();
+                        ShowMoveWarningModal = true;
+                        StateHasChanged();
+                    }
+                    else
+                    {
+                        await MoveUnit(selectedUnit, territoryId, convoyPaths[0].Select(u => u.Id).ToList());
+                        DeselectUnit();
+                    }
                 }
                 else
                 {
