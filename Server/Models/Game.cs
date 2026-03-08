@@ -11,6 +11,14 @@ public class Game
     [MaxLength(50)]
     public string Name { get; set; } = string.Empty;
 
+    public bool IsPrivate { get; set; } = false;
+    
+    [MaxLength(10)]
+    public string? JoinCode { get; set; }
+    
+    [Range(2, 6)]
+    public int MaxPlayers { get; set; } = 6;
+
     public GameStatus Status { get; set; } = GameStatus.Lobby;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

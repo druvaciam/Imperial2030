@@ -11,6 +11,8 @@ public class GameDto
     public DateTime CreatedAt { get; set; }
     public int PlayerCount { get; set; }
     public int MaxPlayers { get; set; } = 6;
+    public bool IsPrivate { get; set; } = false;
+    public string? JoinCode { get; set; }
     public bool IsFull => PlayerCount >= MaxPlayers;
     public List<string> UserIds { get; set; } = [];
     public string? HostId { get; set; }

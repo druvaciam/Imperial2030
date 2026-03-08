@@ -45,6 +45,9 @@ public class GamesController : ControllerBase
                 Status = g.Status,
                 CreatedAt = g.CreatedAt,
                 PlayerCount = g.Players.Count,
+                MaxPlayers = g.MaxPlayers,
+                IsPrivate = g.IsPrivate,
+                JoinCode = g.Players.Any(p => p.UserId == User.FindFirstValue(ClaimTypes.NameIdentifier) && p.IsHost) ? g.JoinCode : null,
                 UserIds = g.Players.Select(p => p.UserId).ToList(),
                 HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault(),
                 MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0
@@ -53,12 +56,18 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<GameDto>> CreateGame([FromBody] string gameName)
+    public async Task<ActionResult<GameDto>> CreateGame([FromBody] CreateGameRequest req)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = new Game { Name = gameName };
+        var game = new Game 
+        { 
+            Name = req.Name,
+            MaxPlayers = req.MaxPlayers,
+            IsPrivate = req.IsPrivate,
+            JoinCode = req.IsPrivate ? GenerateJoinCode() : null
+        };
         _context.Games.Add(game);
 
         var player = new Player
@@ -78,6 +87,9 @@ public class GamesController : ControllerBase
             Status = game.Status,
             CreatedAt = game.CreatedAt,
             PlayerCount = 1,
+            MaxPlayers = game.MaxPlayers,
+            IsPrivate = game.IsPrivate,
+            JoinCode = game.JoinCode,
             UserIds = new List<string> { userId },
             HostId = userId
         };
@@ -88,7 +100,7 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("{gameId}/join")]
-    public async Task<IActionResult> JoinGame(Guid gameId)
+    public async Task<IActionResult> JoinGame(Guid gameId, [FromBody] JoinGameRequest? req)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
@@ -102,8 +114,16 @@ public class GamesController : ControllerBase
         if (game.Players.Any(p => p.UserId == userId))
             return BadRequest("You are already in this game.");
 
-        if (game.Players.Count >= 6)
+        if (game.Players.Count >= game.MaxPlayers)
             return BadRequest("Game is full.");
+
+        if (game.IsPrivate)
+        {
+            if (req == null || string.IsNullOrWhiteSpace(req.JoinCode) || !string.Equals(req.JoinCode, game.JoinCode, StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest("Invalid join code provided for a private game.");
+            }
+        }
 
         var player = new Player
         {
@@ -221,6 +241,8 @@ public class GamesController : ControllerBase
     [HttpGet("{gameId}")]
     public async Task<ActionResult<GameDetailDto>> GetGame(Guid gameId)
     {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        
         var game = await _context.Games
             .Include(g => g.Players)
                 .ThenInclude(p => p.User)
@@ -244,6 +266,9 @@ public class GamesController : ControllerBase
             Name = game.Name,
             Status = game.Status,
             CreatedAt = game.CreatedAt,
+            IsPrivate = game.IsPrivate,
+            HostId = game.Players.FirstOrDefault(p => p.IsHost)?.UserId,
+            JoinCode = game.Players.Any(p => p.UserId == userId && p.IsHost) ? game.JoinCode : null,
             CurrentTurnNation = game.CurrentTurnNation,
             PlayerCount = game.Players.Count,
             Players = game.Players.Select(p => new PlayerDto
@@ -620,6 +645,14 @@ public class GamesController : ControllerBase
         if (index == -1) return currentId; // Fallback
         var nextIndex = (index + 1) % sortedParams.Count;
         return sortedParams[nextIndex].Id;
+    }
+
+    private string GenerateJoinCode()
+    {
+        const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        var random = new Random();
+        return new string(Enumerable.Repeat(chars, 6)
+            .Select(s => s[random.Next(s.Length)]).ToArray());
     }
 
     private void HandleInvestorPhase(Game game, NationState nationState, Player controller, bool isLandedOn)

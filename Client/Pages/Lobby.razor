@@ -17,9 +17,8 @@
         </div>
         <div class="col-auto">
             <div class="input-group">
-                <input type="text" class="form-control" placeholder="Game Name" @bind="newGameName" @bind:event="oninput" />
-                <button class="btn btn-success" @onclick="CreateGame"
-                    disabled="@string.IsNullOrWhiteSpace(newGameName)">Create Game</button>
+                <input type="text" class="form-control" placeholder="Search Game Name" @bind="newGameName" @bind:event="oninput" />
+                <button class="btn btn-success" @onclick="ShowCreateGameModal">Create Game</button>
             </div>
         </div>
     </div>
@@ -84,8 +83,18 @@
                                     {
                                         @game.Status
                                     }
-                                </span><br />
+                                </span>
+                                @if (game.IsPrivate)
+                                {
+                                    <span class="badge bg-secondary ms-1">Private</span>
+                                }
+                                <br />
                                 Players: @game.PlayerCount / @game.MaxPlayers
+                                @if (game.IsPrivate && amIInGame && game.HostId == currentUserId && game.JoinCode != null)
+                                {
+                                    <br />
+                                    <span class="text-info small">Join Code: <strong>@game.JoinCode</strong></span>
+                                }
                             </p>
                         </div>
                         <div class="card-footer bg-transparent border-secondary text-end">
@@ -109,7 +118,7 @@
                             }
                             else
                             {
-                                <button class="btn btn-secondary btn-sm" @onclick="@(() => JoinGame(game.Id))"
+                                <button class="btn btn-secondary btn-sm" @onclick="@(() => InitiateJoinGame(game))"
                                     disabled="@(game.IsFull || game.Status != GameStatus.Lobby)">
                                     @(game.Status == GameStatus.Finished ? "Finished" : game.Status == GameStatus.InProgress ? "In Progress" : game.IsFull ? "Full" : "Join Game")
                                 </button>
@@ -128,13 +137,79 @@
     }
 </div>
 
+@if (isCreateModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 1050;">
+        <div class="modal-dialog">
+            <div class="modal-content bg-dark text-white border-secondary">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">Create New Game</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseCreateGameModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Game Name</label>
+                        <input type="text" class="form-control" @bind="newGameRequest.Name" @bind:event="oninput" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Max Players (2-6)</label>
+                        <select class="form-select" @bind="newGameRequest.MaxPlayers">
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                        </select>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="isPrivateCheck" @bind="newGameRequest.IsPrivate" />
+                        <label class="form-check-label" for="isPrivateCheck">Private Game (Requires Code)</label>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseCreateGameModal">Cancel</button>
+                    <button type="button" class="btn btn-success" @onclick="CreateGame" disabled="@string.IsNullOrWhiteSpace(newGameRequest.Name)">Create</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (isJoinModalOpen && gameToJoin != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 1050;">
+        <div class="modal-dialog">
+            <div class="modal-content bg-dark text-white border-secondary">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">Join Private Game @gameToJoin.Name</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseJoinGameModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(joinErrorMessage))
+                    {
+                        <div class="alert alert-danger">@joinErrorMessage</div>
+                    }
+                    <div class="mb-3">
+                        <label class="form-label">Join Code</label>
+                        <input type="text" class="form-control" @bind="joinCodeInput" @bind:event="oninput" placeholder="Enter 6-character code" />
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseJoinGameModal">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="ConfirmJoinGame" disabled="@string.IsNullOrWhiteSpace(joinCodeInput)">Join</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @implements IAsyncDisposable
 @using Microsoft.AspNetCore.SignalR.Client
 
 
 @code {
     private List<GameDto>? games;
-    private string newGameName = string.Empty;
+    private string newGameName = string.Empty; // used for the global text filter now
     private HubConnection? hubConnection;
     private string? currentUserId;
 
@@ -142,6 +217,14 @@
     private bool showInProgressGames = true;
     private bool showFinishedGames = true;
     private bool showOnlyMyGames = false;
+
+    private bool isCreateModalOpen = false;
+    private CreateGameRequest newGameRequest = new CreateGameRequest();
+
+    private bool isJoinModalOpen = false;
+    private GameDto? gameToJoin = null;
+    private string joinCodeInput = string.Empty;
+    private string joinErrorMessage = string.Empty;
 
     private IEnumerable<GameDto> GetFilteredGames()
     {
@@ -227,15 +310,26 @@
         }
     }
 
+    private void ShowCreateGameModal()
+    {
+        newGameRequest = new CreateGameRequest { MaxPlayers = 6, IsPrivate = false, Name = "" };
+        isCreateModalOpen = true;
+    }
+
+    private void CloseCreateGameModal()
+    {
+        isCreateModalOpen = false;
+    }
+
     private async Task CreateGame()
     {
-        if (string.IsNullOrWhiteSpace(newGameName)) return;
+        if (string.IsNullOrWhiteSpace(newGameRequest.Name)) return;
 
-        var response = await Http.PostAsJsonAsync("api/games", newGameName);
+        var response = await Http.PostAsJsonAsync("api/games", newGameRequest);
         if (response.IsSuccessStatusCode)
         {
             var game = await response.Content.ReadFromJsonAsync<GameDto>();
-            newGameName = string.Empty;
+            CloseCreateGameModal();
             if (game != null)
             {
                 NavigationManager.NavigateTo($"/game/{game.Id}");
@@ -243,18 +337,57 @@
         }
     }
 
-    private async Task JoinGame(Guid gameId)
+    private void InitiateJoinGame(GameDto game)
     {
-        var response = await Http.PostAsync($"api/games/{gameId}/join", null);
+        if (game.IsPrivate)
+        {
+            gameToJoin = game;
+            joinCodeInput = string.Empty;
+            joinErrorMessage = string.Empty;
+            isJoinModalOpen = true;
+        }
+        else
+        {
+            _ = JoinGame(game.Id, null);
+        }
+    }
+
+    private void CloseJoinGameModal()
+    {
+        isJoinModalOpen = false;
+        gameToJoin = null;
+    }
+
+    private async Task ConfirmJoinGame()
+    {
+        if (gameToJoin != null && !string.IsNullOrWhiteSpace(joinCodeInput))
+        {
+            await JoinGame(gameToJoin.Id, joinCodeInput);
+        }
+    }
+
+    private async Task JoinGame(Guid gameId, string? joinCode)
+    {
+        var request = new JoinGameRequest { JoinCode = joinCode };
+        var response = await Http.PostAsJsonAsync($"api/games/{gameId}/join", request);
         
         if (response.IsSuccessStatusCode)
         {
+            if (isJoinModalOpen) CloseJoinGameModal();
             NavigationManager.NavigateTo($"/game/{gameId}");
         }
         else
         {
-            var error = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"Failed to join game: {error}");
+            if (isJoinModalOpen)
+            {
+                joinErrorMessage = await response.Content.ReadAsStringAsync();
+                StateHasChanged();
+            }
+            else 
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"Failed to join game: {error}");
+            }
         }
     }
     
