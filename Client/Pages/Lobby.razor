@@ -39,6 +39,10 @@
                     <input class="form-check-input" type="checkbox" id="filterFinished" @bind="showFinishedGames" />
                     <label class="form-check-label" for="filterFinished">Finished</label>
                 </div>
+                <div class="form-check ms-3 border-start border-secondary ps-4">
+                    <input class="form-check-input" type="checkbox" id="filterMyGames" @bind="showOnlyMyGames" />
+                    <label class="form-check-label text-warning" for="filterMyGames">My Games Only</label>
+                </div>
             </div>
         </div>
     </div>
@@ -137,12 +141,19 @@
     private bool showLobbyGames = true;
     private bool showInProgressGames = true;
     private bool showFinishedGames = true;
+    private bool showOnlyMyGames = false;
 
     private IEnumerable<GameDto> GetFilteredGames()
     {
         if (games == null) return Enumerable.Empty<GameDto>();
         
         var query = games.AsEnumerable();
+
+        // Apply My Games Filter
+        if (showOnlyMyGames && currentUserId != null)
+        {
+            query = query.Where(g => g.UserIds.Contains(currentUserId));
+        }
 
         // Apply Status Filters
         query = query.Where(g => 
