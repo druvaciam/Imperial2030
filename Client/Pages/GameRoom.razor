@@ -119,14 +119,17 @@ else
                                       title="@(player.IsOnline ? (player.IsActiveInGame ? "In Game" : "Online") : "Offline")"></span>
                                 @player.UserName
                             </span>
-                            @if (player.IsHost)
-                            {
-                                <span class="badge bg-warning text-dark me-1">Host</span>
-                            }
-                            @if (game.InvestorCardHolderId == player.Id)
-                            {
-                                <span class="badge bg-info text-dark">Investor Card</span>
-                            }
+                            <div class="d-flex align-items-center flex-wrap justify-content-end gap-1">
+                                <span class="badge bg-success" title="Current Victory Points (Cash + Bond Value * Multiplier)">@GetPlayerScore(player) VP</span>
+                                @if (player.IsHost)
+                                {
+                                    <span class="badge bg-warning text-dark">Host</span>
+                                }
+                                @if (game.InvestorCardHolderId == player.Id)
+                                {
+                                    <span class="badge bg-info text-dark">Inv. Card</span>
+                                }
+                            </div>
                         </li>
                     }
                 </ul>
