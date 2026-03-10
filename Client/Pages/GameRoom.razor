@@ -1039,6 +1039,90 @@ else
             if (!confirmed) return;
         }
 
+        // --- Useless Action Warnings ---
+        string warningMessage = string.Empty;
+
+        // 1. Factory (Slot 1)
+        if (slotIndex == 1)
+        {
+            if (ns.Treasury < 5)
+            {
+                warningMessage = "You have less than 5M in your treasury. You will not be able to build a factory.";
+            }
+            else
+            {
+                var homeProvinces = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.Where(t => t.Nation == nation);
+                int builtFactoriesCount = game.Territories.Count(ts => homeProvinces.Any(hp => hp.Id == ts.TerritoryId) && ts.HasFactory);
+                if (builtFactoriesCount >= homeProvinces.Count())
+                {
+                    warningMessage = "All of your home provinces already have factories built. You cannot build any more.";
+                }
+            }
+        }
+        // 2 & 6. Production
+        else if (slotIndex == 2 || slotIndex == 6)
+        {
+            var homeProvinces = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.Where(t => t.Nation == nation);
+            var myFactories = game.Territories.Where(ts => homeProvinces.Any(hp => hp.Id == ts.TerritoryId) && ts.HasFactory);
+            
+            bool hasUnblockadedFactory = false;
+            foreach(var factory in myFactories)
+            {
+                // A factory is blockaded ONLY if a hostile army of another nation is on it.
+                bool isBlockaded = game.Units.Any(u => u.TerritoryId == factory.TerritoryId && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile);
+                if (!isBlockaded)
+                {
+                    hasUnblockadedFactory = true;
+                    break;
+                }
+            }
+            
+            if (!myFactories.Any())
+            {
+                warningMessage = "You do not have any factories. You will not produce any units.";
+            }
+            else if (!hasUnblockadedFactory)
+            {
+                warningMessage = "All of your factories are blockaded by hostile armies. You cannot produce any units.";
+            }
+        }
+        // 3 & 7. Maneuver
+        else if (slotIndex == 3 || slotIndex == 7)
+        {
+            int myUnitsCount = game.Units.Count(u => u.Nation == nation);
+            if (myUnitsCount == 0)
+            {
+                warningMessage = "You have no armies or fleets on the board to maneuver.";
+            }
+        }
+        // 4. Investor
+        else if (slotIndex == 4)
+        {
+            bool hasInvestorCard = game.InvestorCardHolderId == MyPlayer?.Id;
+            // Bonds are located inside the Players list in GameDetailDto
+            bool ownsBonds = game.Players.Any(p => p.Id == MyPlayer?.Id && p.Bonds.Any(b => b.Nation == nation));
+            
+            if (!hasInvestorCard && !ownsBonds)
+            {
+                warningMessage = "You do not hold the Investor Card nor any bonds for this nation. This nation will pay out interest, but you will earn zero.";
+            }
+        }
+        // 5. Import
+        else if (slotIndex == 5)
+        {
+            if (ns.Treasury < 1)
+            {
+                warningMessage = "You have 0M in your treasury. You will not be able to import any units.";
+            }
+        }
+
+        if (!string.IsNullOrEmpty(warningMessage))
+        {
+            bool proceed = await JSRuntime.InvokeAsync<bool>("confirm", warningMessage + " Are you sure you want to proceed?");
+            if (!proceed) return;
+        }
+        // --- End Useless Action Warnings ---
+
         isSubmitting = true;
         try
         {
