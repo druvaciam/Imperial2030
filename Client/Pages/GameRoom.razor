@@ -1098,13 +1098,13 @@ else
         // 4. Investor
         else if (slotIndex == 4)
         {
-            bool hasInvestorCard = game.InvestorCardHolderId == MyPlayer?.Id;
-            // Bonds are located inside the Players list in GameDetailDto
-            bool ownsBonds = game.Players.Any(p => p.Id == MyPlayer?.Id && p.Bonds.Any(b => b.Nation == nation));
-            
-            if (!hasInvestorCard && !ownsBonds)
+            var bondsForNation = game.Players.SelectMany(p => p.Bonds).Where(b => b.Nation == nation).ToList();
+            int totalOwedToOthers = bondsForNation.Where(b => b.HolderName != MyPlayer?.UserName).Sum(b => b.Interest);
+            int myInterestOwed = bondsForNation.Where(b => b.HolderName == MyPlayer?.UserName).Sum(b => b.Interest);
+
+            if (ns.Treasury <= totalOwedToOthers)
             {
-                warningMessage = "You do not hold the Investor Card nor any bonds for this nation. This nation will pay out interest, but you will earn zero.";
+                warningMessage = $"This nation only has {ns.Treasury}M, but owes {totalOwedToOthers}M to other players. You will earn 0M from your {myInterestOwed}M interest.";
             }
         }
         // 5. Import
