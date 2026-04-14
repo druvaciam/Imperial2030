@@ -30,6 +30,7 @@ builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext>(opt
         // Use SQL Server if connection string exists
         options.UseSqlServer(connectionString);
     }
+    options.ConfigureWarnings(warnings => warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
 });
 
 builder.Services.AddIdentity<Imperial2030.Server.Models.ApplicationUser, Microsoft.AspNetCore.Identity.IdentityRole>()

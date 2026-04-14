@@ -10,7 +10,14 @@ public static class DbSeeder
     {
         var context = serviceProvider.GetRequiredService<ApplicationDbContext>();
         // Apply any pending migrations (creates DB if not exists)
-        await context.Database.MigrateAsync();
+        if (context.Database.IsSqlite())
+        {
+            await context.Database.EnsureCreatedAsync();
+        }
+        else
+        {
+            await context.Database.MigrateAsync();
+        }
 
         await SeedUsersAsync(serviceProvider);
     }
