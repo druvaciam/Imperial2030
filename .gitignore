@@ -88,3 +88,6 @@ yarn-error.log
 
 # Properties
 Properties/launchSettings.json
+
+# Publish Output
+[Pp]ublish/

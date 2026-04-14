@@ -23,7 +23,8 @@ builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext>(opt
     if (string.IsNullOrEmpty(connectionString))
     {
         // Fallback to SQLite if no SQL Server connection string is provided
-        options.UseSqlite("Data Source=imperial2030.db");
+        var dbPath = System.IO.Path.Combine(builder.Environment.ContentRootPath, "imperial2030.db");
+        options.UseSqlite($"Data Source={dbPath}");
     }
     else
     {
