@@ -34,6 +34,20 @@ public class AuthService
         return await response.Content.ReadFromJsonAsync<LoginResult>() ?? new LoginResult { Successful = false, Error = "Failed to parse response." };
     }
 
+    public async Task<LoginResult> LoginAsGuest()
+    {
+        var response = await _httpClient.PostAsync("api/auth/guest-login", null);
+        var result = await response.Content.ReadFromJsonAsync<LoginResult>();
+
+        if (result != null && result.Successful)
+        {
+            await _authStateProvider.MarkUserAsAuthenticated(result.Token!);
+            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", result.Token);
+        }
+
+        return result ?? new LoginResult { Successful = false, Error = "Failed to parse response." };
+    }
+
     public async Task Logout()
     {
         await _authStateProvider.MarkUserAsLoggedOut();

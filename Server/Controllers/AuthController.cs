@@ -53,6 +53,36 @@ public class AuthController : ControllerBase
         return BadRequest(new LoginResult { Successful = false, Error = "Invalid login attempt." });
     }
 
+    [HttpPost("guest-login")]
+    public IActionResult GuestLogin()
+    {
+        var guestId = Guid.NewGuid().ToString();
+        var guestName = "Guest_" + guestId.Substring(0, 6);
+
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, guestId),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(ClaimTypes.NameIdentifier, guestId),
+            new Claim(ClaimTypes.Name, guestName),
+            new Claim(ClaimTypes.Role, "Guest")
+        };
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("ThisIsASecretKeyForImperial2030GameOnly!"));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: "Imperial2030Server",
+            audience: "Imperial2030Client",
+            claims: claims,
+            expires: DateTime.Now.AddDays(1),
+            signingCredentials: creds
+        );
+
+        var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+        return Ok(new LoginResult { Successful = true, Token = tokenString });
+    }
+
     private string GenerateJwtToken(ApplicationUser user)
     {
         var claims = new[]

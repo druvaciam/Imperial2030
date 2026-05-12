@@ -1,4 +1,4 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 
 <div class="page">
     <div class="sidebar">
@@ -9,8 +9,17 @@
 <div class="top-row px-4">
             <AuthorizeView>
                 <Authorized>
-                    <span class="me-3">Hello, @context.User.Identity?.Name!</span>
-                    <a href="logout">Logout</a>
+                    @if (context.User.IsInRole("Guest"))
+                    {
+                        <span class="me-3 text-muted"><span class="oi oi-eye me-1"></span>Guest (Watch Only)</span>
+                        <a href="register" class="me-2">Register</a>
+                        <a href="logout">Logout</a>
+                    }
+                    else
+                    {
+                        <span class="me-3">Hello, @context.User.Identity?.Name!</span>
+                        <a href="logout">Logout</a>
+                    }
                 </Authorized>
                 <NotAuthorized>
                     <a href="login">Login</a>

@@ -16,10 +16,19 @@
             <h1 class="display-4 text-white">Game Lobby</h1>
         </div>
         <div class="col-auto">
-            <div class="input-group">
-                <input type="text" class="form-control" placeholder="Search Game Name" @bind="newGameName" @bind:event="oninput" />
-                <button class="btn btn-success" @onclick="ShowCreateGameModal">Create Game</button>
-            </div>
+            @if (!isGuest)
+            {
+                <div class="input-group">
+                    <input type="text" class="form-control" placeholder="Search Game Name" @bind="newGameName" @bind:event="oninput" />
+                    <button class="btn btn-success" @onclick="ShowCreateGameModal">Create Game</button>
+                </div>
+            }
+            else
+            {
+                <div class="input-group">
+                    <input type="text" class="form-control" placeholder="Search Game Name" @bind="newGameName" @bind:event="oninput" />
+                </div>
+            }
         </div>
     </div>
 
@@ -45,6 +54,18 @@
             </div>
         </div>
     </div>
+
+    @if (isGuest)
+    {
+        <div class="row mb-3">
+            <div class="col">
+                <div class="alert alert-info py-2 mb-0 d-flex align-items-center" role="alert">
+                    <span class="oi oi-eye me-2"></span>
+                    <span>You are logged in as a <strong>Guest</strong>. You can watch games but cannot create or join them. <a href="register">Register</a> to play!</span>
+                </div>
+            </div>
+        </div>
+    }
 
     @if (games == null)
     {
@@ -118,11 +139,14 @@
                             }
                             else
                             {
-                                <button class="btn btn-secondary btn-sm" @onclick="@(() => InitiateJoinGame(game))"
-                                    disabled="@(game.IsFull || game.Status != GameStatus.Lobby)">
-                                    @(game.Status == GameStatus.Finished ? "Finished" : game.Status == GameStatus.InProgress ? "In Progress" : game.IsFull ? "Full" : "Join Game")
-                                </button>
-                                @if (game.Status == GameStatus.InProgress || game.Status == GameStatus.Finished)
+                                @if (!isGuest)
+                                {
+                                    <button class="btn btn-secondary btn-sm" @onclick="@(() => InitiateJoinGame(game))"
+                                        disabled="@(game.IsFull || game.Status != GameStatus.Lobby)">
+                                        @(game.Status == GameStatus.Finished ? "Finished" : game.Status == GameStatus.InProgress ? "In Progress" : game.IsFull ? "Full" : "Join Game")
+                                    </button>
+                                }
+                                @if ((game.Status == GameStatus.InProgress || game.Status == GameStatus.Finished) && !game.IsPrivate)
                                 {
                                     <button class="btn btn-outline-info btn-sm ms-2" @onclick="@(() => NavigationManager.NavigateTo($"/game/{game.Id}"))">
                                         Watch
@@ -217,6 +241,7 @@
     private bool showInProgressGames = true;
     private bool showFinishedGames = true;
     private bool showOnlyMyGames = false;
+    private bool isGuest = false;
 
     private bool isCreateModalOpen = false;
     private CreateGameRequest newGameRequest = new CreateGameRequest();
@@ -261,6 +286,8 @@
         currentUserId = user.FindFirst(c => c.Type == "sub")?.Value; 
         if (currentUserId == null) 
              currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        isGuest = user.IsInRole("Guest");
 
         await LoadGames();
 

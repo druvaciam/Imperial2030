@@ -58,6 +58,7 @@ public class GamesController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<GameDto>> CreateGame([FromBody] CreateGameRequest req)
     {
+        if (User.IsInRole("Guest")) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -102,6 +103,7 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/join")]
     public async Task<IActionResult> JoinGame(Guid gameId, [FromBody] JoinGameRequest? req)
     {
+        if (User.IsInRole("Guest")) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -142,6 +144,7 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/leave")]
     public async Task<IActionResult> LeaveGame(Guid gameId)
     {
+        if (User.IsInRole("Guest")) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -213,6 +216,7 @@ public class GamesController : ControllerBase
     [HttpDelete("{gameId}")]
     public async Task<IActionResult> DeleteGame(Guid gameId)
     {
+        if (User.IsInRole("Guest")) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -341,6 +345,7 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/start")]
     public async Task<IActionResult> StartGame(Guid gameId)
     {
+        if (User.IsInRole("Guest")) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 

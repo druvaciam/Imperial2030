@@ -28,8 +28,16 @@
                 <InputText id="password" type="password" class="form-control" @bind-Value="loginRequest.Password" />
             </div>
 
-            <button type="submit" class="btn btn-primary">Login</button>
+            <button type="submit" class="btn btn-primary" disabled="@isLoggingIn">Login</button>
         </EditForm>
+
+        <div class="text-center my-3">
+            <span class="text-muted">— or —</span>
+        </div>
+
+        <button class="btn btn-outline-secondary w-100" @onclick="HandleGuestLogin" disabled="@isLoggingIn">
+            <span class="oi oi-eye me-2"></span>Continue as Guest (Watch Only)
+        </button>
     </div>
 </div>
 
@@ -37,6 +45,7 @@
     private LoginRequest loginRequest = new LoginRequest();
     private bool ShowErrors;
     private string Error = "";
+    private bool isLoggingIn = false;
 
     private async Task HandleLogin()
     {
@@ -53,5 +62,25 @@
             Error = result.Error ?? "Login failed.";
             ShowErrors = true;
         }
+    }
+
+    private async Task HandleGuestLogin()
+    {
+        ShowErrors = false;
+        isLoggingIn = true;
+
+        var result = await AuthService.LoginAsGuest();
+
+        if (result.Successful)
+        {
+            NavigationManager.NavigateTo("/");
+        }
+        else
+        {
+            Error = result.Error ?? "Guest login failed.";
+            ShowErrors = true;
+        }
+
+        isLoggingIn = false;
     }
 }
