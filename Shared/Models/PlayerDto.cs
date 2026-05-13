@@ -11,5 +11,6 @@ public class PlayerDto
     public int Cash { get; set; }
     public bool IsOnline { get; set; }
     public bool IsActiveInGame { get; set; }
+    public bool IsBot { get; set; }
     public List<BondDto> Bonds { get; set; } = [];
 }

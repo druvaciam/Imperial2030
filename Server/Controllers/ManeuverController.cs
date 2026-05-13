@@ -17,11 +17,13 @@ public class ManeuverController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
+    private readonly Imperial2030.Server.Services.BotService _botService;
 
-    public ManeuverController(ApplicationDbContext context, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext)
+    public ManeuverController(ApplicationDbContext context, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.BotService botService)
     {
         _context = context;
         _hubContext = hubContext;
+        _botService = botService;
     }
 
     [HttpPost("{gameId}/move-fleet")]
@@ -149,6 +151,11 @@ public class ManeuverController : ControllerBase
 
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+
+        if (game.PendingBattleDefenders.Any())
+        {
+            _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+        }
 
         return Ok();
     }
@@ -355,6 +362,11 @@ public class ManeuverController : ControllerBase
         await _context.SaveChangesAsync();
         Console.WriteLine("[MoveArmy] Changes Saved.");
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+
+        if (game.PendingBattleDefenders.Any())
+        {
+            _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+        }
 
         return Ok();
     }
@@ -601,6 +613,11 @@ public class ManeuverController : ControllerBase
 
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+
+        if (game.PendingBattleDefenders.Any())
+        {
+            _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+        }
 
         return Ok();
     }

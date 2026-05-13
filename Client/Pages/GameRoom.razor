@@ -118,9 +118,16 @@ else
                     {
                         <li class="list-group-item bg-transparent text-white d-flex justify-content-between align-items-center @(IsPlayerActive(player) ? "active-player-highlight" : "px-0")">
                             <span class="d-flex align-items-center gap-2">
-                                <span class="rounded-circle d-inline-block" 
-                                      style="width: 10px; height: 10px; background-color: @(player.IsOnline ? (player.IsActiveInGame ? "#28a745" : "#ffc107") : "#dc3545");"
-                                      title="@(player.IsOnline ? (player.IsActiveInGame ? "In Game" : "Online") : "Offline")"></span>
+                                @if (player.IsBot)
+                                {
+                                    <span title="Bot Player">🤖</span>
+                                }
+                                else
+                                {
+                                    <span class="rounded-circle d-inline-block" 
+                                          style="width: 10px; height: 10px; background-color: @(player.IsOnline ? (player.IsActiveInGame ? "#28a745" : "#ffc107") : "#dc3545");"
+                                          title="@(player.IsOnline ? (player.IsActiveInGame ? "In Game" : "Online") : "Offline")"></span>
+                                }
                                 @player.UserName
                             </span>
                             <div class="d-flex align-items-center flex-wrap justify-content-end gap-1">
@@ -128,6 +135,10 @@ else
                                 @if (player.IsHost)
                                 {
                                     <span class="badge bg-warning text-dark">Host</span>
+                                }
+                                @if (player.IsBot && IsHost && game.Status == GameStatus.Lobby)
+                                {
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size: 0.7rem; line-height: 1;" @onclick="@(() => RemoveBot(player.Id))" title="Remove bot">✕</button>
                                 }
                                 @if (game.InvestorCardHolderId == player.Id)
                                 {
@@ -382,6 +393,9 @@ else
             <div class="mt-auto pt-3 d-grid gap-2">
                  @if (IsHost && game.Status == GameStatus.Lobby)
                  {
+                     <button class="btn btn-outline-info" @onclick="AddBot" disabled="@(game.Players.Count >= game.MaxPlayers)">
+                         🤖 Add Bot
+                     </button>
                      <button class="btn btn-success" @onclick="StartGame" disabled="@(game.Players.Count < 2)">Start Game</button>
                  }
                  @if (game.Status == GameStatus.Lobby)
@@ -943,6 +957,26 @@ else
         {
             var error = await response.Content.ReadAsStringAsync();
             await ShowToast($"Failed to start game: {error}", true);
+        }
+    }
+
+    private async Task AddBot()
+    {
+        var response = await Http.PostAsync($"api/games/{GameId}/add-bot", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            await ShowToast($"Failed to add bot: {error}", true);
+        }
+    }
+
+    private async Task RemoveBot(Guid playerId)
+    {
+        var response = await Http.PostAsync($"api/games/{GameId}/remove-bot/{playerId}", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            await ShowToast($"Failed to remove bot: {error}", true);
         }
     }
 

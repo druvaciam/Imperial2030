@@ -22,16 +22,19 @@ public class GamesController : ControllerBase
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
     private readonly Imperial2030.Server.Services.PresenceTracker _presenceTracker;
+    private readonly Imperial2030.Server.Services.BotService _botService;
 
-    public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.PresenceTracker presenceTracker)
+    public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.PresenceTracker presenceTracker, Imperial2030.Server.Services.BotService botService)
     {
         _context = context;
         _userManager = userManager;
         _hubContext = hubContext;
         _presenceTracker = presenceTracker;
+        _botService = botService;
     }
 
     [HttpGet]
+    [AllowAnonymous]
     public async Task<ActionResult<IEnumerable<GameDto>>> GetGames()
     {
         return await _context.Games
@@ -141,6 +144,7 @@ public class GamesController : ControllerBase
 
         return Ok();
     }
+    
     [HttpPost("{gameId}/leave")]
     public async Task<IActionResult> LeaveGame(Guid gameId)
     {
@@ -199,13 +203,26 @@ public class GamesController : ControllerBase
         LogAction(game, $"{User.Identity?.Name} left the game", "LeaveGame");
         await _context.SaveChangesAsync();
 
-        // If no players left, delete the game
-        // We need to re-check count. Accessing game.Players might be stale if we didn't reload or if tracking didn't update list count immediately for Remove?
-        // _context.Players.Remove DOES remove from the collection locally.
         if (!game.Players.Any() && game.Status != GameStatus.Finished)
         {
-            _context.Games.Remove(game);
-            await _context.SaveChangesAsync();
+            var fullGame = await _context.Games
+                .Include(g => g.Bonds)
+                .Include(g => g.NationStates)
+                .Include(g => g.TerritoryStates)
+                .Include(g => g.Units)
+                .AsSplitQuery()
+                .FirstOrDefaultAsync(g => g.Id == gameId);
+
+            if (fullGame != null)
+            {
+                await _context.GameActions.Where(a => a.GameId == gameId).ExecuteDeleteAsync();
+                _context.Bonds.RemoveRange(fullGame.Bonds);
+                _context.NationStates.RemoveRange(fullGame.NationStates);
+                _context.TerritoryStates.RemoveRange(fullGame.TerritoryStates);
+                _context.Units.RemoveRange(fullGame.Units);
+                _context.Games.Remove(fullGame);
+                await _context.SaveChangesAsync();
+            }
         }
         
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -217,6 +234,7 @@ public class GamesController : ControllerBase
     public async Task<IActionResult> DeleteGame(Guid gameId)
     {
         if (User.IsInRole("Guest")) return Forbid();
+        
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -226,13 +244,21 @@ public class GamesController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.TerritoryStates)
             .Include(g => g.Units)
-            .Include(g => g.Actions)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
 
         var player = game.Players.FirstOrDefault(p => p.UserId == userId);
         if (player == null || !player.IsHost) return Forbid();
+
+        await _context.GameActions.Where(a => a.GameId == gameId).ExecuteDeleteAsync();
+        
+        _context.Bonds.RemoveRange(game.Bonds);
+        _context.NationStates.RemoveRange(game.NationStates);
+        _context.TerritoryStates.RemoveRange(game.TerritoryStates);
+        _context.Units.RemoveRange(game.Units);
+        _context.Players.RemoveRange(game.Players);
 
         _context.Games.Remove(game);
         await _context.SaveChangesAsync();
@@ -243,6 +269,7 @@ public class GamesController : ControllerBase
     }
 
     [HttpGet("{gameId}")]
+    [AllowAnonymous]
     public async Task<ActionResult<GameDetailDto>> GetGame(Guid gameId)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -278,19 +305,20 @@ public class GamesController : ControllerBase
             Players = game.Players.Select(p => new PlayerDto
             {
                 Id = p.Id,
-                UserId = p.UserId,
-                UserName = p.User?.UserName ?? "Unknown",
+                UserId = p.IsBot ? $"bot-{p.Id}" : p.UserId!,
+                UserName = p.IsBot ? (p.BotName ?? "Bot") : (p.User?.UserName ?? "Unknown"),
                 IsHost = p.IsHost,
                 Cash = p.Cash,
-                IsOnline = _presenceTracker.IsUserOnline(p.UserId),
-                IsActiveInGame = _presenceTracker.IsUserActiveInGame(gameId.ToString(), p.UserId),
+                IsBot = p.IsBot,
+                IsOnline = p.IsBot ? true : _presenceTracker.IsUserOnline(p.UserId),
+                IsActiveInGame = p.IsBot ? true : _presenceTracker.IsUserActiveInGame(gameId.ToString(), p.UserId),
                 Bonds = game.Bonds.Where(b => b.HolderId == p.Id).Select(b => new BondDto
                 {
                     Id = b.Id,
                     Nation = b.Nation,
                     Cost = b.Cost,
                     Interest = b.Interest,
-                    HolderName = p.User?.UserName ?? "Unknown"
+                    HolderName = p.IsBot ? (p.BotName ?? "Bot") : (p.User?.UserName ?? "Unknown")
                 }).ToList()
             }).ToList(),
             NationStates = game.NationStates.Select(ns => new NationStateDto
@@ -299,7 +327,7 @@ public class GamesController : ControllerBase
                 Treasury = ns.Treasury,
                 Power = ns.Power,
                 RondelPosition = ns.RondelPosition,
-                ControllerName = ns.Controller?.User?.UserName,
+                ControllerName = ns.Controller != null ? (ns.Controller.IsBot ? (ns.Controller.BotName ?? "Bot") : ns.Controller.User?.UserName) : null,
                 ControllerId = ns.ControllerId,
                 HasBuiltThisTurn = ns.HasBuiltThisTurn,
                 HasProducedThisTurn = ns.HasProducedThisTurn,
@@ -340,6 +368,64 @@ public class GamesController : ControllerBase
                 Message = a.Message
             }).ToList()
         };
+    }
+
+    private static readonly string[] BotNames = { "Bot Alpha", "Bot Bravo", "Bot Charlie", "Bot Delta", "Bot Echo" };
+
+    [HttpPost("{gameId}/add-bot")]
+    public async Task<IActionResult> AddBot(Guid gameId)
+    {
+        if (User.IsInRole("Guest")) return Forbid();
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games.Include(g => g.Players).FirstOrDefaultAsync(g => g.Id == gameId);
+        if (game == null) return NotFound();
+        if (game.Status != GameStatus.Lobby) return BadRequest("Game must be in lobby.");
+
+        var host = game.Players.FirstOrDefault(p => p.UserId == userId);
+        if (host == null || !host.IsHost) return Forbid();
+        if (game.Players.Count >= game.MaxPlayers) return BadRequest("Game is full.");
+
+        int botIndex = game.Players.Count(p => p.IsBot);
+        var botName = botIndex < BotNames.Length ? BotNames[botIndex] : $"Bot {botIndex + 1}";
+
+        var bot = new Player
+        {
+            UserId = null,
+            GameId = gameId,
+            IsHost = false,
+            IsBot = true,
+            BotName = botName
+        };
+
+        _context.Players.Add(bot);
+        await _context.SaveChangesAsync();
+        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        return Ok();
+    }
+
+    [HttpPost("{gameId}/remove-bot/{playerId}")]
+    public async Task<IActionResult> RemoveBot(Guid gameId, Guid playerId)
+    {
+        if (User.IsInRole("Guest")) return Forbid();
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games.Include(g => g.Players).FirstOrDefaultAsync(g => g.Id == gameId);
+        if (game == null) return NotFound();
+        if (game.Status != GameStatus.Lobby) return BadRequest("Game must be in lobby.");
+
+        var host = game.Players.FirstOrDefault(p => p.UserId == userId);
+        if (host == null || !host.IsHost) return Forbid();
+
+        var bot = game.Players.FirstOrDefault(p => p.Id == playerId && p.IsBot);
+        if (bot == null) return NotFound("Bot not found.");
+
+        _context.Players.Remove(bot);
+        await _context.SaveChangesAsync();
+        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        return Ok();
     }
 
     [HttpPost("{gameId}/start")]
@@ -633,6 +719,9 @@ public class GamesController : ControllerBase
             await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameStarted", gameId);
 
+            // Trigger bot if first nation is bot-controlled
+            _ = Task.Run(async () => { await Task.Delay(2000); await _botService.TryPlayBotTurnAsync(gameId); });
+
             return Ok();
         }
         catch (Exception ex)
@@ -660,7 +749,7 @@ public class GamesController : ControllerBase
             .Select(s => s[random.Next(s.Length)]).ToArray());
     }
 
-    private void HandleInvestorPhase(Game game, NationState nationState, Player controller, bool isLandedOn)
+    public static void HandleInvestorPhase(ApplicationDbContext context, Game game, NationState nationState, Player controller, bool isLandedOn)
     {
         // 1. Paying out interest (ONLY if landed on)
         if (isLandedOn)
@@ -687,7 +776,7 @@ public class GamesController : ControllerBase
             {
                 var holder = game.Players.First(p => p.Id == bond.HolderId);
                 holder.Cash += bond.Interest;
-                _context.Entry(holder).State = EntityState.Modified;
+                context.Entry(holder).State = EntityState.Modified;
             }
 
             // Pay Controller
@@ -727,7 +816,7 @@ public class GamesController : ControllerBase
                 {
                     var holder = game.Players.First(p => p.Id == bond.HolderId);
                     holder.Cash += bond.Interest;
-                    _context.Entry(holder).State = EntityState.Modified;
+                    context.Entry(holder).State = EntityState.Modified;
                 }
             }
             else
@@ -739,7 +828,7 @@ public class GamesController : ControllerBase
                      var holder = game.Players.First(p => p.Id == bond.HolderId);
                      int payout = (int)(bond.Interest * ratio);
                      holder.Cash += payout;
-                     _context.Entry(holder).State = EntityState.Modified;
+                     context.Entry(holder).State = EntityState.Modified;
                  }
             }
         }
@@ -753,7 +842,7 @@ public class GamesController : ControllerBase
              if (investor != null)
              {
                  investor.Cash += 2;
-                 _context.Entry(investor).State = EntityState.Modified;
+                 context.Entry(investor).State = EntityState.Modified;
                  
                  // Enable Investor Turn
                  game.IsInvestorTurn = true;
@@ -762,7 +851,7 @@ public class GamesController : ControllerBase
         }
     }
 
-    private void UpdateNationController(Game game, Nation nation)
+    public static void UpdateNationController(ApplicationDbContext context, Game game, Nation nation)
     {
         var nationState = game.NationStates.First(n => n.Nation == nation);
         var bonds = game.Bonds.Where(b => b.Nation == nation && b.HolderId != null).ToList();
@@ -808,7 +897,7 @@ public class GamesController : ControllerBase
             if (nationState.ControllerId != candidates[0])
             {
                 nationState.ControllerId = candidates[0];
-                _context.Entry(nationState).State = EntityState.Modified;
+                context.Entry(nationState).State = EntityState.Modified;
             }
         }
         else
@@ -829,13 +918,13 @@ public class GamesController : ControllerBase
                 if (game.ActingPlayerId.HasValue && candidates.Contains(game.ActingPlayerId.Value))
                 {
                     nationState.ControllerId = game.ActingPlayerId.Value;
-                    _context.Entry(nationState).State = EntityState.Modified;
+                    context.Entry(nationState).State = EntityState.Modified;
                 }
                 else
                 {
                      // Fallback: Pick first
                      nationState.ControllerId = candidates[0];
-                     _context.Entry(nationState).State = EntityState.Modified;
+                     context.Entry(nationState).State = EntityState.Modified;
                 }
             }
         }
@@ -960,7 +1049,7 @@ public class GamesController : ControllerBase
             // because distinct "pass through" vs "land on" matters for 2M bonus.
             // But for now, sticking to existing logic structure.
             bool landedOn = (targetSlot == 4);
-            HandleInvestorPhase(game, nationState, controller, landedOn);
+            HandleInvestorPhase(_context, game, nationState, controller, landedOn);
         }
 
         // Initialize Maneuver Phase
@@ -993,6 +1082,12 @@ public class GamesController : ControllerBase
         
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
         
+        // Trigger bot if Investor Phase was activated for a bot
+        if (game.IsInvestorTurn)
+        {
+             _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+        }
+
         return Ok();
     }
 
@@ -1059,6 +1154,12 @@ public class GamesController : ControllerBase
             if (isBlockaded) continue;
 
             UnitType typeToProduce = def.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
+
+            int currentArmies = game.Units.Count(u => u.Nation == currentNation && u.UnitType == UnitType.Army);
+            int currentFleets = game.Units.Count(u => u.Nation == currentNation && u.UnitType == UnitType.Fleet);
+
+            if (typeToProduce == UnitType.Army && currentArmies + createdUnits >= Imperial2030.Shared.Constants.NationData.GetMaxArmies(currentNation)) continue;
+            if (typeToProduce == UnitType.Fleet && currentFleets + createdUnits >= Imperial2030.Shared.Constants.NationData.GetMaxFleets(currentNation)) continue;
 
             var newUnit = new Unit
             {
@@ -1150,7 +1251,7 @@ public class GamesController : ControllerBase
              _context.Entry(actingPlayer).State = EntityState.Modified;
              
              // Update Controller Logic
-             UpdateNationController(game, ns.Nation);
+             UpdateNationController(_context, game, ns.Nation);
 
              LogAction(game, $"bought {bond.Nation} {bond.Cost}M bond", "Investment");
         }
@@ -1171,6 +1272,10 @@ public class GamesController : ControllerBase
         
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+
+        // Trigger bot if next turn is bot-controlled
+        _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+
         return Ok();
     }
 
@@ -1303,6 +1408,9 @@ public class GamesController : ControllerBase
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+
+        // Trigger bot if next nation is bot-controlled
+        _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
 
         return Ok();
     }
@@ -1486,6 +1594,9 @@ public class GamesController : ControllerBase
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
 
+        // Trigger bot if next nation is bot-controlled
+        _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+
         return Ok(new 
         { 
             TaxRevenue = totalTaxRevenue, 
@@ -1548,6 +1659,18 @@ public class GamesController : ControllerBase
                 if (territoryDef.CityType != CityType.LightBlue) return BadRequest($"Cannot place Fleet in {territoryDef.Name} (no harbor).");
             }
         }
+
+        int currentArmies = game.Units.Count(u => u.Nation == game.CurrentTurnNation && u.UnitType == UnitType.Army);
+        int currentFleets = game.Units.Count(u => u.Nation == game.CurrentTurnNation && u.UnitType == UnitType.Fleet);
+
+        int requestedArmies = request.Units.Count(u => u.UnitType == UnitType.Army);
+        int requestedFleets = request.Units.Count(u => u.UnitType == UnitType.Fleet);
+
+        if (currentArmies + requestedArmies > Imperial2030.Shared.Constants.NationData.GetMaxArmies(game.CurrentTurnNation))
+            return BadRequest($"Cannot import. Maximum armies allowed is {Imperial2030.Shared.Constants.NationData.GetMaxArmies(game.CurrentTurnNation)}.");
+        
+        if (currentFleets + requestedFleets > Imperial2030.Shared.Constants.NationData.GetMaxFleets(game.CurrentTurnNation))
+            return BadRequest($"Cannot import. Maximum fleets allowed is {Imperial2030.Shared.Constants.NationData.GetMaxFleets(game.CurrentTurnNation)}.");
 
         // Execute
         nationState.Treasury -= cost;

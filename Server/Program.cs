@@ -15,6 +15,7 @@ builder.Services.AddControllersWithViews();
 builder.Services.AddRazorPages();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<Imperial2030.Server.Services.PresenceTracker>();
+builder.Services.AddSingleton<Imperial2030.Server.Services.BotService>();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 

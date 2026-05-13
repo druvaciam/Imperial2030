@@ -14,4 +14,18 @@ public static class NationData
         Nation.Europe => "#0000FF", // Blue
         _ => "#808080" // Gray fallback
     };
+
+    public static int GetMaxArmies(Nation nation) => nation switch
+    {
+        Nation.China => 10, // Yellow
+        Nation.USA => 6,    // Red
+        _ => 8
+    };
+
+    public static int GetMaxFleets(Nation nation) => nation switch
+    {
+        Nation.China => 6,  // Yellow
+        Nation.USA => 10,   // Red
+        _ => 8
+    };
 }
