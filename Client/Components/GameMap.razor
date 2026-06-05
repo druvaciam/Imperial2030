@@ -1429,10 +1429,11 @@
             .ToList();
 
         var relevantUnit = unitsAtLoc.FirstOrDefault(u => 
-            (Game.ManeuverState.Phase == ManeuverPhase.Fleets && u.UnitType == UnitType.Fleet) ||
-            (Game.ManeuverState.Phase == ManeuverPhase.Armies && u.UnitType == UnitType.Army));
+            !u.HasMoved &&
+            ((Game.ManeuverState.Phase == ManeuverPhase.Fleets && u.UnitType == UnitType.Fleet) ||
+            (Game.ManeuverState.Phase == ManeuverPhase.Armies && u.UnitType == UnitType.Army)));
 
-        if (relevantUnit != null && !relevantUnit.HasMoved)
+        if (relevantUnit != null)
         {
             // Toggle Selection
             if (selectedUnitId == relevantUnit.Id)

@@ -35,9 +35,6 @@ bld/
 # Visual Studio 2017 auto generated files
 Generated\ Files/
 
-# Visual Studio Code
-.vscode/
-
 # Run logs
 build_log.txt
 build.log

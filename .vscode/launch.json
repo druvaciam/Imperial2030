@@ -1,0 +1,36 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch Imperial2030 in Chrome",
+            "type": "chrome",
+            "request": "launch",
+            "url": "https://localhost:7115",
+            "webRoot": "${workspaceFolder}/Client/wwwroot",
+            "preLaunchTask": "run-server"
+        },
+        {
+            "name": "Launch Imperial2030 in Edge",
+            "type": "msedge",
+            "request": "launch",
+            "url": "https://localhost:7115",
+            "webRoot": "${workspaceFolder}/Client/wwwroot",
+            "preLaunchTask": "run-server"
+        },
+        {
+            "name": "Launch Server (requires C# extension)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/Server/bin/Debug/net10.0/Imperial2030.Server.dll",
+            "cwd": "${workspaceFolder}/Server",
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            },
+            "serverReadyAction": {
+                "action": "openExternally",
+                "pattern": "\\bNow listening on:\\s+(https?://\\S+)"
+            }
+        }
+    ]
+}
