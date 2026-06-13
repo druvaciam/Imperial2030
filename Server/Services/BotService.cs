@@ -183,35 +183,55 @@ public class BotService
         int factoryCount = CountFactories(game, nation);
         int unitCount = game.Units.Count(u => u.Nation == nation);
 
-        // First move - free placement
-        if (ns.RondelPosition == null)
-        {
-            if (factoryCount < 4 && ns.Treasury >= 5) return 1; // Factory
-            return 2; // Production
-        }
-
-        int bestSlot = -1;
-        double bestScore = -999;
+        var candidates = new List<(int Slot, double Score)>();
+        double maxScore = -999;
+        int fallbackSlot = ns.RondelPosition.HasValue ? ((ns.RondelPosition.Value + 1) % 8) : 2;
+        int bestSlot = fallbackSlot;
 
         for (int slot = 0; slot < 8; slot++)
         {
-            if (slot == ns.RondelPosition.Value) continue;
-            int dist = (slot - ns.RondelPosition.Value + 8) % 8;
-            if (dist == 0) continue;
+            if (ns.RondelPosition.HasValue && slot == ns.RondelPosition.Value) continue;
 
             int moveCost = 0;
-            if (dist > 3)
+            if (ns.RondelPosition.HasValue)
             {
-                int pf = ns.Power / 5;
-                moveCost = (dist - 3) * (1 + pf);
+                int dist = (slot - ns.RondelPosition.Value + 8) % 8;
+                if (dist > 3)
+                {
+                    int pf = ns.Power / 5;
+                    moveCost = (dist - 3) * (1 + pf);
+                }
             }
+
             if (moveCost > controller.Cash) continue;
 
             double score = ScoreSlot(slot, game, ns, controller, factoryCount, unitCount) - moveCost * 2;
-            if (score > bestScore) { bestScore = score; bestSlot = slot; }
+            
+            if (score > maxScore)
+            {
+                maxScore = score;
+                bestSlot = slot;
+            }
+
+            if (score > 0)
+            {
+                candidates.Add((slot, score));
+            }
         }
 
-        return bestSlot >= 0 ? bestSlot : ((ns.RondelPosition.Value + 1) % 8);
+        if (!candidates.Any()) return bestSlot;
+
+        double totalScore = candidates.Sum(c => c.Score);
+        double roll = Random.Shared.NextDouble() * totalScore;
+        
+        double current = 0;
+        foreach (var c in candidates)
+        {
+            current += c.Score;
+            if (roll <= current) return c.Slot;
+        }
+
+        return candidates.Last().Slot;
     }
 
     private double ScoreSlot(int slot, Game game, NationState ns, Player controller, int factories, int units)
@@ -219,13 +239,42 @@ public class BotService
         return slot switch
         {
             1 => (factories < 4 && ns.Treasury >= 5) ? 25 : 0,       // Factory
-            2 or 6 => factories >= 3 ? 20 : 12,                       // Production
+            2 or 6 => EstimateProductionYield(game, ns.Nation) * 8,   // Production
             0 => EstimateTaxRevenue(game, ns.Nation) >= 6 ? 22 : EstimateTaxRevenue(game, ns.Nation) * 2, // Taxation
             3 or 7 => HasExpandableTargets(game, ns.Nation) ? 15 : 5, // Maneuver
             5 => (ns.Treasury >= 2 && units < 6) ? 10 : 0,           // Import
             4 => 3,                                                    // Investor
             _ => 0
         };
+    }
+
+    private int EstimateProductionYield(Game game, Nation nation)
+    {
+        int produced = 0;
+        int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
+        int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
+
+        foreach (var ts in game.TerritoryStates.Where(t => t.HasFactory))
+        {
+            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
+            if (def?.Nation != nation) continue;
+            bool blocked = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
+            if (blocked) continue;
+
+            var unitType = def.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
+            if (unitType == UnitType.Army)
+            {
+                if (currentArmies >= NationData.GetMaxArmies(nation)) continue;
+                currentArmies++;
+            }
+            else
+            {
+                if (currentFleets >= NationData.GetMaxFleets(nation)) continue;
+                currentFleets++;
+            }
+            produced++;
+        }
+        return produced;
     }
 
     private int EstimateTaxRevenue(Game game, Nation nation)
