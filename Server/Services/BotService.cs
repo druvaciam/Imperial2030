@@ -316,10 +316,10 @@ public class BotService
                 if (neighbors.Any(n => {
                     var tDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
                     if (tDef != null && tDef.Type == TerritoryType.Sea) return false;
-                    bool noEnemy = !game.Units.Any(u => u.TerritoryId == n && u.Nation != nation);
+                    bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
                     var ts = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == n);
                     bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
-                    return noEnemy && uncontrolled;
+                    return hasEnemy || uncontrolled;
                 })) return true;
             }
         }
@@ -332,8 +332,8 @@ public class BotService
                 if (neighbors.Any(n => {
                     var tDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
                     if (tDef != null && tDef.Type == TerritoryType.Land) return false;
-                    bool noEnemy = !game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
-                    return noEnemy;
+                    bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
+                    return hasEnemy || !game.Units.Any(u => u.TerritoryId == n && friendlyNations.Contains(u.Nation));
                 })) return true;
             }
         }
@@ -425,16 +425,68 @@ public class BotService
         foreach (var fleet in fleets)
         {
             if (!MapConnectivity.Adjacency.TryGetValue(fleet.TerritoryId, out var neighbors)) continue;
-            var seaNeighbors = neighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea));
-            var target = seaNeighbors.FirstOrDefault(n => !game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation)));
+            var seaNeighbors = neighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)).ToList();
+            var target = seaNeighbors.OrderByDescending(n => {
+                int score = Random.Shared.Next(0, 10);
+                bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
+                if (hasEnemy) score += 100;
+                return score;
+            }).FirstOrDefault();
+
             if (target != null)
             {
+                bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
+                var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
+                bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
+                
+                bool isHostileMove = false;
+                if (hasEnemy) isHostileMove = true;
+                else if (isForeignHome) isHostileMove = Random.Shared.NextDouble() >= 0.5;
+
+                if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != nation)
+                {
+                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == target);
+                    if (tState != null && tState.HasFactory)
+                    {
+                        var defenderNation = def.Nation.Value;
+                        var defenderFactoryCount = game.TerritoryStates.Count(s => {
+                            if (!s.HasFactory) return false;
+                            var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
+                            if (t == null || t.Nation != defenderNation) return false;
+                            bool isOccupied = game.Units.Any(u => u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
+                            return !isOccupied;
+                        });
+                        bool isTargetOccupied = game.Units.Any(u => u.TerritoryId == target && u.Nation != defenderNation && u.IsHostile);
+                        if (defenderFactoryCount <= 1 && !isTargetOccupied)
+                        {
+                            isHostileMove = false;
+                        }
+                    }
+                }
+
                 var originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == fleet.TerritoryId)?.Name ?? fleet.TerritoryId;
                 var targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target)?.Name ?? target;
-                LogAction(ctx, game, $"fleet moved to {targetName} from {originName}", "MoveFleet", nation, controller.BotName ?? "Bot");
 
                 fleet.TerritoryId = target;
                 fleet.HasMoved = true;
+                fleet.IsHostile = isHostileMove;
+
+                if (hasEnemy && isHostileMove)
+                {
+                    var enemyFleet = game.Units.FirstOrDefault(u => u.TerritoryId == target && u.UnitType == UnitType.Fleet && !friendlyNations.Contains(u.Nation));
+                    if (enemyFleet != null)
+                    {
+                        var enemyNation = enemyFleet.Nation;
+                        ctx.Units.Remove(fleet);
+                        ctx.Units.Remove(enemyFleet);
+                        game.Units.Remove(fleet);
+                        game.Units.Remove(enemyFleet);
+                        LogAction(ctx, game, $"fleet attacked {enemyNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
+                        continue;
+                    }
+                }
+
+                LogAction(ctx, game, $"fleet moved to {targetName} from {originName} (Hostile: {isHostileMove})", "MoveFleet", nation, controller.BotName ?? "Bot");
             }
         }
         
@@ -449,34 +501,78 @@ public class BotService
             if (!MapConnectivity.Adjacency.TryGetValue(army.TerritoryId, out var neighbors)) continue;
             var landNeighbors = neighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Land)).ToList();
 
-            // Prefer uncontrolled neutral territories without enemies
             var best = landNeighbors
-                .Where(n => {
+                .OrderByDescending(n => {
+                    int score = Random.Shared.Next(0, 10);
+                    bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
+                    if (hasEnemy) score += 100;
+
                     var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == n);
                     bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
-                    bool noEnemy = !game.Units.Any(u => u.TerritoryId == n && u.Nation != nation);
+                    if (uncontrolled && !hasEnemy) score += 50;
+
                     var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
                     bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
-                    return uncontrolled && noEnemy && notFriendlyHome;
+                    if (notFriendlyHome) score += 10;
+
+                    return score;
                 })
                 .FirstOrDefault();
 
-            if (best == null)
-            {
-                // Try any land neighbor without friendly nation armies
-                best = landNeighbors
-                    .Where(n => !game.Units.Any(u => u.TerritoryId == n && friendlyNations.Contains(u.Nation)))
-                    .FirstOrDefault();
-            }
-
             if (best != null)
             {
+                bool hasEnemy = game.Units.Any(u => u.TerritoryId == best && !friendlyNations.Contains(u.Nation));
+                var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best);
+                bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
+                
+                bool isHostileMove = false;
+                if (hasEnemy) isHostileMove = true;
+                else if (isForeignHome) isHostileMove = Random.Shared.NextDouble() >= 0.5;
+
+                if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != nation)
+                {
+                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == best);
+                    if (tState != null && tState.HasFactory)
+                    {
+                        var defenderNation = def.Nation.Value;
+                        var defenderFactoryCount = game.TerritoryStates.Count(s => {
+                            if (!s.HasFactory) return false;
+                            var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
+                            if (t == null || t.Nation != defenderNation) return false;
+                            bool isOccupied = game.Units.Any(u => u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
+                            return !isOccupied;
+                        });
+                        bool isTargetOccupied = game.Units.Any(u => u.TerritoryId == best && u.Nation != defenderNation && u.IsHostile);
+                        if (defenderFactoryCount <= 1 && !isTargetOccupied)
+                        {
+                            isHostileMove = false;
+                        }
+                    }
+                }
+
                 var originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == army.TerritoryId)?.Name ?? army.TerritoryId;
                 var targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best)?.Name ?? best;
-                LogAction(ctx, game, $"army moved to {targetName} from {originName}", "MoveArmy", nation, controller.BotName ?? "Bot");
 
                 army.TerritoryId = best;
                 army.HasMoved = true;
+                army.IsHostile = isHostileMove;
+
+                if (hasEnemy && isHostileMove)
+                {
+                    var enemyArmy = game.Units.FirstOrDefault(u => u.TerritoryId == best && u.UnitType == UnitType.Army && !friendlyNations.Contains(u.Nation));
+                    if (enemyArmy != null)
+                    {
+                        var enemyNation = enemyArmy.Nation;
+                        ctx.Units.Remove(army);
+                        ctx.Units.Remove(enemyArmy);
+                        game.Units.Remove(army);
+                        game.Units.Remove(enemyArmy);
+                        LogAction(ctx, game, $"army attacked {enemyNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
+                        continue;
+                    }
+                }
+
+                LogAction(ctx, game, $"army moved to {targetName} from {originName} (Hostile: {isHostileMove})", "MoveArmy", nation, controller.BotName ?? "Bot");
             }
         }
 

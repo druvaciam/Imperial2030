@@ -17,7 +17,7 @@ public class ManeuverService
     }
 
 
-    public async Task<bool> MoveFleet(Guid gameId, Guid unitId, string destinationId, Imperial2030.Shared.Models.Nation? battleTarget = null, bool isHostile = true)
+    public async Task<string?> MoveFleet(Guid gameId, Guid unitId, string destinationId, Imperial2030.Shared.Models.Nation? battleTarget = null, bool isHostile = true)
     {
         var request = new MoveUnitRequest 
         { 
@@ -26,9 +26,9 @@ public class ManeuverService
             BattleTargetNation = battleTarget,
             IsHostile = isHostile
         };
-        // var request = new { UnitId = unitId, DestinationId = destinationId }; // Replaced with typed request
         var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/move-fleet", request);
-        return response.IsSuccessStatusCode;
+        if (response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadAsStringAsync();
     }
 
     public async Task<bool> BattleAsync(Guid gameId, Guid unitId, Imperial2030.Shared.Models.Nation targetNation)
@@ -48,7 +48,7 @@ public class ManeuverService
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<bool> MoveArmy(Guid gameId, Guid unitId, string destinationId, List<Guid>? convoyFleetIds = null, Imperial2030.Shared.Models.Nation? battleTarget = null, bool isHostile = true)
+    public async Task<string?> MoveArmy(Guid gameId, Guid unitId, string destinationId, List<Guid>? convoyFleetIds = null, Imperial2030.Shared.Models.Nation? battleTarget = null, bool isHostile = true)
     {
         var request = new MoveUnitRequest 
         { 
@@ -59,7 +59,8 @@ public class ManeuverService
             IsHostile = isHostile
         };
         var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/move-army", request);
-        return response.IsSuccessStatusCode;
+        if (response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadAsStringAsync();
     }
 
     public async Task<bool> DestroyFactoryAsync(Guid gameId, string territoryId, List<Guid> unitIds)

@@ -1182,6 +1182,8 @@ public class GamesController : ControllerBase
 
         int createdArmies = 0;
         int createdFleets = 0;
+        int currentArmies = game.Units.Count(u => u.Nation == currentNation && u.UnitType == UnitType.Army);
+        int currentFleets = game.Units.Count(u => u.Nation == currentNation && u.UnitType == UnitType.Fleet);
 
         foreach (var tState in factoryTerritories)
         {
@@ -1196,9 +1198,6 @@ public class GamesController : ControllerBase
             if (isBlockaded) continue;
 
             UnitType typeToProduce = def.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
-
-            int currentArmies = game.Units.Count(u => u.Nation == currentNation && u.UnitType == UnitType.Army);
-            int currentFleets = game.Units.Count(u => u.Nation == currentNation && u.UnitType == UnitType.Fleet);
 
             if (typeToProduce == UnitType.Army && currentArmies + createdArmies >= Imperial2030.Shared.Constants.NationData.GetMaxArmies(currentNation)) continue;
             if (typeToProduce == UnitType.Fleet && currentFleets + createdFleets >= Imperial2030.Shared.Constants.NationData.GetMaxFleets(currentNation)) continue;

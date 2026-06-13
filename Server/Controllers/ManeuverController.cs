@@ -101,6 +101,31 @@ public class ManeuverController : ControllerBase
         unit.TerritoryId = request.DestinationId;
         unit.HasMoved = true;
 
+        if (request.IsHostile)
+        {
+            var destDef2 = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
+            if (destDef2 != null && destDef2.Nation.HasValue && destDef2.Nation.Value != nation)
+            {
+                var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == request.DestinationId);
+                if (tState != null && tState.HasFactory)
+                {
+                    var defenderNation = destDef2.Nation.Value;
+                    var defenderFactoryCount = game.TerritoryStates.Count(s => {
+                        if (!s.HasFactory) return false;
+                        var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
+                        if (t == null || t.Nation != defenderNation) return false;
+                        bool isOccupied = game.Units.Any(u => u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
+                        return !isOccupied;
+                    });
+                    bool isTargetOccupied = game.Units.Any(u => u.TerritoryId == request.DestinationId && u.Nation != defenderNation && u.IsHostile);
+                    if (defenderFactoryCount <= 1 && !isTargetOccupied)
+                    {
+                        return BadRequest("Cannot enter the last unoccupied factory of a nation hostilely. Must enter peacefully.");
+                    }
+                }
+            }
+        }
+
         // Auto-Battle Logic (If specified)
         // Apply hostility choice
         unit.IsHostile = request.IsHostile;
@@ -316,6 +341,31 @@ public class ManeuverController : ControllerBase
         var sourceTerritory = unit.TerritoryId;
         unit.TerritoryId = request.DestinationId;
         unit.HasMoved = true;
+
+        if (request.IsHostile)
+        {
+            var destDef2 = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
+            if (destDef2 != null && destDef2.Nation.HasValue && destDef2.Nation.Value != nation)
+            {
+                var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == request.DestinationId);
+                if (tState != null && tState.HasFactory)
+                {
+                    var defenderNation = destDef2.Nation.Value;
+                    var defenderFactoryCount = game.TerritoryStates.Count(s => {
+                        if (!s.HasFactory) return false;
+                        var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
+                        if (t == null || t.Nation != defenderNation) return false;
+                        bool isOccupied = game.Units.Any(u => u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
+                        return !isOccupied;
+                    });
+                    bool isTargetOccupied = game.Units.Any(u => u.TerritoryId == request.DestinationId && u.Nation != defenderNation && u.IsHostile);
+                    if (defenderFactoryCount <= 1 && !isTargetOccupied)
+                    {
+                        return BadRequest("Cannot enter the last unoccupied factory of a nation hostilely. Must enter peacefully.");
+                    }
+                }
+            }
+        }
 
         // Auto-Battle Logic (MoveArmy)
         // Apply hostility choice

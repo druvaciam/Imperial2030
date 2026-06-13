@@ -1976,19 +1976,19 @@
                 Console.WriteLine($"[MoveUnit]   Fleet {fId} at {fl?.TerritoryId} HasConvoyed={fl?.HasConvoyed}");
             }
         }
-        bool success;
+        string? errorMessage = null;
         if (unit.UnitType == UnitType.Fleet)
         {
-            success = await ManeuverService.MoveFleet(Game.Id, unit.Id, destinationId, null, isHostile);
+            errorMessage = await ManeuverService.MoveFleet(Game.Id, unit.Id, destinationId, null, isHostile);
         }
         else
         {
-            success = await ManeuverService.MoveArmy(Game.Id, unit.Id, destinationId, convoyFleets, null, isHostile);
+            errorMessage = await ManeuverService.MoveArmy(Game.Id, unit.Id, destinationId, convoyFleets, null, isHostile);
         }
 
-        if (!success)
+        if (errorMessage != null)
         {
-             await JSRuntime.InvokeVoidAsync("alert", "Move failed (validation error).");
+             await JSRuntime.InvokeVoidAsync("alert", $"Move failed: {errorMessage}");
         }
         else
         {
