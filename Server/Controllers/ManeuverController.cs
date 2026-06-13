@@ -102,6 +102,9 @@ public class ManeuverController : ControllerBase
         unit.HasMoved = true;
 
         // Auto-Battle Logic (If specified)
+        // Apply hostility choice
+        unit.IsHostile = request.IsHostile;
+
         if (request.BattleTargetNation.HasValue)
         {
             var targetNation = request.BattleTargetNation.Value;
@@ -122,7 +125,7 @@ public class ManeuverController : ControllerBase
         }
         else
         {
-            // Peace Move - Check for foreign fleets in the destination
+            // Peace Move for Fleets
             var foreignFleets = game.Units
                 .Where(u => u.TerritoryId == request.DestinationId && u.UnitType == UnitType.Fleet && u.Nation != nation)
                 .Select(u => u.Nation)
@@ -144,7 +147,7 @@ public class ManeuverController : ControllerBase
         {
             // Only log standard move and TryAutoAdvance if there's no pending battle blocking the phase.
             // If Pending, advancement and standard logging is delayed.
-            LogAction(game, $"fleet moved to {request.DestinationId} from {sourceTerritory}", "MoveFleet", nation);
+            LogAction(game, $"fleet moved to {request.DestinationId} from {sourceTerritory} (Hostile: {unit.IsHostile})", "MoveFleet", nation);
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
         }
@@ -315,6 +318,9 @@ public class ManeuverController : ControllerBase
         unit.HasMoved = true;
 
         // Auto-Battle Logic (MoveArmy)
+        // Apply hostility choice
+        unit.IsHostile = request.IsHostile;
+
         if (request.BattleTargetNation.HasValue)
         {
             var targetNation = request.BattleTargetNation.Value;
@@ -354,7 +360,7 @@ public class ManeuverController : ControllerBase
         
         if (!game.PendingBattleDefenders.Any())
         {
-            LogAction(game, $"army moved to {request.DestinationId} from {sourceTerritory}", "MoveArmy", nation);
+            LogAction(game, $"army moved to {request.DestinationId} from {sourceTerritory} (Hostile: {unit.IsHostile})", "MoveArmy", nation);
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
         }
@@ -602,6 +608,13 @@ public class ManeuverController : ControllerBase
                 LogAction(game, $"All parties agreed to PEACE in {game.PendingBattleTerritoryId}.", "BattleResponse");
                 var aggressorNation = game.PendingBattleAggressorNation.Value;
                 
+                // Mark all units in the territory as peaceful
+                var peacefulUnits = game.Units.Where(u => u.TerritoryId == game.PendingBattleTerritoryId).ToList();
+                foreach (var pu in peacefulUnits)
+                {
+                    pu.IsHostile = false;
+                }
+
                 game.PendingBattleTerritoryId = null;
                 game.PendingBattleAggressorNation = null;
 

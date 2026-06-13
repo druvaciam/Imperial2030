@@ -47,19 +47,25 @@
             <div class="modal-dialog">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">Foreign Fleets Detected</h5>
+                        <h5 class="modal-title">Foreign Territory / Units Detected</h5>
                     </div>
                     <div class="modal-body">
-                        <p>You are moving into a sea region occupied by foreign fleets.</p>
-                        <p>Choose your action:</p>
+                        <p>You are moving into a region with foreign units or a foreign home territory.</p>
+                        <p>Choose your stance:</p>
                         <div class="d-grid gap-2">
                              <button class="btn btn-success" @onclick="ConfirmPeace">
-                                 Coexist (Peace)
+                                 Peaceful / Coexist
                              </button>
                              @foreach (var nation in BattleOptions)
                              {
                                  <button class="btn btn-danger" @onclick="() => ConfirmBattle(nation)">
                                      Attack @nation
+                                 </button>
+                             }
+                             @if (!BattleOptions.Any())
+                             {
+                                 <button class="btn btn-danger" @onclick="ConfirmHostile">
+                                     Enter Hostilely
                                  </button>
                              }
                         </div>
@@ -825,7 +831,9 @@
                         double offsetX = col * 16.0 - (rowWidth / 2.0); 
                         double offsetY = row * 16.0 + 12.0; 
                         string color = GetNationColor(unit.Nation);
-                        string strokeColor = (selectedUnitId == unit.Id) ? "#ffff00" : "white"; // Highlight selected
+                        string strokeColor = unit.IsHostile ? "red" : "lime";
+                        if (selectedUnitId == unit.Id) strokeColor = "#ffff00"; // Highlight selected
+                        
                         string strokeWidth = (selectedUnitId == unit.Id) ? "3" : "2";
                         
                         bool isPendingBattleAggressor = (unit.TerritoryId == Game.PendingBattleTerritoryId && unit.Nation == Game.PendingBattleAggressorNation);
@@ -1099,8 +1107,8 @@
             // If we are in movement mode (ShowBattleModal true)
             if (ShowBattleModal)
             {
-                // Just execute the move without a battle target (Peace/Coexist)
-                await MoveUnit(PendingBattleUnit, PendingBattleDest);
+                // Execute move peacefully
+                await MoveUnit(PendingBattleUnit, PendingBattleDest, null, false);
             }
         }
         ShowBattleModal = false;
@@ -1123,15 +1131,26 @@
              {
                  if (PendingBattleUnit.UnitType == UnitType.Fleet)
                  {
-                    await ManeuverService.MoveFleet(Game.Id, PendingBattleUnit.Id, PendingBattleDest, target);
+                    await ManeuverService.MoveFleet(Game.Id, PendingBattleUnit.Id, PendingBattleDest, target, true);
                  }
                  else
                  {
                     // Army Battle Move
-                    await ManeuverService.MoveArmy(Game.Id, PendingBattleUnit.Id, PendingBattleDest, null, target);
+                    await ManeuverService.MoveArmy(Game.Id, PendingBattleUnit.Id, PendingBattleDest, null, target, true);
                  }
              }
 
+        ShowBattleModal = false;
+        PendingBattleUnit = null;
+        DeselectUnit();
+    }
+
+    private async Task ConfirmHostile()
+    {
+        if (Game != null && PendingBattleUnit != null && PendingBattleDest != null && ShowBattleModal)
+        {
+             await MoveUnit(PendingBattleUnit, PendingBattleDest, null, true);
+        }
         ShowBattleModal = false;
         PendingBattleUnit = null;
         DeselectUnit();
@@ -1318,7 +1337,10 @@
                     .Distinct()
                     .ToList();
                 
-                if (potentialEnemies.Any())
+                var tDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
+                bool isForeignHome = tDef != null && tDef.Nation.HasValue && tDef.Nation.Value != selectedUnit.Nation;
+
+                if (potentialEnemies.Any() || isForeignHome)
                 {
                     PendingBattleUnit = selectedUnit;
                     PendingBattleDest = territoryId;
@@ -1941,7 +1963,7 @@
         DeselectUnit();
     }
 
-    private async Task MoveUnit(Unit unit, string destinationId, List<Guid>? convoyFleets = null)
+    private async Task MoveUnit(Unit unit, string destinationId, List<Guid>? convoyFleets = null, bool isHostile = false)
     {
         if (Game == null) return;
 
@@ -1957,11 +1979,11 @@
         bool success;
         if (unit.UnitType == UnitType.Fleet)
         {
-            success = await ManeuverService.MoveFleet(Game.Id, unit.Id, destinationId);
+            success = await ManeuverService.MoveFleet(Game.Id, unit.Id, destinationId, null, isHostile);
         }
         else
         {
-            success = await ManeuverService.MoveArmy(Game.Id, unit.Id, destinationId, convoyFleets);
+            success = await ManeuverService.MoveArmy(Game.Id, unit.Id, destinationId, convoyFleets, null, isHostile);
         }
 
         if (!success)

@@ -1209,7 +1209,7 @@ public class GamesController : ControllerBase
                 Nation = currentNation,
                 TerritoryId = tState.TerritoryId,
                 UnitType = typeToProduce,
-                IsHostile = true
+                IsHostile = false
             };
             
             _context.Units.Add(newUnit);
@@ -1374,9 +1374,9 @@ public class GamesController : ControllerBase
         if (territoryState == null) return BadRequest("Territory state not initialized."); // Should not happen if StartGame worked
         if (territoryState.HasFactory) return BadRequest("Factory already exists.");
 
-        // 4b. Validate no foreign armies
-        bool hasForeignArmy = game.Units.Any(u => u.TerritoryId == territoryId && u.UnitType == UnitType.Army && u.Nation != nation);
-        if (hasForeignArmy) return BadRequest("Cannot build factory: foreign armies are present in the city.");
+        // 4b. Validate no hostile foreign armies
+        bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == territoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
+        if (hasHostileForeignArmy) return BadRequest("Cannot build factory: hostile foreign armies are present in the city.");
 
         // 5. Validate Cost (5M from Nation Treasury - per User Request "The nation pays 5 million into the bank")
         const int FactoryCost = 5;
@@ -1733,7 +1733,7 @@ public class GamesController : ControllerBase
                 Nation = game.CurrentTurnNation,
                 TerritoryId = unitReq.TerritoryId,
                 UnitType = unitReq.UnitType,
-                IsHostile = true, // Default to standing
+                IsHostile = false, // Default to standing (friendly)
                 HasMoved = false 
             };
             _context.Units.Add(newUnit);

@@ -17,13 +17,14 @@ public class ManeuverService
     }
 
 
-    public async Task<bool> MoveFleet(Guid gameId, Guid unitId, string destinationId, Imperial2030.Shared.Models.Nation? battleTarget = null)
+    public async Task<bool> MoveFleet(Guid gameId, Guid unitId, string destinationId, Imperial2030.Shared.Models.Nation? battleTarget = null, bool isHostile = true)
     {
         var request = new MoveUnitRequest 
         { 
             UnitId = unitId, 
             DestinationId = destinationId,
-            BattleTargetNation = battleTarget
+            BattleTargetNation = battleTarget,
+            IsHostile = isHostile
         };
         // var request = new { UnitId = unitId, DestinationId = destinationId }; // Replaced with typed request
         var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/move-fleet", request);
@@ -47,14 +48,15 @@ public class ManeuverService
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<bool> MoveArmy(Guid gameId, Guid unitId, string destinationId, List<Guid>? convoyFleetIds = null, Imperial2030.Shared.Models.Nation? battleTarget = null)
+    public async Task<bool> MoveArmy(Guid gameId, Guid unitId, string destinationId, List<Guid>? convoyFleetIds = null, Imperial2030.Shared.Models.Nation? battleTarget = null, bool isHostile = true)
     {
         var request = new MoveUnitRequest 
         { 
             UnitId = unitId, 
             DestinationId = destinationId,
             ConvoyFleetIds = convoyFleetIds,
-            BattleTargetNation = battleTarget
+            BattleTargetNation = battleTarget,
+            IsHostile = isHostile
         };
         var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/move-army", request);
         return response.IsSuccessStatusCode;

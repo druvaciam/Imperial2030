@@ -349,8 +349,8 @@ public class BotService
             var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
             if (ts != null && !ts.HasFactory)
             {
-                bool hasForeignArmy = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != nation);
-                if (!hasForeignArmy) return true;
+                bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
+                if (!hasHostileForeignArmy) return true;
             }
         }
         return false;
@@ -373,8 +373,8 @@ public class BotService
             var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
             if (ts != null && !ts.HasFactory)
             {
-                bool hasForeignArmy = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != ns.Nation);
-                if (!hasForeignArmy)
+                bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != ns.Nation && u.IsHostile);
+                if (!hasHostileForeignArmy)
                 {
                     ns.Treasury -= 5;
                     ts.HasFactory = true;
@@ -404,7 +404,7 @@ public class BotService
             if (unitType == UnitType.Army && currentArmies >= NationData.GetMaxArmies(nation)) continue;
             if (unitType == UnitType.Fleet && currentFleets >= NationData.GetMaxFleets(nation)) continue;
 
-            ctx.Units.Add(new Unit { GameId = game.Id, Nation = nation, TerritoryId = ts.TerritoryId, UnitType = unitType, IsHostile = true });
+            ctx.Units.Add(new Unit { GameId = game.Id, Nation = nation, TerritoryId = ts.TerritoryId, UnitType = unitType, IsHostile = false });
             if (unitType == UnitType.Army) currentArmies++;
             else currentFleets++;
             produced++;
@@ -602,7 +602,7 @@ public class BotService
             if (unitType == UnitType.Army && currentArmies >= NationData.GetMaxArmies(nation)) continue;
             if (unitType == UnitType.Fleet && currentFleets >= NationData.GetMaxFleets(nation)) continue;
 
-            ctx.Units.Add(new Unit { GameId = game.Id, Nation = nation, TerritoryId = t.Id, UnitType = unitType, IsHostile = true });
+            ctx.Units.Add(new Unit { GameId = game.Id, Nation = nation, TerritoryId = t.Id, UnitType = unitType, IsHostile = false });
             
             if (unitType == UnitType.Army) currentArmies++;
             if (unitType == UnitType.Fleet) currentFleets++;
