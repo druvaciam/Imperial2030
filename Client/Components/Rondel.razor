@@ -314,9 +314,21 @@
                 }
             }
 
+            int currentArmies = Game.Units.Count(u => u.Nation == CurrentTurnNation && u.UnitType == Imperial2030.Shared.Models.UnitType.Army);
+            int currentFleets = Game.Units.Count(u => u.Nation == CurrentTurnNation && u.UnitType == Imperial2030.Shared.Models.UnitType.Fleet);
+
+            int maxArmies = Imperial2030.Shared.Constants.NationData.GetMaxArmies(CurrentTurnNation);
+            int maxFleets = Imperial2030.Shared.Constants.NationData.GetMaxFleets(CurrentTurnNation);
+
+            int availableArmiesToProduce = Math.Max(0, maxArmies - currentArmies);
+            int availableFleetsToProduce = Math.Max(0, maxFleets - currentFleets);
+
+            int actualArmyProd = Math.Min(availableArmiesToProduce, Math.Max(0, armyProd - blockedArmies));
+            int actualFleetProd = Math.Min(availableFleetsToProduce, Math.Max(0, fleetProd - blockedFleets));
+
             string details = $"{baseMsg}\n";
-            details += $"\nArmies to Produce: {armyProd - blockedArmies} (Blocked: {blockedArmies})";
-            details += $"\nFleets to Produce: {fleetProd - blockedFleets} (Blocked: {blockedFleets})";
+            details += $"\nArmies to Produce: {actualArmyProd} (Max: {maxArmies}, Blocked: {blockedArmies})";
+            details += $"\nFleets to Produce: {actualFleetProd} (Max: {maxFleets}, Blocked: {blockedFleets})";
             return details;
         }
         else if (index == 3 || index == 7) // Maneuver

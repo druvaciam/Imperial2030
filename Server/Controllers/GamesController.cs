@@ -1180,6 +1180,9 @@ public class GamesController : ControllerBase
         var createdUnits = 0;
         var producedDetails = new List<string>();
 
+        int createdArmies = 0;
+        int createdFleets = 0;
+
         foreach (var tState in factoryTerritories)
         {
             var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tState.TerritoryId);
@@ -1197,8 +1200,8 @@ public class GamesController : ControllerBase
             int currentArmies = game.Units.Count(u => u.Nation == currentNation && u.UnitType == UnitType.Army);
             int currentFleets = game.Units.Count(u => u.Nation == currentNation && u.UnitType == UnitType.Fleet);
 
-            if (typeToProduce == UnitType.Army && currentArmies + createdUnits >= Imperial2030.Shared.Constants.NationData.GetMaxArmies(currentNation)) continue;
-            if (typeToProduce == UnitType.Fleet && currentFleets + createdUnits >= Imperial2030.Shared.Constants.NationData.GetMaxFleets(currentNation)) continue;
+            if (typeToProduce == UnitType.Army && currentArmies + createdArmies >= Imperial2030.Shared.Constants.NationData.GetMaxArmies(currentNation)) continue;
+            if (typeToProduce == UnitType.Fleet && currentFleets + createdFleets >= Imperial2030.Shared.Constants.NationData.GetMaxFleets(currentNation)) continue;
 
             var newUnit = new Unit
             {
@@ -1211,6 +1214,9 @@ public class GamesController : ControllerBase
             
             _context.Units.Add(newUnit);
             createdUnits++;
+            if (typeToProduce == UnitType.Army) createdArmies++;
+            else createdFleets++;
+
             producedDetails.Add($"{(typeToProduce == UnitType.Army ? "army" : "fleet")} in {def.Name}");
         }
 
