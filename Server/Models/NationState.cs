@@ -11,7 +11,7 @@ public class NationState
     public int Treasury { get; set; } = 0;
     public int Power { get; set; } = 0;
     public bool HasMovedThisTurn { get; set; } = false;
-    public int? RondelPosition { get; set; } = 0;
+    public int? RondelPosition { get; set; } = null;
     public bool HasBuiltThisTurn { get; set; } = false;
     public bool HasProducedThisTurn { get; set; } = false;
     public bool HasImportedThisTurn { get; set; } = false;

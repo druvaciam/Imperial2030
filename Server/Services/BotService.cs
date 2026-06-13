@@ -112,13 +112,13 @@ public class BotService
             triggeredInvestor = true;
         }
 
+        LogAction(ctx, game, $"moved to {GetSlotName(targetSlot)} (Cost: {cost}M)", "Move", nation, controller.BotName ?? "Bot");
+
         if (triggeredInvestor)
         {
             bool landedOn = (targetSlot == 4);
             Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, landedOn);
         }
-
-        LogAction(ctx, game, $"moved to {GetSlotName(targetSlot)} (Cost: {cost}M)", "Move", nation, controller.BotName ?? "Bot");
 
         // Init maneuver phase
         if (targetSlot == 3 || targetSlot == 7)
@@ -241,7 +241,7 @@ public class BotService
             1 => (factories < 4 && ns.Treasury >= 5) ? 25 : 0,       // Factory
             2 or 6 => EstimateProductionYield(game, ns.Nation) * 8,   // Production
             0 => EstimateTaxRevenue(game, ns.Nation) >= 6 ? 22 : EstimateTaxRevenue(game, ns.Nation) * 2, // Taxation
-            3 or 7 => HasExpandableTargets(game, ns.Nation) ? 15 : 5, // Maneuver
+            3 or 7 => HasExpandableTargets(game, ns.Nation, controller) ? 15 : 0, // Maneuver
             5 => (ns.Treasury >= 2 && units < 6) ? 10 : 0,           // Import
             4 => 3,                                                    // Investor
             _ => 0
@@ -293,24 +293,43 @@ public class BotService
         return Math.Min(23, rev);
     }
 
-    private bool HasExpandableTargets(Game game, Nation nation)
+    private bool HasExpandableTargets(Game game, Nation nation, Player controller)
     {
+        var friendlyNations = game.NationStates
+            .Where(ns => ns.ControllerId == controller.Id)
+            .Select(ns => ns.Nation)
+            .ToList();
+
         var myArmyTerritories = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Army).Select(u => u.TerritoryId).Distinct();
         foreach (var tid in myArmyTerritories)
         {
-            if (!MapConnectivity.Adjacency.TryGetValue(tid, out var neighbors)) continue;
-            foreach (var n in neighbors)
+            if (MapConnectivity.Adjacency.TryGetValue(tid, out var neighbors))
             {
-                var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
-                if (def == null || def.Type != TerritoryType.Land) continue;
-                var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == n);
-                if (ts == null || ts.Controller == null || ts.Controller != nation)
-                {
-                    bool hasEnemyArmy = game.Units.Any(u => u.TerritoryId == n && u.Nation != nation);
-                    if (!hasEnemyArmy) return true;
-                }
+                if (neighbors.Any(n => {
+                    var tDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
+                    if (tDef != null && tDef.Type == TerritoryType.Sea) return false;
+                    bool noEnemy = !game.Units.Any(u => u.TerritoryId == n && u.Nation != nation);
+                    var ts = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == n);
+                    bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
+                    return noEnemy && uncontrolled;
+                })) return true;
             }
         }
+        
+        var myFleetTerritories = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Fleet).Select(u => u.TerritoryId).Distinct();
+        foreach (var tid in myFleetTerritories)
+        {
+            if (MapConnectivity.Adjacency.TryGetValue(tid, out var neighbors))
+            {
+                if (neighbors.Any(n => {
+                    var tDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
+                    if (tDef != null && tDef.Type == TerritoryType.Land) return false;
+                    bool noEnemy = !game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
+                    return noEnemy;
+                })) return true;
+            }
+        }
+
         return false;
     }
 
@@ -383,11 +402,17 @@ public class BotService
             var target = seaNeighbors.FirstOrDefault(n => !game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation)));
             if (target != null)
             {
+                var originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == fleet.TerritoryId)?.Name ?? fleet.TerritoryId;
+                var targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target)?.Name ?? target;
+                LogAction(ctx, game, $"fleet moved to {targetName} from {originName}", "MoveFleet", nation, controller.BotName ?? "Bot");
+
                 fleet.TerritoryId = target;
                 fleet.HasMoved = true;
             }
         }
-
+        
+        await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
+        LogAction(ctx, game, "auto-ended Fleets maneuver phase", "NextPhase", nation, controller.BotName ?? "Bot");
         game.CurrentManeuverPhase = ManeuverPhase.Armies;
 
         // Move armies
@@ -419,21 +444,61 @@ public class BotService
 
             if (best != null)
             {
+                var originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == army.TerritoryId)?.Name ?? army.TerritoryId;
+                var targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best)?.Name ?? best;
+                LogAction(ctx, game, $"army moved to {targetName} from {originName}", "MoveArmy", nation, controller.BotName ?? "Bot");
+
                 army.TerritoryId = best;
                 army.HasMoved = true;
-
-                // Update territory control
-                var tsDest = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == best);
-                var destDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best);
-                if (tsDest != null && destDef != null && !destDef.Nation.HasValue && tsDest.Controller != nation)
-                {
-                    tsDest.Controller = nation;
-                }
             }
         }
 
+        await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
+        LogAction(ctx, game, "auto-ended Armies maneuver phase", "NextPhase", nation, controller.BotName ?? "Bot");
         game.CurrentManeuverPhase = ManeuverPhase.None;
-        LogAction(ctx, game, "completed maneuver", "Maneuver", nation, controller.BotName ?? "Bot");
+    }
+
+    private async Task BotUpdateTerritoryControl(ApplicationDbContext ctx, Game game, string botName)
+    {
+        var territoriesWithUnits = game.Units.Select(u => u.TerritoryId).Distinct().ToList();
+        
+        foreach (var tId in territoriesWithUnits)
+        {
+            var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tId).ToList();
+            if (!unitsInTerritory.Any()) continue;
+
+            var firstNation = unitsInTerritory.First().Nation;
+            if (unitsInTerritory.All(u => u.Nation == firstNation))
+            {
+                var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tId);
+                
+                if (territoryDef != null)
+                {
+                    var tState = await ctx.TerritoryStates
+                        .FirstOrDefaultAsync(ts => ts.GameId == game.Id && ts.TerritoryId == tId);
+
+                    if (tState == null)
+                    {
+                        tState = new TerritoryState { TerritoryId = tId, GameId = game.Id };
+                        ctx.TerritoryStates.Add(tState);
+                    }
+
+                    bool isHomeProvince = territoryDef.Nation.HasValue;
+
+                    if (!isHomeProvince && tState.Controller != firstNation)
+                    {
+                        var oldController = tState.Controller;
+                        tState.Controller = firstNation;
+
+                        string msg = oldController.HasValue 
+                            ? $"took control of {territoryDef.Name} from {oldController.Value}"
+                            : $"took control of {territoryDef.Name}";
+                        
+                        LogAction(ctx, game, msg, "FlagPlacement", firstNation, botName);
+                    }
+                }
+            }
+        }
     }
 
     private async Task BotTaxation(ApplicationDbContext ctx, Game game, NationState ns, Player controller)

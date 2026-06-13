@@ -757,88 +757,119 @@ public class GamesController : ControllerBase
 
     public static void HandleInvestorPhase(ApplicationDbContext context, Game game, NationState nationState, Player controller, bool isLandedOn)
     {
+        string GetPlayerName(Player p)
+        {
+            if (p == null) return "Unknown";
+            if (p.IsBot) return p.BotName ?? "Bot";
+            if (p.User != null) return p.User.UserName ?? "Player";
+            var user = context.Users.FirstOrDefault(u => u.Id == p.UserId);
+            return user?.UserName ?? "Player";
+        }
+
+        var controllerName = GetPlayerName(controller);
+
         // 1. Paying out interest (ONLY if landed on)
         if (isLandedOn)
         {
             var bonds = game.Bonds.Where(b => b.Nation == nationState.Nation && b.HolderId != null).ToList();
             
             int owedToController = 0;
-        int owedToOthers = 0;
+            int owedToOthers = 0;
 
-        foreach (var bond in bonds)
-        {
-            if (bond.HolderId == controller.Id)
-                owedToController += bond.Interest;
-            else
-                owedToOthers += bond.Interest;
-        }
-
-        // Pay Others First
-        if (nationState.Treasury >= owedToOthers)
-        {
-            nationState.Treasury -= owedToOthers;
-            // Distribute to others
-            foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+            foreach (var bond in bonds)
             {
-                var holder = game.Players.First(p => p.Id == bond.HolderId);
-                holder.Cash += bond.Interest;
-                context.Entry(holder).State = EntityState.Modified;
+                if (bond.HolderId == controller.Id)
+                    owedToController += bond.Interest;
+                else
+                    owedToOthers += bond.Interest;
             }
 
-            // Pay Controller
-            if (nationState.Treasury >= owedToController)
+            // Pay Others First
+            if (nationState.Treasury >= owedToOthers)
             {
-                nationState.Treasury -= owedToController;
-                controller.Cash += owedToController;
-            }
-            else
-            {
-                // Partial payment to controller
-                controller.Cash += nationState.Treasury;
-                nationState.Treasury = 0;
-            }
-        }
-        else
-        {
-            // Treasury insufficient for others
-            int treasuryAmount = nationState.Treasury;
-            nationState.Treasury = 0;
-            
-            // Calculate how much the controller can actually cover
-            int deficit = owedToOthers - treasuryAmount;
-            int paymentFromController = Math.Min(controller.Cash, deficit); // Cap at available cash
-            
-            controller.Cash -= paymentFromController;
-            // Controller gets 0 interest.
-            
-            // Total funds available for others
-            int totalForOthers = treasuryAmount + paymentFromController;
-            
-            // Distribute to others
-            if (totalForOthers >= owedToOthers)
-            {
-                // Full payment possible
+                nationState.Treasury -= owedToOthers;
+                // Distribute to others
                 foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
                 {
                     var holder = game.Players.First(p => p.Id == bond.HolderId);
                     holder.Cash += bond.Interest;
                     context.Entry(holder).State = EntityState.Modified;
+                    var holderName = GetPlayerName(holder);
+                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
+                }
+
+                // Pay Controller
+                if (nationState.Treasury >= owedToController && owedToController > 0)
+                {
+                    nationState.Treasury -= owedToController;
+                    controller.Cash += owedToController;
+                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {owedToController}M interest to {controllerName}" });
+                }
+                else if (nationState.Treasury > 0 && owedToController > 0)
+                {
+                    // Partial payment to controller
+                    controller.Cash += nationState.Treasury;
+                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {nationState.Treasury}M interest to {controllerName}" });
+                    nationState.Treasury = 0;
+                }
+                else if (owedToController > 0)
+                {
+                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay interest to {controllerName} (treasury empty)" });
                 }
             }
             else
             {
-                // Partial payment (Pro-rata)
-                 double ratio = (double)totalForOthers / owedToOthers;
-                 foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
-                 {
-                     var holder = game.Players.First(p => p.Id == bond.HolderId);
-                     int payout = (int)(bond.Interest * ratio);
-                     holder.Cash += payout;
-                     context.Entry(holder).State = EntityState.Modified;
-                 }
+                // Treasury insufficient for others
+                int treasuryAmount = nationState.Treasury;
+                nationState.Treasury = 0;
+                
+                // Calculate how much the controller can actually cover
+                int deficit = owedToOthers - treasuryAmount;
+                int paymentFromController = Math.Min(controller.Cash, deficit); // Cap at available cash
+                
+                controller.Cash -= paymentFromController;
+                if (paymentFromController > 0)
+                {
+                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"personally contributed {paymentFromController}M to cover interest deficit" });
+                }
+                
+                // Total funds available for others
+                int totalForOthers = treasuryAmount + paymentFromController;
+                
+                // Distribute to others
+                if (totalForOthers >= owedToOthers)
+                {
+                    // Full payment possible
+                    foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+                    {
+                        var holder = game.Players.First(p => p.Id == bond.HolderId);
+                        holder.Cash += bond.Interest;
+                        context.Entry(holder).State = EntityState.Modified;
+                        var holderName = GetPlayerName(holder);
+                        context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
+                    }
+                }
+                else
+                {
+                    // Partial payment (Pro-rata)
+                     double ratio = (double)totalForOthers / owedToOthers;
+                     foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+                     {
+                         var holder = game.Players.First(p => p.Id == bond.HolderId);
+                         int payout = (int)(bond.Interest * ratio);
+                         holder.Cash += payout;
+                         context.Entry(holder).State = EntityState.Modified;
+                         var holderName = GetPlayerName(holder);
+                         context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {payout}M interest to {holderName}" });
+                     }
+                }
+
+                if (owedToController > 0)
+                {
+                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay interest to {controllerName} (treasury empty)" });
+                }
             }
         }
-    }
         
         // 2. Activating the Investor
         // 2M Bonus
@@ -849,6 +880,8 @@ public class GamesController : ControllerBase
              {
                  investor.Cash += 2;
                  context.Entry(investor).State = EntityState.Modified;
+                 var investorName = GetPlayerName(investor);
+                 context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = investorName, ActionType = "InvestorBonus", Message = "received 2M Investor bonus" });
                  
                  // Enable Investor Turn
                  game.IsInvestorTurn = true;
