@@ -221,6 +221,14 @@ public class BotService
 
         if (!candidates.Any()) return bestSlot;
 
+        // Deduplicate identical actions (Production: 2/6, Maneuver: 3/7)
+        // by keeping only the highest scoring one so the bot doesn't randomly pay more for the same action.
+        int GetActionGroup(int s) => s switch { 2 or 6 => 2, 3 or 7 => 3, _ => s };
+        candidates = candidates
+            .GroupBy(c => GetActionGroup(c.Slot))
+            .Select(g => g.OrderByDescending(c => c.Score).First())
+            .ToList();
+
         double totalScore = candidates.Sum(c => c.Score);
         double roll = Random.Shared.NextDouble() * totalScore;
         
