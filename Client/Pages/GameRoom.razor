@@ -400,7 +400,7 @@ else
                  }
                  @if (game.Status == GameStatus.Lobby)
                  {
-                     <button class="btn btn-danger" @onclick="ExitGame">Leave Game</button>
+                     <button class="btn btn-danger" @onclick="ExitGame" disabled="@isSubmitting">Leave Game</button>
                  }
                  else
                  {
@@ -1511,14 +1511,24 @@ else
 
     private async Task ExitGame()
     {
-        var response = await Http.PostAsync($"api/games/{GameId}/leave", null);
-        if (response.IsSuccessStatusCode)
+        if (isSubmitting) return;
+        isSubmitting = true;
+        try
         {
-            Navigation.NavigateTo("/");
+            var response = await Http.PostAsync($"api/games/{GameId}/leave", null);
+            if (response.IsSuccessStatusCode)
+            {
+                Navigation.NavigateTo("/");
+            }
+            else
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                await ShowToast($"Failed to leave game: {errorBody}", true);
+            }
         }
-        else
+        finally
         {
-            await ShowToast("Failed to leave game", true);
+            isSubmitting = false;
         }
     }
 

@@ -187,27 +187,16 @@ public class GamesController : ControllerBase
         // Must save these changes before removing player? 
         // Or EF can figure it out in one transaction if we nullify first.
         
+        // Remove player from the DB context
         _context.Players.Remove(player);
+        // Also remove from the in-memory collection so .Any() evaluates correctly
+        game.Players.Remove(player);
 
-        // If the player was the host, assign a new host if there are other players
-        if (player.IsHost)
-        {
-            var newHost = game.Players.FirstOrDefault(p => p.UserId != userId);
-            if (newHost != null)
-            {
-                newHost.IsHost = true;
-                _context.Entry(newHost).State = EntityState.Modified;
-            }
-        }
+        bool hasHumanPlayers = game.Players.Any(p => !p.IsBot);
 
-        LogAction(game, $"{User.Identity?.Name} left the game", "LeaveGame");
-        await _context.SaveChangesAsync();
-
-        if (!game.Players.Any() && game.Status != GameStatus.Finished)
+        if (!hasHumanPlayers && game.Status != GameStatus.Finished)
         {
             var fullGame = await _context.Games
-                .Include(g => g.Bonds)
-                .Include(g => g.NationStates)
                 .Include(g => g.TerritoryStates)
                 .Include(g => g.Units)
                 .AsSplitQuery()
@@ -216,13 +205,30 @@ public class GamesController : ControllerBase
             if (fullGame != null)
             {
                 await _context.GameActions.Where(a => a.GameId == gameId).ExecuteDeleteAsync();
-                _context.Bonds.RemoveRange(fullGame.Bonds);
-                _context.NationStates.RemoveRange(fullGame.NationStates);
+                _context.Bonds.RemoveRange(game.Bonds);
+                _context.NationStates.RemoveRange(game.NationStates);
                 _context.TerritoryStates.RemoveRange(fullGame.TerritoryStates);
                 _context.Units.RemoveRange(fullGame.Units);
+                _context.Players.RemoveRange(game.Players);
                 _context.Games.Remove(fullGame);
                 await _context.SaveChangesAsync();
             }
+        }
+        else
+        {
+            // If the player was the host, assign a new host if there are other players
+            if (player.IsHost)
+            {
+                var newHost = game.Players.FirstOrDefault(p => !p.IsBot) ?? game.Players.FirstOrDefault();
+                if (newHost != null)
+                {
+                    newHost.IsHost = true;
+                    _context.Entry(newHost).State = EntityState.Modified;
+                }
+            }
+
+            LogAction(game, $"{User.Identity?.Name} left the game", "LeaveGame");
+            await _context.SaveChangesAsync();
         }
         
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
