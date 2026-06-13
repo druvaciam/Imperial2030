@@ -1368,6 +1368,10 @@ public class GamesController : ControllerBase
         if (territoryState == null) return BadRequest("Territory state not initialized."); // Should not happen if StartGame worked
         if (territoryState.HasFactory) return BadRequest("Factory already exists.");
 
+        // 4b. Validate no foreign armies
+        bool hasForeignArmy = game.Units.Any(u => u.TerritoryId == territoryId && u.UnitType == UnitType.Army && u.Nation != nation);
+        if (hasForeignArmy) return BadRequest("Cannot build factory: foreign armies are present in the city.");
+
         // 5. Validate Cost (5M from Nation Treasury - per User Request "The nation pays 5 million into the bank")
         const int FactoryCost = 5;
         if (nationState.Treasury < FactoryCost) return BadRequest($"Nation treasury insufficient. Need {FactoryCost}M.");

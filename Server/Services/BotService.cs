@@ -246,7 +246,7 @@ public class BotService
     {
         return slot switch
         {
-            1 => (factories < 4 && ns.Treasury >= 5) ? 25 : 0,       // Factory
+            1 => (ns.Treasury >= 5 && CanBuildFactory(game, ns.Nation)) ? 25 : 0,       // Factory
             2 or 6 => EstimateProductionYield(game, ns.Nation) * 8,   // Production
             0 => EstimateTaxRevenue(game, ns.Nation) >= 6 ? 22 : EstimateTaxRevenue(game, ns.Nation) * 2, // Taxation
             3 or 7 => HasExpandableTargets(game, ns.Nation, controller) ? 15 : 0, // Maneuver
@@ -341,6 +341,21 @@ public class BotService
         return false;
     }
 
+    private bool CanBuildFactory(Game game, Nation nation)
+    {
+        var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == nation && t.CityType != CityType.None);
+        foreach (var city in homeCities)
+        {
+            var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
+            if (ts != null && !ts.HasFactory)
+            {
+                bool hasForeignArmy = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != nation);
+                if (!hasForeignArmy) return true;
+            }
+        }
+        return false;
+    }
+
     private int CountFactories(Game game, Nation nation)
     {
         return game.TerritoryStates.Count(ts => ts.HasFactory &&
@@ -358,11 +373,15 @@ public class BotService
             var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
             if (ts != null && !ts.HasFactory)
             {
-                ns.Treasury -= 5;
-                ts.HasFactory = true;
-                ns.HasBuiltThisTurn = true;
-                LogAction(ctx, game, $"built a factory in {city.Name}", "Factory", ns.Nation, controller.BotName ?? "Bot");
-                return;
+                bool hasForeignArmy = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != ns.Nation);
+                if (!hasForeignArmy)
+                {
+                    ns.Treasury -= 5;
+                    ts.HasFactory = true;
+                    ns.HasBuiltThisTurn = true;
+                    LogAction(ctx, game, $"built a factory in {city.Name}", "Factory", ns.Nation, controller.BotName ?? "Bot");
+                    return;
+                }
             }
         }
     }
