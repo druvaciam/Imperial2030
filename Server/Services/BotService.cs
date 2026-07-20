@@ -11,6 +11,7 @@ public class BotService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
+    public bool SkipDelays { get; set; } = false;
 
     public BotService(IServiceScopeFactory scopeFactory, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext)
     {
@@ -35,7 +36,7 @@ public class BotService
                 await BotInvestorAction(ctx, game, actor);
                 await ctx.SaveChangesAsync();
                 await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                await Task.Delay(1500);
+                if (!SkipDelays) await Task.Delay(1500);
                 game = await LoadGame(ctx, gameId);
                 if (game == null) return;
             }
@@ -128,7 +129,7 @@ public class BotService
 
         await ctx.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-        await Task.Delay(1200);
+        if (!SkipDelays) await Task.Delay(1200);
 
         // Step 2: Execute slot action
         game = await LoadGame(ctx, gameId);
@@ -154,7 +155,7 @@ public class BotService
         // If not taxation (which auto-advances), end turn
         if (targetSlot != 0 && game.Status == GameStatus.InProgress)
         {
-            await Task.Delay(1000);
+            if (!SkipDelays) await Task.Delay(1000);
             game = await LoadGame(ctx, gameId);
             if (game == null) return;
             nationState = game.NationStates.First(ns => ns.Nation == nation);
@@ -173,8 +174,11 @@ public class BotService
         }
 
         // Check if next turn is also a bot
-        await Task.Delay(800);
-        await TryPlayBotTurnAsync(gameId);
+        if (!SkipDelays) 
+        {
+            await Task.Delay(800);
+            await TryPlayBotTurnAsync(gameId);
+        }
     }
 
     private int ChooseRondelSlot(Game game, NationState ns, Player controller)
@@ -248,7 +252,7 @@ public class BotService
         {
             1 => (ns.Treasury >= 5 && CanBuildFactory(game, ns.Nation)) ? 25 : 0,       // Factory
             2 or 6 => EstimateProductionYield(game, ns.Nation) * 8,   // Production
-            0 => EstimateTaxRevenue(game, ns.Nation) >= 6 ? 22 : EstimateTaxRevenue(game, ns.Nation) * 2, // Taxation
+            0 => EstimateTaxRevenue(game, ns.Nation) >= 6 ? 22 : 18, // Taxation
             3 or 7 => HasExpandableTargets(game, ns.Nation, controller) ? 15 : 0, // Maneuver
             5 => (ns.Treasury >= 2 && units < 6) ? 10 : 0,           // Import
             4 => 3,                                                    // Investor
@@ -429,7 +433,8 @@ public class BotService
             var target = seaNeighbors.OrderByDescending(n => {
                 int score = Random.Shared.Next(0, 10);
                 bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
-                if (hasEnemy) score += 100;
+                if (hasEnemy) score += 20; // Reduced from 100
+                else score += 50; // Prefer empty sea zones
                 return score;
             }).FirstOrDefault();
 
@@ -505,11 +510,11 @@ public class BotService
                 .OrderByDescending(n => {
                     int score = Random.Shared.Next(0, 10);
                     bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
-                    if (hasEnemy) score += 100;
+                    if (hasEnemy) score += 10; // Reduced from 100
 
                     var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == n);
                     bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
-                    if (uncontrolled && !hasEnemy) score += 50;
+                    if (uncontrolled && !hasEnemy) score += 100; // Increased from 50
 
                     var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
                     bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
@@ -767,8 +772,11 @@ public class BotService
 
         await ctx.SaveChangesAsync();
         await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
-        await Task.Delay(1000);
-        await TryPlayBotTurnAsync(game.Id);
+        if (!SkipDelays) 
+        {
+            await Task.Delay(1000);
+            await TryPlayBotTurnAsync(game.Id);
+        }
     }
 
     // --- Helpers ---

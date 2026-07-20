@@ -12,8 +12,10 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
+using Imperial2030.Server.Services;
 
 using Xunit.Abstractions;
 
@@ -45,7 +47,16 @@ namespace Imperial2030.Tests
             mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
             mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
 
-            var controller = new ManeuverController(context, mockHub.Object);
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            var mockServiceProvider = new Mock<IServiceProvider>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() => {
+                var scope = new Mock<IServiceScope>();
+                scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                return scope.Object;
+            });
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object);
+
+            var controller = new ManeuverController(context, mockHub.Object, botService);
             
             var httpContext = new DefaultHttpContext();
             var claims = new List<Claim> 
