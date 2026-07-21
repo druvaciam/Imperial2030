@@ -194,5 +194,73 @@ namespace Imperial2030.Tests
                 Assert.Equal(4, nationState.Treasury);
             }
         }
+
+        [Fact]
+        public async Task SwissBank_PlayerWithoutNations_CanInvestAndGainControl()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var gameId = Guid.NewGuid();
+                var p1UserId = "p1-user";
+                var p2UserId = "p2-user";
+                var p1Id = Guid.NewGuid();
+                var p2Id = Guid.NewGuid();
+
+                var game = new Game
+                {
+                    Id = gameId,
+                    CurrentTurnNation = Nation.Russia,
+                    Status = GameStatus.InProgress,
+                    InvestorCardHolderId = p1Id // P1 holds the investor card
+                };
+
+                // P1 controls Russia
+                var p1 = new Player { Id = p1Id, GameId = gameId, UserId = p1UserId, Cash = 10 };
+                // P2 has NO nations, and is therefore a Swiss Bank player
+                var p2 = new Player { Id = p2Id, GameId = gameId, UserId = p2UserId, Cash = 20 };
+
+                var nsRussia = new NationState 
+                { 
+                    Nation = Nation.Russia, 
+                    ControllerId = p1Id, 
+                    GameId = gameId,
+                    RondelPosition = 3 // Suppose moving to Investor (4)
+                };
+                
+                var bond9M = new Bond { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, Cost = 9, Interest = 3, HolderId = null }; // Available in bank
+                var bond2M = new Bond { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, Cost = 2, Interest = 1, HolderId = p1Id }; // P1 owns 2M
+
+                context.Games.Add(game);
+                context.Players.AddRange(p1, p2);
+                context.NationStates.Add(nsRussia);
+                context.Bonds.AddRange(bond9M, bond2M);
+                await context.SaveChangesAsync();
+
+                var controllerP1 = GetController(context, p1UserId);
+                
+                // Act 1: P1 (Russia) moves to Investor slot
+                await controllerP1.MoveNation(gameId, Nation.Russia, 4);
+
+                // Assert 1: After landing on Investor, P2 (Swiss Bank) should get the chance to invest BEFORE P1
+                var updatedGame = await context.Games.FirstAsync(g => g.Id == gameId);
+                Assert.True(updatedGame.IsInvestorTurn);
+                // Assert that P2 is the acting player because Swiss Bank players go first
+                Assert.Equal(p2Id, updatedGame.ActingPlayerId);
+
+                // Act 2: P2 invests 9M into Russia
+                var controllerP2 = GetController(context, p2UserId);
+                var investRequest = new GamesController.InvestmentActionDto { ActionType = "Buy", BondId = bond9M.Id };
+                await controllerP2.PerformInvestment(gameId, investRequest);
+
+                // Assert 2: P2 should now control Russia
+                var updatedNsRussia = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
+                Assert.Equal(p2Id, updatedNsRussia.ControllerId);
+
+                // Act 3: After P2 invests, the Investor card holder (P1) should get their turn
+                updatedGame = await context.Games.FirstAsync(g => g.Id == gameId);
+                Assert.Equal(p1Id, updatedGame.ActingPlayerId);
+            }
+        }
     }
 }

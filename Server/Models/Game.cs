@@ -28,6 +28,7 @@ public class Game
     public Guid? InvestorCardHolderId { get; set; }
     public bool IsInvestorTurn { get; set; } = false;
     public Guid? ActingPlayerId { get; set; } // If set, this player must take action (e.g. Investor) instead of CurrentTurnNation controller
+    public List<Guid> PendingInvestorIds { get; set; } = new List<Guid>(); // Queue for Swiss Bank and Investor card holders
 
     public ManeuverPhase CurrentManeuverPhase { get; set; } = ManeuverPhase.None;
 

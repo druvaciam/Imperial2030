@@ -882,11 +882,32 @@ public class GamesController : ControllerBase
                  context.Entry(investor).State = EntityState.Modified;
                  var investorName = GetPlayerName(investor);
                  context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = investorName, ActionType = "InvestorBonus", Message = "received 2M Investor bonus" });
-                 
-                 // Enable Investor Turn
-                 game.IsInvestorTurn = true;
-                 game.ActingPlayerId = investor.Id;
              }
+        }
+
+        // Determine investment order: Swiss Bank players first, then Investor Card Holder
+        var eligibleInvestors = new List<Guid>();
+
+        // Swiss Bank players = players who control 0 nations
+        var controlledNations = game.NationStates.Where(ns => ns.ControllerId != Guid.Empty).Select(ns => ns.ControllerId).Distinct().ToList();
+        var swissBankPlayers = game.Players
+            .Where(p => !controlledNations.Contains(p.Id))
+            .OrderBy(p => p.Id)
+            .Select(p => p.Id)
+            .ToList();
+
+        eligibleInvestors.AddRange(swissBankPlayers);
+
+        if (game.InvestorCardHolderId.HasValue && !eligibleInvestors.Contains(game.InvestorCardHolderId.Value))
+        {
+            eligibleInvestors.Add(game.InvestorCardHolderId.Value);
+        }
+
+        if (eligibleInvestors.Any())
+        {
+            game.IsInvestorTurn = true;
+            game.ActingPlayerId = eligibleInvestors.First();
+            game.PendingInvestorIds = eligibleInvestors.Skip(1).ToList();
         }
     }
 
@@ -1304,15 +1325,24 @@ public class GamesController : ControllerBase
              LogAction(game, "passed on investment", "Investment");
         }
         
-        // Pass Investor Card
-        if (game.InvestorCardHolderId.HasValue)
+        // Advance queue
+        if (game.PendingInvestorIds != null && game.PendingInvestorIds.Any())
         {
-            game.InvestorCardHolderId = GetNextPlayerId(game, game.InvestorCardHolderId.Value);
+            game.ActingPlayerId = game.PendingInvestorIds.First();
+            game.PendingInvestorIds.RemoveAt(0);
         }
+        else
+        {
+            // Pass Investor Card
+            if (game.InvestorCardHolderId.HasValue)
+            {
+                game.InvestorCardHolderId = GetNextPlayerId(game, game.InvestorCardHolderId.Value);
+            }
 
-        // End Investor Turn
-        game.IsInvestorTurn = false;
-        game.ActingPlayerId = null;
+            // End Investor Turn
+            game.IsInvestorTurn = false;
+            game.ActingPlayerId = null;
+        }
         
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
