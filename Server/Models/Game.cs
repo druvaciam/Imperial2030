@@ -47,4 +47,24 @@ public class Game
     public virtual ICollection<TerritoryState> TerritoryStates { get; set; } = new List<TerritoryState>();
     public virtual ICollection<Unit> Units { get; set; } = new List<Unit>();
     public virtual ICollection<GameAction> Actions { get; set; } = new List<GameAction>();
+
+    public void AdvanceTurn()
+    {
+        var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
+        int currentIndex = nations.IndexOf(this.CurrentTurnNation);
+        
+        for (int i = 1; i <= nations.Count; i++)
+        {
+            int nextIndex = (currentIndex + i) % nations.Count;
+            var nextNation = nations[nextIndex];
+            var ns = this.NationStates.FirstOrDefault(n => n.Nation == nextNation);
+            
+            // Skip nations with no controller
+            if (ns != null && ns.ControllerId.HasValue)
+            {
+                this.CurrentTurnNation = nextNation;
+                break;
+            }
+        }
+    }
 }

@@ -161,9 +161,7 @@ public class BotService
             nationState = game.NationStates.First(ns => ns.Nation == nation);
 
             // Advance turn
-            var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
-            int idx = nations.IndexOf(nation);
-            game.CurrentTurnNation = nations[(idx + 1) % nations.Count];
+            game.AdvanceTurn();
             nationState.HasBuiltThisTurn = false;
             nationState.HasMovedThisTurn = false;
             nationState.HasImportedThisTurn = false;
@@ -671,9 +669,7 @@ public class BotService
         }
 
         // Taxation auto-advances turn
-        var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
-        int idx = nations.IndexOf(nation);
-        game.CurrentTurnNation = nations[(idx + 1) % nations.Count];
+        game.AdvanceTurn();
         ns.HasBuiltThisTurn = false;
         ns.HasMovedThisTurn = false;
         ns.HasImportedThisTurn = false;

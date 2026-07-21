@@ -686,7 +686,7 @@ public class GamesController : ControllerBase
 
 
             // PHASE 4: Update Game Status and Player Cash
-            var gameToUpdate = await _context.Games.FirstOrDefaultAsync(g => g.Id == gameId);
+            var gameToUpdate = await _context.Games.Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == gameId);
             var playersToUpdate = await _context.Players.Where(p => p.GameId == gameId).ToListAsync();
             // Count allocated packages per player to deduct cost
             // Cost per package is 11M (9M + 2M)
@@ -694,6 +694,13 @@ public class GamesController : ControllerBase
             if (gameToUpdate != null)
             {
                 gameToUpdate.Status = GameStatus.InProgress;
+                
+                var firstNs = gameToUpdate.NationStates.FirstOrDefault(ns => ns.Nation == gameToUpdate.CurrentTurnNation);
+                if (firstNs == null || !firstNs.ControllerId.HasValue)
+                {
+                    AdvanceTurn(gameToUpdate);
+                }
+
                 _context.Entry(gameToUpdate).State = EntityState.Modified;
             }
 
@@ -889,7 +896,7 @@ public class GamesController : ControllerBase
         var eligibleInvestors = new List<Guid>();
 
         // Swiss Bank players = players who control 0 nations
-        var controlledNations = game.NationStates.Where(ns => ns.ControllerId != Guid.Empty).Select(ns => ns.ControllerId).Distinct().ToList();
+        var controlledNations = game.NationStates.Where(ns => ns.ControllerId.HasValue).Select(ns => ns.ControllerId).Distinct().ToList();
         var swissBankPlayers = game.Players
             .Where(p => !controlledNations.Contains(p.Id))
             .OrderBy(p => p.Id)
@@ -1436,22 +1443,7 @@ public class GamesController : ControllerBase
 
     private void AdvanceTurn(Game game)
     {
-        var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
-        int currentIndex = nations.IndexOf(game.CurrentTurnNation);
-        
-        for (int i = 1; i <= nations.Count; i++)
-        {
-            int nextIndex = (currentIndex + i) % nations.Count;
-            var nextNation = nations[nextIndex];
-            var ns = game.NationStates.FirstOrDefault(n => n.Nation == nextNation);
-            
-            // Skip nations with no controller
-            if (ns != null && ns.ControllerId != Guid.Empty)
-            {
-                game.CurrentTurnNation = nextNation;
-                break;
-            }
-        }
+        game.AdvanceTurn();
     }
 
     [HttpPost("{gameId}/end-turn")]
