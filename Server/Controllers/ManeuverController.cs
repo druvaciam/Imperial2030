@@ -355,10 +355,12 @@ public class ManeuverController : ControllerBase
                         if (!s.HasFactory) return false;
                         var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
                         if (t == null || t.Nation != defenderNation) return false;
-                        bool isOccupied = game.Units.Any(u => u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
+                        bool isOccupied = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
                         return !isOccupied;
                     });
-                    bool isTargetOccupied = game.Units.Any(u => u.TerritoryId == request.DestinationId && u.Nation != defenderNation && u.IsHostile);
+                    
+                    bool isTargetOccupied = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == request.DestinationId && u.Nation != defenderNation && u.IsHostile);
+                    
                     if (defenderFactoryCount <= 1 && !isTargetOccupied)
                     {
                         return BadRequest("Cannot enter the last unoccupied factory of a nation hostilely. Must enter peacefully.");
