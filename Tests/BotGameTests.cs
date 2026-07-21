@@ -48,7 +48,7 @@ namespace Imperial2030.Tests
         {
             string dbName = Guid.NewGuid().ToString();
             var context = GetDbContext(dbName);
-            
+
             var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
             var mockClients = new Mock<IHubClients>();
             var mockClientProxy = new Mock<IClientProxy>();
@@ -58,14 +58,15 @@ namespace Imperial2030.Tests
             mockClients.Setup(c => c.All).Returns(mockClientProxy.Object);
 
             var mockScopeFactory = new Mock<IServiceScopeFactory>();
-            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() => {
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
                 var scope = new Mock<IServiceScope>();
                 var mockServiceProvider = new Mock<IServiceProvider>();
-                
+
                 // Return a new context instance with the same dbName
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
-                
+
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
@@ -80,7 +81,7 @@ namespace Imperial2030.Tests
             var mockPresenceTracker = new Mock<PresenceTracker>();
 
             var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService);
-            
+
             var userId = "host-user-id";
             var httpContext = new DefaultHttpContext();
             var claims = new List<Claim> { new Claim(ClaimTypes.NameIdentifier, userId) };
@@ -114,16 +115,16 @@ namespace Imperial2030.Tests
 
             // 3. Start Game
             await gamesController.StartGame(gameId);
-            
+
             // Make everyone a bot so the game can play itself
             var allPlayers = context.Players.Where(p => p.GameId == gameId).ToList();
-            foreach(var p in allPlayers) p.IsBot = true;
+            foreach (var p in allPlayers) p.IsBot = true;
             await context.SaveChangesAsync();
 
             // 4. Play game
             int maxTurns = 5000;
             int turns = 0;
-            
+
             while (turns < maxTurns)
             {
                 var game = context.Games.AsNoTracking().Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
@@ -135,20 +136,20 @@ namespace Imperial2030.Tests
                     break;
                 }
 
-                if (turns % 100 == 0) 
+                if (turns % 100 == 0)
                 {
                     var maxPower = game.NationStates.Max(ns => ns.Power);
                     var currentNation = game.CurrentTurnNation;
                     var currentNs = game.NationStates.FirstOrDefault(n => n.Nation == currentNation);
                     var controllerId = currentNs?.ControllerId;
                     var ctrlPlayer = context.Players.AsNoTracking().FirstOrDefault(p => p.Id == controllerId);
-                    
+
                     _output.WriteLine($"Turn {turns}, Max Power: {maxPower}, Current Nation: {currentNation}, Controller: {controllerId}, IsBot: {ctrlPlayer?.IsBot}, IsInvestor: {game.IsInvestorTurn}");
                 }
 
                 // Call bot service
                 await botService.TryPlayBotTurnAsync(gameId);
-                
+
                 turns++;
             }
 
@@ -156,6 +157,136 @@ namespace Imperial2030.Tests
             var finalGame = context.Games.AsNoTracking().FirstOrDefault(g => g.Id == gameId);
             Assert.NotNull(finalGame);
             Assert.Equal(GameStatus.Finished, finalGame.Status);
+        }
+
+        [Fact]
+        public async Task TestBotPlaysUntilSwissBankWins()
+        {
+            var stopWatch = System.Diagnostics.Stopwatch.StartNew();
+            bool foundScenario = false;
+            int gameCount = 0;
+
+            while (stopWatch.Elapsed.TotalSeconds < 120)
+            {
+                gameCount++;
+                var dbName = Guid.NewGuid().ToString();
+                using var context = GetDbContext(dbName);
+
+                var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+                var mockClients = new Mock<IHubClients>();
+                var mockClientProxy = new Mock<IClientProxy>();
+                mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+                mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+                mockClients.Setup(c => c.All).Returns(mockClientProxy.Object);
+
+                var mockScopeFactory = new Mock<IServiceScopeFactory>();
+                mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+                {
+                    var scope = new Mock<IServiceScope>();
+                    var mockServiceProvider = new Mock<IServiceProvider>();
+                    var scopeContext = GetDbContext(dbName);
+                    mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                    scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                    return scope.Object;
+                });
+
+                var botService = new BotService(mockScopeFactory.Object, mockHub.Object);
+                botService.SkipDelays = true;
+
+                var store = new Mock<IUserStore<ApplicationUser>>();
+                var mockUserManager = new Mock<UserManager<ApplicationUser>>(store.Object, null, null, null, null, null, null, null, null);
+                var mockPresenceTracker = new Mock<PresenceTracker>();
+
+                var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService);
+
+                var userId = "host-user-id";
+                var httpContext = new DefaultHttpContext();
+                var claims = new List<Claim> { new Claim(ClaimTypes.NameIdentifier, userId) };
+                var identity = new ClaimsIdentity(claims, "TestAuthType");
+                httpContext.User = new ClaimsPrincipal(identity);
+
+                gamesController.ControllerContext = new ControllerContext(new ActionContext(httpContext, new Microsoft.AspNetCore.Routing.RouteData(), new Microsoft.AspNetCore.Mvc.Controllers.ControllerActionDescriptor()));
+
+                // 1. Create 6-player game
+                var createReq = new CreateGameRequest { Name = "BotGameSwiss", MaxPlayers = 6, IsPrivate = false };
+                var createRes = await gamesController.CreateGame(createReq);
+                var gameId = Assert.IsType<GameDto>(Assert.IsType<CreatedAtActionResult>(createRes.Result).Value).Id;
+
+                // 2. Add 5 bots
+                for (int i = 0; i < 5; i++)
+                {
+                    await gamesController.AddBot(gameId);
+                }
+
+                // 3. Make host a bot too
+                var host = context.Players.First(p => p.GameId == gameId && p.UserId == userId);
+                host.IsBot = true;
+                host.BotName = "HostBot";
+                await context.SaveChangesAsync();
+
+                // 4. Start Game
+                await gamesController.StartGame(gameId);
+
+                var players = context.Players.Where(p => p.GameId == gameId).ToList();
+                var observedSwissBanks = new HashSet<Guid>();
+
+                // 5. Play game
+                int maxTurns = 5000;
+                int turns = 0;
+
+                while (turns < maxTurns)
+                {
+                    var game = context.Games.AsNoTracking().Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
+                    if (game == null || game.Status == GameStatus.Finished) break;
+
+                    // Check for Swiss Banks
+                    var controlledNationsByPlayer = game.NationStates.Select(ns => ns.ControllerId).Where(id => id.HasValue).Select(id => id.Value).Distinct().ToList();
+                    foreach (var p in players)
+                    {
+                        if (!controlledNationsByPlayer.Contains(p.Id))
+                        {
+                            observedSwissBanks.Add(p.Id);
+                        }
+                    }
+
+                    await botService.TryPlayBotTurnAsync(gameId);
+                    turns++;
+                }
+
+                var finalGame = context.Games.AsNoTracking().FirstOrDefault(g => g.Id == gameId);
+                if (finalGame?.Status == GameStatus.Finished)
+                {
+                    // Calculate scores
+                    var bonds = context.Bonds.Where(b => b.GameId == gameId && b.HolderId != null).ToList();
+                    var nations = context.NationStates.Where(n => n.GameId == gameId).ToList();
+
+                    var scores = new Dictionary<Guid, int>();
+                    foreach (var p in players)
+                    {
+                        // Refresh player cash
+                        var finalPlayer = context.Players.AsNoTracking().First(x => x.Id == p.Id);
+                        int score = finalPlayer.Cash;
+                        var playerBonds = bonds.Where(b => b.HolderId == p.Id).ToList();
+                        foreach (var b in playerBonds)
+                        {
+                            var nation = nations.First(n => n.Nation == b.Nation);
+                            int multiplier = nation.Power / 5;
+                            score += b.Cost * multiplier;
+                        }
+                        scores[p.Id] = score;
+                    }
+
+                    var winnerId = scores.OrderByDescending(kvp => kvp.Value).First().Key;
+                    if (observedSwissBanks.Contains(winnerId))
+                    {
+                        foundScenario = true;
+                        _output.WriteLine($"Found a Swiss Bank winner in game {gameCount} after {turns} turns!");
+                        break;
+                    }
+                }
+            }
+
+            Assert.True(foundScenario, $"Ran {gameCount} games in 30 seconds but did not observe a Swiss Bank player winning.");
         }
     }
 }
