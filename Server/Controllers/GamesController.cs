@@ -1404,6 +1404,26 @@ public class GamesController : ControllerBase
         return Ok();
     }
 
+    private void AdvanceTurn(Game game)
+    {
+        var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
+        int currentIndex = nations.IndexOf(game.CurrentTurnNation);
+        
+        for (int i = 1; i <= nations.Count; i++)
+        {
+            int nextIndex = (currentIndex + i) % nations.Count;
+            var nextNation = nations[nextIndex];
+            var ns = game.NationStates.FirstOrDefault(n => n.Nation == nextNation);
+            
+            // Skip nations with no controller
+            if (ns != null && ns.ControllerId != Guid.Empty)
+            {
+                game.CurrentTurnNation = nextNation;
+                break;
+            }
+        }
+    }
+
     [HttpPost("{gameId}/end-turn")]
     public async Task<IActionResult> EndTurn(Guid gameId)
     {
@@ -1430,10 +1450,8 @@ public class GamesController : ControllerBase
         if (controller.UserId != userId) return Forbid();
 
         // Advance Turn (Russia -> China -> India -> Brazil -> USA -> Europe)
-        var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
-        int currentIndex = nations.IndexOf(nation);
-        int nextIndex = (currentIndex + 1) % nations.Count;
-        game.CurrentTurnNation = nations[nextIndex];
+        // Skip uncontrolled nations
+        AdvanceTurn(game);
         
         // Reset current nation's turn flags
         nationState.HasBuiltThisTurn = false;
@@ -1632,10 +1650,7 @@ public class GamesController : ControllerBase
         nationState.HasMovedThisTurn = false; // Reset move flag too
         
         // Advance Nation
-        var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
-        int currentIndex = nations.IndexOf(nation);
-        int nextIndex = (currentIndex + 1) % nations.Count;
-        game.CurrentTurnNation = nations[nextIndex];
+        AdvanceTurn(game);
         
         _context.Entry(game).State = EntityState.Modified;
         await _context.SaveChangesAsync();
