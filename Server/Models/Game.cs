@@ -51,6 +51,20 @@ public class Game
 
     public void AdvanceTurn()
     {
+        var currentNs = this.NationStates.FirstOrDefault(n => n.Nation == this.CurrentTurnNation);
+        if (currentNs != null)
+        {
+            currentNs.HasBuiltThisTurn = false;
+            currentNs.HasMovedThisTurn = false;
+            currentNs.HasImportedThisTurn = false;
+        }
+
+        foreach (var unit in this.Units.Where(u => u.Nation == this.CurrentTurnNation))
+        {
+            unit.HasMoved = false;
+            unit.HasConvoyed = false;
+        }
+
         var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
         int currentIndex = nations.IndexOf(this.CurrentTurnNation);
         

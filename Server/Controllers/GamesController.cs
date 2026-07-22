@@ -702,7 +702,7 @@ public class GamesController : ControllerBase
                 var firstNs = gameToUpdate.NationStates.FirstOrDefault(ns => ns.Nation == gameToUpdate.CurrentTurnNation);
                 if (firstNs == null || !firstNs.ControllerId.HasValue)
                 {
-                    AdvanceTurn(gameToUpdate);
+                    gameToUpdate.AdvanceTurn();
                 }
 
                 _context.Entry(gameToUpdate).State = EntityState.Modified;
@@ -737,7 +737,7 @@ public class GamesController : ControllerBase
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameStarted", gameId);
 
             // Trigger bot if first nation is bot-controlled
-            _ = Task.Run(async () => { await Task.Delay(2000); await _botService.TryPlayBotTurnAsync(gameId); });
+            _botService.TriggerBotTurn(gameId, 3000);
 
             return Ok();
         }
@@ -1156,7 +1156,7 @@ public class GamesController : ControllerBase
         // Trigger bot if Investor Phase was activated for a bot
         if (game.IsInvestorTurn)
         {
-             _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+             _botService.TriggerBotTurn(gameId, 2500);
         }
 
         return Ok();
@@ -1359,7 +1359,7 @@ public class GamesController : ControllerBase
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
 
         // Trigger bot if next turn is bot-controlled
-        _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+        _botService.TriggerBotTurn(gameId, 2500);
 
         return Ok();
     }
@@ -1445,10 +1445,7 @@ public class GamesController : ControllerBase
         return Ok();
     }
 
-    private void AdvanceTurn(Game game)
-    {
-        game.AdvanceTurn();
-    }
+    // Removed private AdvanceTurn delegate method
 
     [HttpPost("{gameId}/end-turn")]
     public async Task<IActionResult> EndTurn(Guid gameId)
@@ -1476,23 +1473,8 @@ public class GamesController : ControllerBase
         if (controller.UserId != userId) return Forbid();
 
         // Advance Turn (Russia -> China -> India -> Brazil -> USA -> Europe)
-        // Skip uncontrolled nations
-        AdvanceTurn(game);
-        
-        // Reset current nation's turn flags
-        nationState.HasBuiltThisTurn = false;
-        nationState.HasMovedThisTurn = false;
-        nationState.HasImportedThisTurn = false;
-
-        // Reset units movement states
-        if (game.Units != null)
-        {
-            foreach (var unit in game.Units.Where(u => u.Nation == nation))
-            {
-                unit.HasMoved = false;
-                unit.HasConvoyed = false;
-            }
-        }
+        // Note: game.AdvanceTurn() handles all state flag resetting!
+        game.AdvanceTurn();
 
         _context.Entry(game).State = EntityState.Modified;
         
@@ -1502,7 +1484,7 @@ public class GamesController : ControllerBase
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
 
         // Trigger bot if next nation is bot-controlled
-        _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+        _botService.TriggerBotTurn(gameId, 2500);
 
         return Ok();
     }
@@ -1538,116 +1520,18 @@ public class GamesController : ControllerBase
         // Assuming slot 0 is Taxation based on Rondel.razor
         if (nationState.RondelPosition != 0) return BadRequest("Nation must be on 'Taxation' slot.");
 
-        // --- Step 1: Tax Revenue ---
-        // 1a. Factories (2M each if unoccupied)
-        // Def: A factory is unoccupied when there is no HOSTILE army in the home province.
-        // For now, since unit logic is partial, assume no hostile armies unless explicitly checked.
-        // We need to check if there are any armies of OTHER nations in the factory territory.
+        // --- Apply Centralized Taxation Logic ---
+        var result = Imperial2030.Server.Helpers.TaxationHelper.ApplyTaxation(game, nationState, controller);
         
-        int factoryRevenue = 0;
-        var territoriesWithFactories = game.TerritoryStates.Where(ts => ts.HasFactory).ToList();
-        
-        foreach (var ts in territoriesWithFactories)
+        // Mark Controller as modified if they gained cash
+        if (result.Bonus > 0)
         {
-            var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (territoryDef != null && territoryDef.Nation == nation) // Is Home Province of current nation
-            {
-                // check for hostile armies
-                // Hostile = Army of another nation. (Note: unit could be friendly if nations are at peace? 
-                // Rules say "hostile army". Simplest interpretation: Any army not belonging to the nation.)
-                bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation);
-                
-                if (!hasHostileArmy)
-                {
-                    factoryRevenue += 2;
-                }
-            }
-        }
-
-        // 1b. Flags (1M per controlled territory)
-        int flagRevenue = game.TerritoryStates.Count(ts => ts.Controller == nation);
-
-        // Max Revenue Logic
-        // "The maximum possible tax revenue is 23 million (8 million from 4 factories plus 15 million from 15 flags)."
-        // Is this a hard cap on the sum? Yes.
-        int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
-
-        // Add to Nation Treasury
-        // "The tax revenue is paid from the bank into the national treasury"
-        nationState.Treasury += totalTaxRevenue;
-
-        // --- Step 2: Soldiers' Pay ---
-        // "The treasury has to pay one million in soldiers’ pay for each of its armies and fleets"
-        int unitCount = game.Units.Count(u => u.Nation == nation);
-        int soldiersPay = unitCount * 1;
-
-        if (nationState.Treasury >= soldiersPay)
-        {
-            nationState.Treasury -= soldiersPay;
-        }
-        else
-        {
-            // "If the treasury is empty, no more payments are made."
-            // Implicitly means pay what you can? Or pay 0? 
-            // "If the treasury is empty, no more payments are made." implies we drain the treasury and stop? 
-            // Usually in board games this means pay until 0.
-            nationState.Treasury = 0;
-        }
-
-        // Bonus for the Controller (Player)
-        // 0-5: 0
-        // 6-9: 1
-        // 10-11: 2
-        // 12-13: 3
-        // 14-15: 4
-        // 16+: 5
-        
-        int bonus = 0;
-        if (game.VariantBonusOnlyForTaxIncreases)
-        {
-            int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(nationState.TaxRevenue);
-            int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
-            
-            bonus = Math.Max(0, newTier - oldTier);
-        }
-        else
-        {
-            bonus = Imperial2030.Shared.Constants.TaxChart.GetStandardBonus(totalTaxRevenue);
-        }
-        
-        // Check Treasury Ability to Pay Bonus
-        // "If the soldiers‘ pay was so high that the treasury does not have enough money to pay the bonus, the bonus is reduced"
-        if (nationState.Treasury < bonus)
-        {
-            bonus = nationState.Treasury;
-        }
-        
-        if (bonus > 0)
-        {
-            nationState.Treasury -= bonus;
-            controller.Cash += bonus;
             _context.Entry(controller).State = EntityState.Modified;
         }
 
-        // --- Step 4: Adding Power Points ---
-        // Power gain is based on Tax Revenue
-        // Using the explicit lookup table provided by user:
-        // Tax: 0-5 -> 0 Power
-        // ...
-        // Tax: 18+ -> 10 Power
-
-        int powerGain = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
-
-        nationState.Power += powerGain;
-        if (nationState.Power > 25) nationState.Power = 25;
-
-        // Update Tax Chart Position
-        nationState.PreviousTaxRevenue = nationState.TaxRevenue;
-        nationState.TaxRevenue = totalTaxRevenue;
-
         // Save Changes
         _context.Entry(nationState).State = EntityState.Modified;
-        LogAction(game, $"collected taxes: {totalTaxRevenue}M (Bonus: {bonus}M, Power: +{powerGain})", "Taxation", nation);
+        LogAction(game, $"collected taxes: {result.TotalTaxRevenue}M (Bonus: {result.Bonus}M, Power: +{result.PowerGain})", "Taxation", nation);
         await _context.SaveChangesAsync();
         
         // --- Game End Check ---
@@ -1656,36 +1540,30 @@ public class GamesController : ControllerBase
              game.Status = GameStatus.Finished;
              _context.Entry(game).State = EntityState.Modified;
              await _context.SaveChangesAsync();
-             await _context.SaveChangesAsync();
-             await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); // Notify update FIRST so clients see 25 Power
-             await _hubContext.Clients.All.SendAsync("GameEnded", gameId); // Notify end
+             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); // Notify update FIRST so clients see 25 Power
+             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameEnded", gameId); // Notify end
              return Ok(new { Message = "Game Over", Winner = nation });
         }
 
 
         // --- Step 5: Turn Advance ---
-        // Same logic as EndTurn
-        // Reset flags
-        nationState.HasBuiltThisTurn = false;
-        nationState.HasMovedThisTurn = false; // Reset move flag too
-        
-        // Advance Nation
-        AdvanceTurn(game);
+        // Same logic as EndTurn (resets all turn state flags automatically)
+        game.AdvanceTurn();
         
         _context.Entry(game).State = EntityState.Modified;
         await _context.SaveChangesAsync();
 
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
         // Trigger bot if next nation is bot-controlled
-        _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+        _botService.TriggerBotTurn(gameId, 2500);
 
         return Ok(new 
         { 
-            TaxRevenue = totalTaxRevenue, 
-            SoldiersPay = soldiersPay, 
-            Bonus = bonus, 
-            PowerGain = powerGain 
+            TaxRevenue = result.TotalTaxRevenue, 
+            SoldiersPay = result.SoldiersPay, 
+            Bonus = result.Bonus, 
+            PowerGain = result.PowerGain 
         });
     }
 

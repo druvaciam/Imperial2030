@@ -182,7 +182,7 @@ public class ManeuverController : ControllerBase
 
         if (game.PendingBattleDefenders.Any())
         {
-            _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+            _botService.TriggerBotTurn(gameId, 2500);
         }
 
         return Ok();
@@ -423,7 +423,7 @@ public class ManeuverController : ControllerBase
 
         if (game.PendingBattleDefenders.Any())
         {
-            _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+            _botService.TriggerBotTurn(gameId, 2500);
         }
 
         return Ok();
@@ -681,7 +681,7 @@ public class ManeuverController : ControllerBase
 
         if (game.PendingBattleDefenders.Any())
         {
-            _ = Task.Run(async () => { await Task.Delay(1500); await _botService.TryPlayBotTurnAsync(gameId); });
+            _botService.TriggerBotTurn(gameId, 2500);
         }
 
         return Ok();

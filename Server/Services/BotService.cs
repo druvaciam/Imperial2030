@@ -18,6 +18,17 @@ public class BotService
         _scopeFactory = scopeFactory;
         _hubContext = hubContext;
     }
+    public void TriggerBotTurn(Guid gameId, int delayMs = 2500)
+    {
+        _ = Task.Run(async () =>
+        {
+            if (!SkipDelays && delayMs > 0)
+            {
+                await Task.Delay(delayMs);
+            }
+            await TryPlayBotTurnAsync(gameId);
+        });
+    }
 
     public async Task TryPlayBotTurnAsync(Guid gameId)
     {
@@ -36,7 +47,7 @@ public class BotService
                 await BotInvestorAction(ctx, game, actor);
                 await ctx.SaveChangesAsync();
                 await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                if (!SkipDelays) await Task.Delay(1500);
+                if (!SkipDelays) await Task.Delay(2500);
                 game = await LoadGame(ctx, gameId);
                 if (game == null) return;
             }
@@ -129,7 +140,7 @@ public class BotService
 
         await ctx.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-        if (!SkipDelays) await Task.Delay(1200);
+        if (!SkipDelays) await Task.Delay(2200);
 
         // Step 2: Execute slot action
         game = await LoadGame(ctx, gameId);
@@ -155,16 +166,13 @@ public class BotService
         // If not taxation (which auto-advances), end turn
         if (targetSlot != 0 && game.Status == GameStatus.InProgress)
         {
-            if (!SkipDelays) await Task.Delay(1000);
+            if (!SkipDelays) await Task.Delay(2000);
             game = await LoadGame(ctx, gameId);
             if (game == null) return;
             nationState = game.NationStates.First(ns => ns.Nation == nation);
 
             // Advance turn
             game.AdvanceTurn();
-            nationState.HasBuiltThisTurn = false;
-            nationState.HasMovedThisTurn = false;
-            nationState.HasImportedThisTurn = false;
 
             LogAction(ctx, game, "ended their turn", "EndTurn", nation, controller.BotName ?? "Bot");
             await ctx.SaveChangesAsync();
@@ -174,7 +182,7 @@ public class BotService
         // Check if next turn is also a bot
         if (!SkipDelays) 
         {
-            await Task.Delay(800);
+            await Task.Delay(1800);
             await TryPlayBotTurnAsync(gameId);
         }
     }
@@ -630,48 +638,15 @@ public class BotService
     private async Task BotTaxation(ApplicationDbContext ctx, Game game, NationState ns, Player controller)
     {
         var nation = ns.Nation;
-        int factoryRevenue = 0;
-        foreach (var ts in game.TerritoryStates.Where(t => t.HasFactory))
-        {
-            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (def?.Nation != nation) continue;
-            bool hasHostile = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation);
-            if (!hasHostile) factoryRevenue += 2;
-        }
-        int flagRevenue = game.TerritoryStates.Count(ts => ts.Controller == nation);
-        int totalTax = Math.Min(23, factoryRevenue + flagRevenue);
+        // --- Apply Centralized Taxation Logic ---
+        var result = Imperial2030.Server.Helpers.TaxationHelper.ApplyTaxation(game, ns, controller);
 
-        ns.Treasury += totalTax;
-        int unitCount = game.Units.Count(u => u.Nation == nation);
-        int soldiersPay = unitCount;
-        ns.Treasury = Math.Max(0, ns.Treasury - soldiersPay);
-
-        int bonus = 0;
-        if (game.VariantBonusOnlyForTaxIncreases)
-        {
-            int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(ns.TaxRevenue);
-            int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTax);
-            
-            bonus = Math.Max(0, newTier - oldTier);
-        }
-        else
-        {
-            bonus = Imperial2030.Shared.Constants.TaxChart.GetStandardBonus(totalTax);
-        }
-        bonus = Math.Min(bonus, ns.Treasury);
-        ns.Treasury -= bonus;
-        controller.Cash += bonus;
-
-        int powerGain = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTax);
-        ns.Power = Math.Min(25, ns.Power + powerGain);
-        ns.PreviousTaxRevenue = ns.TaxRevenue;
-        ns.TaxRevenue = totalTax;
-
-        LogAction(ctx, game, $"collected taxes: {totalTax}M (Bonus: {bonus}M, Power: +{powerGain})", "Taxation", nation, controller.BotName ?? "Bot");
+        LogAction(ctx, game, $"collected taxes: {result.TotalTaxRevenue}M (Bonus: {result.Bonus}M, Power: +{result.PowerGain})", "Taxation", nation, controller.BotName ?? "Bot");
 
         if (ns.Power >= 25)
         {
             game.Status = GameStatus.Finished;
+            ctx.Entry(game).State = EntityState.Modified;
             await ctx.SaveChangesAsync();
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameEnded", game.Id);
@@ -680,9 +655,6 @@ public class BotService
 
         // Taxation auto-advances turn
         game.AdvanceTurn();
-        ns.HasBuiltThisTurn = false;
-        ns.HasMovedThisTurn = false;
-        ns.HasImportedThisTurn = false;
     }
 
     private async Task BotImport(ApplicationDbContext ctx, Game game, NationState ns)
@@ -780,7 +752,7 @@ public class BotService
         await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
         if (!SkipDelays) 
         {
-            await Task.Delay(1000);
+            await Task.Delay(2000);
             await TryPlayBotTurnAsync(game.Id);
         }
     }
