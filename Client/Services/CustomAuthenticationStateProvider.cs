@@ -10,7 +10,6 @@ public class CustomAuthenticationStateProvider : AuthenticationStateProvider
     private ClaimsPrincipal _anonymous = new ClaimsPrincipal(new ClaimsIdentity());
 
     private readonly Microsoft.JSInterop.IJSRuntime _jsRuntime;
-
     public CustomAuthenticationStateProvider(Microsoft.JSInterop.IJSRuntime jsRuntime)
     {
         _jsRuntime = jsRuntime;
@@ -22,12 +21,30 @@ public class CustomAuthenticationStateProvider : AuthenticationStateProvider
         {
             var token = await _jsRuntime.InvokeAsync<string>("localStorage.getItem", "authToken");
 
-            if (string.IsNullOrWhiteSpace(token))
+            if (string.IsNullOrWhiteSpace(token) || token == "null")
             {
                 return new AuthenticationState(_anonymous);
             }
 
-            var identity = new ClaimsIdentity(ParseClaimsFromJwt(token), "jwt");
+            var claims = ParseClaimsFromJwt(token).ToList();
+            
+            // Check for expiration
+            var expClaim = claims.FirstOrDefault(c => c.Type == "exp");
+            if (expClaim != null && long.TryParse(expClaim.Value, out var exp))
+            {
+                if (DateTimeOffset.FromUnixTimeSeconds(exp).UtcDateTime <= DateTime.UtcNow)
+                {
+                    await _jsRuntime.InvokeVoidAsync("localStorage.removeItem", "authToken");
+                    return new AuthenticationState(_anonymous);
+                }
+            }
+
+            if (!claims.Any())
+            {
+                return new AuthenticationState(_anonymous);
+            }
+
+            var identity = new ClaimsIdentity(claims, "jwt");
             var user = new ClaimsPrincipal(identity);
             return new AuthenticationState(user);
         }

@@ -1248,7 +1248,7 @@ public class GamesController : ControllerBase
             if (typeToProduce == UnitType.Army) createdArmies++;
             else createdFleets++;
 
-            producedDetails.Add($"{(typeToProduce == UnitType.Army ? "army" : "fleet")} in {def.Name}");
+            producedDetails.Add(def.Name);
         }
 
         if (createdUnits > 0)
@@ -1256,11 +1256,11 @@ public class GamesController : ControllerBase
             nationState.HasProducedThisTurn = true;
             _context.Entry(nationState).State = EntityState.Modified;
             
-            LogAction(game, $"produced {createdUnits} units: {string.Join(", ", producedDetails)}", "Production", currentNation);
+            LogAction(game, $"produced {createdUnits} units ({string.Join(", ", producedDetails)})", "Production", currentNation);
 
             await _context.SaveChangesAsync();
             await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
-            return Ok($"Produced {createdUnits} units: {string.Join(", ", producedDetails)}.");
+            return Ok($"Produced {createdUnits} units ({string.Join(", ", producedDetails)}).");
         }
         else
         {
@@ -1462,6 +1462,7 @@ public class GamesController : ControllerBase
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
         if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
+        if (game.PendingBattleDefenders.Any()) return BadRequest("Cannot end turn while a battle is pending.");
         if (game.CurrentManeuverPhase != ManeuverPhase.None) return BadRequest($"Finish your maneuver phase ({game.CurrentManeuverPhase}) first.");
 
         var nation = game.CurrentTurnNation;
@@ -1653,12 +1654,13 @@ public class GamesController : ControllerBase
 
         _context.Entry(nationState).State = EntityState.Modified;
         
-        LogAction(game, $"imported {request.Units.Count} units", "Import", game.CurrentTurnNation);
+        var locationNames = request.Units.Select(u => TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == u.TerritoryId)?.Name ?? u.TerritoryId).ToList();
+        LogAction(game, $"imported {request.Units.Count} units ({string.Join(", ", locationNames)})", "Import", game.CurrentTurnNation);
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
         
-        return Ok($"Imported {request.Units.Count} units.");
+        return Ok($"Imported {request.Units.Count} units ({string.Join(", ", locationNames)}).");
     }
     private void LogAction(Game game, string message, string type, Nation? nation = null)
     {

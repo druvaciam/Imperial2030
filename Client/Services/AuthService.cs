@@ -22,7 +22,6 @@ public class AuthService
         if (result != null && result.Successful)
         {
             await _authStateProvider.MarkUserAsAuthenticated(result.Token!);
-            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", result.Token);
         }
 
         return result ?? new LoginResult { Successful = false, Error = "Failed to parse response." };
@@ -42,7 +41,6 @@ public class AuthService
         if (result != null && result.Successful)
         {
             await _authStateProvider.MarkUserAsAuthenticated(result.Token!);
-            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", result.Token);
         }
 
         return result ?? new LoginResult { Successful = false, Error = "Failed to parse response." };
@@ -51,6 +49,5 @@ public class AuthService
     public async Task Logout()
     {
         await _authStateProvider.MarkUserAsLoggedOut();
-        _httpClient.DefaultRequestHeaders.Authorization = null;
     }
 }

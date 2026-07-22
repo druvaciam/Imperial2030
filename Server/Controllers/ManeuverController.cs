@@ -42,6 +42,7 @@ public class ManeuverController : ControllerBase
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
         if (game.CurrentManeuverPhase != ManeuverPhase.Fleets) return BadRequest("Not in Fleet Maneuver phase.");
+        if (game.PendingBattleDefenders.Any()) return BadRequest("Cannot move fleets while a battle is pending.");
 
         // Validate Turn and Control
         var nation = game.CurrentTurnNation;
@@ -205,6 +206,7 @@ public class ManeuverController : ControllerBase
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
+        if (game.PendingBattleDefenders.Any()) return BadRequest("Cannot initiate battles while another battle is pending.");
         
         // Validate Turn/Control
         var nation = game.CurrentTurnNation;
@@ -263,6 +265,7 @@ public class ManeuverController : ControllerBase
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
         if (game.CurrentManeuverPhase != ManeuverPhase.Armies) return BadRequest("Not in Army Maneuver phase.");
+        if (game.PendingBattleDefenders.Any()) return BadRequest("Cannot move armies while a battle is pending.");
 
         // Validate Turn and Control
         var nation = game.CurrentTurnNation;
@@ -443,6 +446,7 @@ public class ManeuverController : ControllerBase
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
+        if (game.PendingBattleDefenders.Any()) return BadRequest("Cannot destroy factories while a battle is pending.");
 
         // 1. Validate Turn/Control
         var nation = game.CurrentTurnNation;
@@ -534,6 +538,7 @@ public class ManeuverController : ControllerBase
                  .FirstOrDefaultAsync(g => g.Id == gameId);
 
             if (game == null) return NotFound();
+            if (game.PendingBattleDefenders.Any()) return BadRequest("Cannot advance phase while a battle is pending.");
             
             // Validate Control
             var nation = game.CurrentTurnNation;

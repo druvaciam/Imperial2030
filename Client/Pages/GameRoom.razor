@@ -13,13 +13,6 @@
 
 <PageTitle>@(IsMyTurn() ? "⚠️ YOUR TURN! - " : "")@(game != null ? $"{game.Name} - " : "")Imperial 2030</PageTitle>
 
-@if (!string.IsNullOrEmpty(toastMessage))
-{
-    <div class="toast-notification @(isToastError ? "bg-danger" : "bg-success")">
-        @toastMessage
-    </div>
-}
-
 @if (game == null)
 {
     <div class="text-center mt-5">
@@ -416,7 +409,15 @@ else
         <div class="main-board">
              @if (game.Status == GameStatus.InProgress)
              {
-                  <GameMap Game="@game" IsMyTurn="@IsMyTurn()" IsObserver="@(MyPlayer == null)" ShowToastAction="OnShowToastAction" />
+                  <div style="position: relative; width: 100%; display: flex; flex-direction: column; align-items: center; flex: 1;">
+                      @if (!string.IsNullOrEmpty(toastMessage))
+                      {
+                          <div class="toast-notification @(isToastError ? "bg-danger" : "bg-success")">
+                              @toastMessage
+                          </div>
+                      }
+                      <GameMap @ref="gameMap" Game="@game" IsMyTurn="@IsMyTurn()" IsObserver="@(MyPlayer == null)" ShowToastAction="OnShowToastAction" />
+                  </div>
              }
              else if (game.Status == GameStatus.Finished)
              {
@@ -690,20 +691,24 @@ else
         100% { transform: scale(1); }
     }
     .toast-notification {
-        position: fixed;
-        top: 80px; /* Below the Turn Alert if present */
+        position: absolute;
+        bottom: 15px; /* Above the large country tiles at the bottom of the map */
         left: 50%;
         transform: translateX(-50%);
-        padding: 10px 20px;
-        border-radius: 5px;
+        padding: 12px 24px;
+        border-radius: 8px;
         color: white;
         z-index: 3000;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.4);
         animation: toastFadeIn 0.3s ease-in-out;
+        text-align: center;
+        white-space: nowrap;
+        font-weight: bold;
+        font-size: 1.1rem;
     }
     
     @@keyframes toastFadeIn {
-        from { opacity: 0; transform: translate(-50%, -20px); }
+        from { opacity: 0; transform: translate(-50%, 20px); }
         to { opacity: 1; transform: translate(-50%, 0); }
     }
 
@@ -832,6 +837,7 @@ else
     private string? currentUserId;
     private int observerCount = 0;
     private PlayerDto? MyPlayer => game?.Players.FirstOrDefault(p => p.UserId == currentUserId);
+    private GameMap? gameMap;
 
     protected override async Task OnInitializedAsync()
     {
@@ -1188,6 +1194,15 @@ else
     private async Task EndTurn()
     {
         if (game == null || isSubmitting) return;
+
+        // Client-side validation to avoid server roundtrip and string parsing
+        if (game.ManeuverState != null && game.ManeuverState.Phase != ManeuverPhase.None)
+        {
+            gameMap?.TriggerEndPhaseHighlight();
+            await ShowToast($"Finish your maneuver phase ({game.ManeuverState.Phase}) first.", true);
+            return;
+        }
+
         isSubmitting = true;
         try
         {

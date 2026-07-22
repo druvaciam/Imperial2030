@@ -403,6 +403,7 @@ public class BotService
         int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
         int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
 
+        var locationNames = new List<string>();
         foreach (var ts in game.TerritoryStates.Where(t => t.HasFactory))
         {
             var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
@@ -418,10 +419,11 @@ public class BotService
             if (unitType == UnitType.Army) currentArmies++;
             else currentFleets++;
             produced++;
+            locationNames.Add(def.Name);
         }
         ns.HasProducedThisTurn = true;
         var botName = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId)?.BotName ?? "Bot";
-        LogAction(ctx, game, $"produced {produced} units", "Production", nation, botName);
+        LogAction(ctx, game, $"produced {produced} units ({string.Join(", ", locationNames)})", "Production", nation, botName);
     }
 
     private async Task BotManeuver(ApplicationDbContext ctx, Game game, NationState ns, Player controller)
@@ -667,6 +669,7 @@ public class BotService
         int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
 
         var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == nation).ToList();
+        var locationNames = new List<string>();
         foreach (var t in homeTerritories)
         {
             if (imported >= maxImport) break;
@@ -686,12 +689,13 @@ public class BotService
             if (unitType == UnitType.Army) currentArmies++;
             if (unitType == UnitType.Fleet) currentFleets++;
             imported++;
+            locationNames.Add(t.Name);
         }
 
         ns.Treasury -= imported;
         ns.HasImportedThisTurn = true;
         var botName = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId)?.BotName ?? "Bot";
-        LogAction(ctx, game, $"imported {imported} units", "Import", nation, botName);
+        LogAction(ctx, game, $"imported {imported} units ({string.Join(", ", locationNames)})", "Import", nation, botName);
     }
 
     private async Task BotInvestorAction(ApplicationDbContext ctx, Game game, Player actor)
