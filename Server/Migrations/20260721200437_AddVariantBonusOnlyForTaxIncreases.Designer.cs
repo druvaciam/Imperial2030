@@ -4,6 +4,7 @@ using Imperial2030.Server.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Imperial2030.Server.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260721200437_AddVariantBonusOnlyForTaxIncreases")]
+    partial class AddVariantBonusOnlyForTaxIncreases
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -253,13 +256,13 @@ namespace Imperial2030.Server.Migrations
                     b.Property<int>("Power")
                         .HasColumnType("int");
 
-                    b.Property<int>("PreviousTaxRevenue")
+                    b.Property<int>("PreviousTaxChartPosition")
                         .HasColumnType("int");
 
                     b.Property<int?>("RondelPosition")
                         .HasColumnType("int");
 
-                    b.Property<int>("TaxRevenue")
+                    b.Property<int>("TaxChartPosition")
                         .HasColumnType("int");
 
                     b.Property<int>("Treasury")

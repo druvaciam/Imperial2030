@@ -50,6 +50,7 @@ public class GamesController : ControllerBase
                 PlayerCount = g.Players.Count,
                 MaxPlayers = g.MaxPlayers,
                 IsPrivate = g.IsPrivate,
+                VariantBonusOnlyForTaxIncreases = g.VariantBonusOnlyForTaxIncreases,
                 JoinCode = g.Players.Any(p => p.UserId == User.FindFirstValue(ClaimTypes.NameIdentifier) && p.IsHost) ? g.JoinCode : null,
                 UserIds = g.Players.Select(p => p.UserId).ToList(),
                 HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault(),
@@ -70,7 +71,8 @@ public class GamesController : ControllerBase
             Name = req.Name,
             MaxPlayers = req.MaxPlayers,
             IsPrivate = req.IsPrivate,
-            JoinCode = req.IsPrivate ? GenerateJoinCode() : null
+            JoinCode = req.IsPrivate ? GenerateJoinCode() : null,
+            VariantBonusOnlyForTaxIncreases = req.VariantBonusOnlyForTaxIncreases
         };
         _context.Games.Add(game);
 
@@ -94,6 +96,7 @@ public class GamesController : ControllerBase
             MaxPlayers = game.MaxPlayers,
             IsPrivate = game.IsPrivate,
             JoinCode = game.JoinCode,
+            VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
             UserIds = new List<string> { userId },
             HostId = userId
         };
@@ -304,6 +307,7 @@ public class GamesController : ControllerBase
             Status = game.Status,
             CreatedAt = game.CreatedAt,
             IsPrivate = game.IsPrivate,
+            VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
             HostId = game.Players.FirstOrDefault(p => p.IsHost)?.UserId,
             JoinCode = game.Players.Any(p => p.UserId == userId && p.IsHost) ? game.JoinCode : null,
             CurrentTurnNation = game.CurrentTurnNation,
@@ -339,8 +343,8 @@ public class GamesController : ControllerBase
                 HasProducedThisTurn = ns.HasProducedThisTurn,
                 HasMovedThisTurn = ns.HasMovedThisTurn,
                 HasImportedThisTurn = ns.HasImportedThisTurn,
-                TaxChartPosition = ns.TaxChartPosition,
-                PreviousTaxChartPosition = ns.PreviousTaxChartPosition
+                TaxRevenue = ns.TaxRevenue,
+                PreviousTaxRevenue = ns.PreviousTaxRevenue
             }).ToList(),
             AvailableBonds = game.Bonds.Where(b => b.HolderId == null).Select(b => new BondDto
             {
@@ -1599,12 +1603,17 @@ public class GamesController : ControllerBase
         // 16+: 5
         
         int bonus = 0;
-        if (totalTaxRevenue >= 16) bonus = 5;
-        else if (totalTaxRevenue >= 14) bonus = 4;
-        else if (totalTaxRevenue >= 12) bonus = 3;
-        else if (totalTaxRevenue >= 10) bonus = 2;
-        else if (totalTaxRevenue >= 6) bonus = 1;
-        else bonus = 0;
+        if (game.VariantBonusOnlyForTaxIncreases)
+        {
+            int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(nationState.TaxRevenue);
+            int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
+            
+            bonus = Math.Max(0, newTier - oldTier);
+        }
+        else
+        {
+            bonus = Imperial2030.Shared.Constants.TaxChart.GetStandardBonus(totalTaxRevenue);
+        }
         
         // Check Treasury Ability to Pay Bonus
         // "If the soldiers‘ pay was so high that the treasury does not have enough money to pay the bonus, the bonus is reduced"
@@ -1627,25 +1636,14 @@ public class GamesController : ControllerBase
         // ...
         // Tax: 18+ -> 10 Power
 
-        int powerGain = 0;
-        if (totalTaxRevenue <= 5) powerGain = 0;
-        else if (totalTaxRevenue <= 7) powerGain = 1;
-        else if (totalTaxRevenue <= 9) powerGain = 2;
-        else if (totalTaxRevenue == 10) powerGain = 3;
-        else if (totalTaxRevenue == 11) powerGain = 4;
-        else if (totalTaxRevenue == 12) powerGain = 5;
-        else if (totalTaxRevenue == 13) powerGain = 6;
-        else if (totalTaxRevenue == 14) powerGain = 7;
-        else if (totalTaxRevenue == 15) powerGain = 8;
-        else if (totalTaxRevenue <= 17) powerGain = 9;
-        else powerGain = 10; // 18+
+        int powerGain = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
 
         nationState.Power += powerGain;
         if (nationState.Power > 25) nationState.Power = 25;
 
         // Update Tax Chart Position
-        nationState.PreviousTaxChartPosition = nationState.TaxChartPosition;
-        nationState.TaxChartPosition = totalTaxRevenue;
+        nationState.PreviousTaxRevenue = nationState.TaxRevenue;
+        nationState.TaxRevenue = totalTaxRevenue;
 
         // Save Changes
         _context.Entry(nationState).State = EntityState.Modified;

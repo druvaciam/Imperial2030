@@ -195,6 +195,51 @@ namespace Imperial2030.Tests
             }
         }
 
+        [Theory]
+        [InlineData(true, 0)]
+        [InlineData(false, 1)]
+        public async Task ExecuteTaxation_VariantBonusOnlyForTaxIncreases_AppliesCorrectly(bool isVariantActive, int expectedBonus)
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 0);
+
+                var game = await context.Games.FindAsync(gameId);
+                game.VariantBonusOnlyForTaxIncreases = isVariantActive;
+
+                // Setup Russia: TaxRevenue was 6 (Tier 1). Normally a tax of 6 yields 1M bonus.
+                var nationState = await context.NationStates.FirstAsync(n => n.GameId == gameId && n.Nation == Nation.Russia);
+                nationState.TaxRevenue = 6;
+                nationState.Treasury = 10;
+                
+                var controllerPlayer = await context.Players.FirstAsync(p => p.UserId == userId);
+                controllerPlayer.Cash = 0;
+                
+                // Set up territories so tax revenue equals 6 (Tier 1) again
+                // 1 Factory + 4 Flags = 2 + 4 = 6.
+                var t1 = new TerritoryState { TerritoryId = "Moscow", GameId = gameId, Controller = Nation.Russia, HasFactory = true };
+                var t2 = new TerritoryState { TerritoryId = "Vladivostok", GameId = gameId, Controller = Nation.Russia, HasFactory = false };
+                var t3 = new TerritoryState { TerritoryId = "StPetersburg", GameId = gameId, Controller = Nation.Russia, HasFactory = false };
+                var t4 = new TerritoryState { TerritoryId = "Kiev", GameId = gameId, Controller = Nation.Russia, HasFactory = false };
+                
+                context.TerritoryStates.AddRange(t1, t2, t3, t4);
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+
+                // Act
+                var result = await controller.ExecuteTaxation(gameId);
+
+                // Assert
+                Assert.IsType<OkObjectResult>(result);
+
+                var updatedController = await context.Players.FirstAsync(p => p.UserId == userId);
+                
+                Assert.Equal(expectedBonus, updatedController.Cash);
+            }
+        }
+        
         [Fact]
         public async Task SwissBank_PlayerWithoutNations_CanInvestAndGainControl()
         {

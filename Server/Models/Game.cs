@@ -23,6 +23,7 @@ public class Game
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public Nation CurrentTurnNation { get; set; } = Nation.Russia;
+    public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;
 
     // Investor Logic
     public Guid? InvestorCardHolderId { get; set; }

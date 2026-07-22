@@ -17,4 +17,5 @@ public class GameDto
     public List<string> UserIds { get; set; } = [];
     public string? HostId { get; set; }
     public int MaxPower { get; set; }
+    public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;
 }

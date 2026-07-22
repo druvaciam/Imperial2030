@@ -166,12 +166,16 @@
             int soldiersPay = unitCount * 1;
             
             int bonus = 0;
-            if (totalTaxRevenue >= 16) bonus = 5;
-            else if (totalTaxRevenue >= 14) bonus = 4;
-            else if (totalTaxRevenue >= 12) bonus = 3;
-            else if (totalTaxRevenue >= 10) bonus = 2;
-            else if (totalTaxRevenue >= 6) bonus = 1;
-            else bonus = 0;
+            if (Game.VariantBonusOnlyForTaxIncreases)
+            {
+                int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(nationState.PreviousTaxRevenue);
+                int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
+                bonus = Math.Max(0, newTier - oldTier);
+            }
+            else
+            {
+                bonus = Imperial2030.Shared.Constants.TaxChart.GetStandardBonus(totalTaxRevenue);
+            }
             
             // Expected Treasury after tax but before pay
             int tempTreasury = nationState.Treasury + totalTaxRevenue;
@@ -179,18 +183,7 @@
             tempTreasury -= actualPay;
             int actualBonus = Math.Min(tempTreasury, bonus);
 
-            int powerGain = 0;
-            if (totalTaxRevenue <= 5) powerGain = 0;
-            else if (totalTaxRevenue <= 7) powerGain = 1;
-            else if (totalTaxRevenue <= 9) powerGain = 2;
-            else if (totalTaxRevenue == 10) powerGain = 3;
-            else if (totalTaxRevenue == 11) powerGain = 4;
-            else if (totalTaxRevenue == 12) powerGain = 5;
-            else if (totalTaxRevenue == 13) powerGain = 6;
-            else if (totalTaxRevenue == 14) powerGain = 7;
-            else if (totalTaxRevenue == 15) powerGain = 8;
-            else if (totalTaxRevenue <= 17) powerGain = 9;
-            else powerGain = 10;
+            int powerGain = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
 
             string controllerName = nationState.ControllerName ?? "None";
             string youIndicator = Game.Players.FirstOrDefault(p => p.Id == CurrentPlayerId)?.UserName == controllerName ? " (You)" : "";

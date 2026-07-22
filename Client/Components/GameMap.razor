@@ -897,9 +897,9 @@
     {
         var localGame = Game; // Capture for null safety in loop
         <!-- Tax Chart Markers -->
-        @foreach (var group in (localGame.NationStates ?? Enumerable.Empty<Imperial2030.Shared.Models.NationStateDto>()).GroupBy(ns => ns.TaxChartPosition))
+        @foreach (var group in (localGame.NationStates ?? Enumerable.Empty<Imperial2030.Shared.Models.NationStateDto>()).GroupBy(ns => Imperial2030.Shared.Constants.TaxChart.GetPowerGain(ns.TaxRevenue)))
         {
-            var rect = GetTaxRect(group.Key);
+            var rect = GetTaxRectByTier(group.Key);
             if (rect.HasValue)
             {
                 var (x, y, w, h) = rect.Value;
@@ -1825,20 +1825,20 @@
     };
 
     // Tax Chart Rects from User (x, y, w, h)
-    // 5, 6, 8, 10, 11, 12, 13, 14, 15, 16, 18
+    // Keys represent Power Gain tiers (0 to 10)
     private static readonly Dictionary<int, (double x, double y, double w, double h)> TaxChartRects = new()
     {
-        { 5, (443.89969, 583.83466, 44.483002, 61.627003) },
-        { 6, (489.02371, 583.34045, 44.483002, 61.627003) },
-        { 8, (534.17023, 583.29535, 44.483002, 61.627003) },
-        { 10, (579.04517, 583.78015, 44.483002, 61.627003) },
-        { 11, (624.16583, 584.51074, 44.483002, 61.627003) },
-        { 12, (669.19171, 584.36633, 44.483002, 61.627003) },
-        { 13, (714.04517, 584.53662, 44.483002, 61.627003) },
-        { 14, (759.79944, 584.02368, 44.483002, 61.627003) },
-        { 15, (805.11621, 583.75647, 44.483002, 61.627003) },
-        { 16, (850.31238, 584.51074, 44.483002, 61.627003) },
-        { 18, (895.72614, 583.78015, 44.483002, 61.627003) }
+        { 0, (443.89969, 583.83466, 44.483002, 61.627003) },
+        { 1, (489.02371, 583.34045, 44.483002, 61.627003) },
+        { 2, (534.17023, 583.29535, 44.483002, 61.627003) },
+        { 3, (579.04517, 583.78015, 44.483002, 61.627003) },
+        { 4, (624.16583, 584.51074, 44.483002, 61.627003) },
+        { 5, (669.19171, 584.36633, 44.483002, 61.627003) },
+        { 6, (714.04517, 584.53662, 44.483002, 61.627003) },
+        { 7, (759.79944, 584.02368, 44.483002, 61.627003) },
+        { 8, (805.11621, 583.75647, 44.483002, 61.627003) },
+        { 9, (850.31238, 584.51074, 44.483002, 61.627003) },
+        { 10, (895.72614, 583.78015, 44.483002, 61.627003) }
     };
 
     private async Task NextPhase()
@@ -1913,22 +1913,9 @@
             Console.WriteLine($"Error updating tooltips: {ex.Message}");
         }
     }
-    private (double x, double y, double w, double h)? GetTaxRect(int revenue)
+    private (double x, double y, double w, double h)? GetTaxRectByTier(int tier)
     {
-        int key;
-        if (revenue >= 18) key = 18;
-        else if (revenue >= 16) key = 16;
-        else if (revenue >= 15) key = 15;
-        else if (revenue >= 14) key = 14;
-        else if (revenue >= 13) key = 13;
-        else if (revenue >= 12) key = 12;
-        else if (revenue >= 11) key = 11;
-        else if (revenue >= 10) key = 10;
-        else if (revenue >= 8) key = 8;
-        else if (revenue >= 6) key = 6;
-        else key = 5; // 0-5
-
-        if (TaxChartRects.TryGetValue(key, out var r))
+        if (TaxChartRects.TryGetValue(tier, out var r))
         {
             return r;
         }

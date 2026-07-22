@@ -56,7 +56,11 @@ else
                 <small class="text-muted">Game ID: @GameId.ToString().Substring(0, 8)...</small>
                 @if (game.IsPrivate && MyPlayer != null && game.HostId == MyPlayer.UserId && game.JoinCode != null)
                 {
-                    <small class="text-info">Join Code: <strong>@game.JoinCode</strong></small>
+                    <small class="text-info">Join Code: <strong>@game.JoinCode</strong></small><br/>
+                }
+                @if (game.VariantBonusOnlyForTaxIncreases)
+                {
+                    <span class="badge bg-warning text-dark mt-1">Variant: Tax Increase Bonus</span>
                 }
             </div>
 

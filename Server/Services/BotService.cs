@@ -646,16 +646,26 @@ public class BotService
         int soldiersPay = unitCount;
         ns.Treasury = Math.Max(0, ns.Treasury - soldiersPay);
 
-        int bonus = totalTax >= 16 ? 5 : totalTax >= 14 ? 4 : totalTax >= 12 ? 3 : totalTax >= 10 ? 2 : totalTax >= 6 ? 1 : 0;
+        int bonus = 0;
+        if (game.VariantBonusOnlyForTaxIncreases)
+        {
+            int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(ns.TaxRevenue);
+            int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTax);
+            
+            bonus = Math.Max(0, newTier - oldTier);
+        }
+        else
+        {
+            bonus = Imperial2030.Shared.Constants.TaxChart.GetStandardBonus(totalTax);
+        }
         bonus = Math.Min(bonus, ns.Treasury);
         ns.Treasury -= bonus;
         controller.Cash += bonus;
 
-        int powerGain = totalTax <= 5 ? 0 : totalTax <= 7 ? 1 : totalTax <= 9 ? 2 : totalTax == 10 ? 3 :
-            totalTax == 11 ? 4 : totalTax == 12 ? 5 : totalTax == 13 ? 6 : totalTax == 14 ? 7 :
-            totalTax == 15 ? 8 : totalTax <= 17 ? 9 : 10;
+        int powerGain = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTax);
         ns.Power = Math.Min(25, ns.Power + powerGain);
-        ns.TaxChartPosition = totalTax;
+        ns.PreviousTaxRevenue = ns.TaxRevenue;
+        ns.TaxRevenue = totalTax;
 
         LogAction(ctx, game, $"collected taxes: {totalTax}M (Bonus: {bonus}M, Power: +{powerGain})", "Taxation", nation, controller.BotName ?? "Bot");
 

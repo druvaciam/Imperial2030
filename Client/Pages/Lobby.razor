@@ -189,6 +189,10 @@
                         <input type="checkbox" class="form-check-input" id="isPrivateCheck" @bind="newGameRequest.IsPrivate" />
                         <label class="form-check-label" for="isPrivateCheck">Private Game (Requires Code)</label>
                     </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="isVariantBonusCheck" @bind="newGameRequest.VariantBonusOnlyForTaxIncreases" />
+                        <label class="form-check-label" for="isVariantBonusCheck">Variant: Bonus only for tax increases</label>
+                    </div>
                 </div>
                 <div class="modal-footer border-secondary">
                     <button type="button" class="btn btn-secondary" @onclick="CloseCreateGameModal">Cancel</button>

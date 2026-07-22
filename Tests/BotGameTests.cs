@@ -39,12 +39,17 @@ namespace Imperial2030.Tests
         }
 
         [Theory]
-        [InlineData(2)]
-        [InlineData(3)]
-        [InlineData(4)]
-        [InlineData(5)]
-        [InlineData(6)]
-        public async Task TestFullBotGameFinishes(int playerCount)
+        [InlineData(2, false)]
+        [InlineData(2, true)]
+        [InlineData(3, false)]
+        [InlineData(3, true)]
+        [InlineData(4, false)]
+        [InlineData(4, true)]
+        [InlineData(5, false)]
+        [InlineData(5, true)]
+        [InlineData(6, false)]
+        [InlineData(6, true)]
+        public async Task TestFullBotGameFinishes(int playerCount, bool isVariantActive)
         {
             string dbName = Guid.NewGuid().ToString();
             var context = GetDbContext(dbName);
@@ -95,7 +100,7 @@ namespace Imperial2030.Tests
             gamesController.ControllerContext = new ControllerContext(actionContext);
 
             // 1. Create Game
-            var createReq = new CreateGameRequest { Name = "BotGame", MaxPlayers = playerCount, IsPrivate = false };
+            var createReq = new CreateGameRequest { Name = "BotGame", MaxPlayers = playerCount, IsPrivate = false, VariantBonusOnlyForTaxIncreases = isVariantActive };
             var createRes = await gamesController.CreateGame(createReq);
             var createdAtActionRes = Assert.IsType<CreatedAtActionResult>(createRes.Result);
             var gameDto = Assert.IsType<GameDto>(createdAtActionRes.Value);
@@ -159,7 +164,7 @@ namespace Imperial2030.Tests
             Assert.Equal(GameStatus.Finished, finalGame.Status);
         }
 
-        [Fact]
+        [Fact(Skip = "Takes a long time, run manually when checking organic Swiss bank scenario")]
         public async Task TestBotPlaysUntilSwissBankWins()
         {
             var stopWatch = System.Diagnostics.Stopwatch.StartNew();

@@ -12,4 +12,5 @@ public class CreateGameRequest
     public int MaxPlayers { get; set; } = 6;
 
     public bool IsPrivate { get; set; } = false;
+    public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;
 }
