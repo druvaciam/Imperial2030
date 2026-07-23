@@ -37,6 +37,7 @@ public class ManeuverController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.TerritoryStates)
             .Include(g => g.Players)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -203,6 +204,7 @@ public class ManeuverController : ControllerBase
             .Include(g => g.Units)
             .Include(g => g.NationStates)
             .Include(g => g.Players)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -260,6 +262,7 @@ public class ManeuverController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.TerritoryStates)
             .Include(g => g.Players)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -421,7 +424,6 @@ public class ManeuverController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
-        Console.WriteLine("[MoveArmy] Changes Saved.");
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
         if (game.PendingBattleDefenders.Any())
@@ -442,6 +444,7 @@ public class ManeuverController : ControllerBase
             .Include(g => g.Units)
             .Include(g => g.NationStates)
             .Include(g => g.Players)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -481,6 +484,7 @@ public class ManeuverController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.TerritoryStates)
             .Include(g => g.Players)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -573,6 +577,7 @@ public class ManeuverController : ControllerBase
                  .Include(g => g.Players)
                  .Include(g => g.Units)
                  .Include(g => g.TerritoryStates)
+                 .AsSplitQuery()
                  .FirstOrDefaultAsync(g => g.Id == gameId);
 
             if (game == null) return NotFound();
@@ -639,6 +644,7 @@ public class ManeuverController : ControllerBase
             .Include(g => g.Players)
             .Include(g => g.Units)
             .Include(g => g.TerritoryStates)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();

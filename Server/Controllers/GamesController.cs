@@ -1278,7 +1278,7 @@ public class GamesController : ControllerBase
             .Include(g => g.Bonds)
             .Include(g => g.NationStates)
             .Include(g => g.Players)
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+            .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
         if (!game.IsInvestorTurn) return BadRequest("Not investor turn.");
@@ -1382,7 +1382,7 @@ public class GamesController : ControllerBase
             .Include(g => g.Players)
             .Include(g => g.TerritoryStates)
             .Include(g => g.Units)
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+            .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
@@ -1458,7 +1458,7 @@ public class GamesController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.Players)
             .Include(g => g.Units)
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+            .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");

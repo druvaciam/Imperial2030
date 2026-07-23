@@ -809,7 +809,7 @@ public class BotService
             .Include(g => g.TerritoryStates)
             .Include(g => g.Units)
             .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+            .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
     }
 
     private void LogAction(ApplicationDbContext ctx, Game game, string message, string type, Nation? nation, string playerName)

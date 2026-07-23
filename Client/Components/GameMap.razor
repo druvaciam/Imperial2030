@@ -1507,8 +1507,15 @@
                 int currentIndex = relevantUnits.FindIndex(u => u.Id == selectedUnitId.Value);
                 if (currentIndex >= 0)
                 {
-                    int nextIndex = (currentIndex + 1) % relevantUnits.Count;
-                    selectedUnitId = relevantUnits[nextIndex].Id;
+                    if (currentIndex + 1 < relevantUnits.Count)
+                    {
+                        selectedUnitId = relevantUnits[currentIndex + 1].Id;
+                    }
+                    else
+                    {
+                        DeselectUnit();
+                        return;
+                    }
                 }
                 else
                 {
