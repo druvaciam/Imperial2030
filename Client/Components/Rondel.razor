@@ -168,7 +168,7 @@
             int bonus = 0;
             if (Game.VariantBonusOnlyForTaxIncreases)
             {
-                int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(nationState.PreviousTaxRevenue);
+                int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(nationState.TaxRevenue);
                 int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
                 bonus = Math.Max(0, newTier - oldTier);
             }

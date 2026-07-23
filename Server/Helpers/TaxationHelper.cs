@@ -33,15 +33,8 @@ public static class TaxationHelper
 
         int unitCount = game.Units.Count(u => u.Nation == nation);
         int soldiersPay = unitCount * 1;
-
-        if (nationState.Treasury >= soldiersPay)
-        {
-            nationState.Treasury -= soldiersPay;
-        }
-        else
-        {
-            nationState.Treasury = 0;
-        }
+        int actualPay = Math.Min(nationState.Treasury, soldiersPay);
+        nationState.Treasury -= actualPay;
 
         int bonus = 0;
         if (game.VariantBonusOnlyForTaxIncreases)
@@ -55,15 +48,12 @@ public static class TaxationHelper
             bonus = Imperial2030.Shared.Constants.TaxChart.GetStandardBonus(totalTaxRevenue);
         }
         
-        if (nationState.Treasury < bonus)
-        {
-            bonus = nationState.Treasury;
-        }
+        int actualBonus = Math.Min(nationState.Treasury, bonus);
         
-        if (bonus > 0)
+        if (actualBonus > 0)
         {
-            nationState.Treasury -= bonus;
-            controller.Cash += bonus;
+            nationState.Treasury -= actualBonus;
+            controller.Cash += actualBonus;
         }
 
         int powerGain = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
@@ -73,6 +63,6 @@ public static class TaxationHelper
         nationState.PreviousTaxRevenue = nationState.TaxRevenue;
         nationState.TaxRevenue = totalTaxRevenue;
 
-        return (totalTaxRevenue, soldiersPay, bonus, powerGain);
+        return (totalTaxRevenue, actualPay, actualBonus, powerGain);
     }
 }

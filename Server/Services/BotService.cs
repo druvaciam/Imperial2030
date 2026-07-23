@@ -511,20 +511,46 @@ public class BotService
         var armies = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved).ToList();
         foreach (var army in armies)
         {
-            if (!MapConnectivity.Adjacency.TryGetValue(army.TerritoryId, out var neighbors)) continue;
-            var landNeighbors = neighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Land)).ToList();
+            var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, army.TerritoryId, friendlyNations.ToList());
+            var convoyPaths = new Dictionary<string, List<Unit>>();
+            var landNeighbors = new HashSet<string>();
+
+            foreach (var dest in destinations)
+            {
+                landNeighbors.Add(dest.TerritoryId);
+                if (dest.IsConvoy && dest.ConvoyFleets != null)
+                {
+                    convoyPaths[dest.TerritoryId] = dest.ConvoyFleets;
+                }
+            }
 
             var best = landNeighbors
                 .OrderByDescending(n => {
                     int score = Random.Shared.Next(0, 10);
                     bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
-                    if (hasEnemy) score += 10; // Reduced from 100
-
                     var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == n);
-                    bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
-                    if (uncontrolled && !hasEnemy) score += 100; // Increased from 50
-
                     var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
+                    bool isMyHome = def != null && def.Nation == nation;
+
+                    if (hasEnemy) 
+                    {
+                        if (isMyHome)
+                        {
+                            score += 200; // High priority to free own home territory
+                            if (ts != null && ts.HasFactory) 
+                            {
+                                score += 300; // Even higher priority to free factories
+                            }
+                        }
+                        else
+                        {
+                            score += 10; // Normal enemy
+                        }
+                    }
+
+                    bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
+                    if (uncontrolled && !hasEnemy) score += 100;
+
                     bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
                     if (notFriendlyHome) score += 10;
 
@@ -569,6 +595,14 @@ public class BotService
                 army.TerritoryId = best;
                 army.HasMoved = true;
                 army.IsHostile = isHostileMove;
+
+                if (convoyPaths.TryGetValue(best, out var usedFleets))
+                {
+                    foreach (var f in usedFleets)
+                    {
+                        f.HasConvoyed = true;
+                    }
+                }
 
                 if (hasEnemy && isHostileMove)
                 {
@@ -640,10 +674,13 @@ public class BotService
     private async Task BotTaxation(ApplicationDbContext ctx, Game game, NationState ns, Player controller)
     {
         var nation = ns.Nation;
+        int oldTreasury = ns.Treasury;
         // --- Apply Centralized Taxation Logic ---
         var result = Imperial2030.Server.Helpers.TaxationHelper.ApplyTaxation(game, ns, controller);
+        
+        int treasuryGain = ns.Treasury - oldTreasury;
 
-        LogAction(ctx, game, $"collected taxes: {result.TotalTaxRevenue}M (Bonus: {result.Bonus}M, Power: +{result.PowerGain})", "Taxation", nation, controller.BotName ?? "Bot");
+        LogAction(ctx, game, $"collected taxes: {result.TotalTaxRevenue}M (Soldiers' Pay: -{result.SoldiersPay}M, Treasury Gain: {(treasuryGain >= 0 ? "+" : "")}{treasuryGain}M, Bonus: {result.Bonus}M, Power: +{result.PowerGain})", "Taxation", nation, controller.BotName ?? "Bot");
 
         if (ns.Power >= 25)
         {

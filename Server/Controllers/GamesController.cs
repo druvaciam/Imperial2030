@@ -1522,6 +1522,7 @@ public class GamesController : ControllerBase
         // Assuming slot 0 is Taxation based on Rondel.razor
         if (nationState.RondelPosition != 0) return BadRequest("Nation must be on 'Taxation' slot.");
 
+        int oldTreasury = nationState.Treasury;
         // --- Apply Centralized Taxation Logic ---
         var result = Imperial2030.Server.Helpers.TaxationHelper.ApplyTaxation(game, nationState, controller);
         
@@ -1533,7 +1534,8 @@ public class GamesController : ControllerBase
 
         // Save Changes
         _context.Entry(nationState).State = EntityState.Modified;
-        LogAction(game, $"collected taxes: {result.TotalTaxRevenue}M (Bonus: {result.Bonus}M, Power: +{result.PowerGain})", "Taxation", nation);
+        int treasuryGain = nationState.Treasury - oldTreasury;
+        LogAction(game, $"collected taxes: {result.TotalTaxRevenue}M (Soldiers' Pay: -{result.SoldiersPay}M, Treasury Gain: {(treasuryGain >= 0 ? "+" : "")}{treasuryGain}M, Bonus: {result.Bonus}M, Power: +{result.PowerGain})", "Taxation", nation);
         await _context.SaveChangesAsync();
         
         // --- Game End Check ---

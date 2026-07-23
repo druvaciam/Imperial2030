@@ -1243,6 +1243,12 @@
         var sourceDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == movingUnit.TerritoryId);
         var destDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == destTerritoryId);
 
+        // Fleets moving out of port (Land to Sea) are always unambiguous first moves
+        if (movingUnit.UnitType == UnitType.Fleet && sourceDef?.Type == TerritoryType.Land && destDef?.Type == TerritoryType.Sea)
+        {
+            return false;
+        }
+
         // 1. Home to Home
         bool sourceIsHome = sourceDef != null && sourceDef.Nation == movingUnit.Nation;
         bool destIsHome = destDef != null && destDef.Nation == movingUnit.Nation;
