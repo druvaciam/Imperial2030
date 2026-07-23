@@ -309,6 +309,168 @@ namespace Imperial2030.Tests
         }
 
         [Fact]
+        public async Task BuildFactory_GameNotInProgress_ReturnsBadRequest()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
+                var game = await context.Games.FindAsync(gameId);
+                game.Status = GameStatus.Lobby;
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+                var result = await controller.BuildFactory(gameId, "Moscow");
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Contains("Game not in progress", badRequest.Value.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_IsInvestorTurn_ReturnsBadRequest()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
+                var game = await context.Games.FindAsync(gameId);
+                game.IsInvestorTurn = true;
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+                var result = await controller.BuildFactory(gameId, "Moscow");
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Contains("Waiting for Investor Phase", badRequest.Value.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_NoController_ReturnsBadRequest()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
+                var ns = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
+                ns.ControllerId = null;
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+                var result = await controller.BuildFactory(gameId, "Moscow");
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Contains("No controller for this nation", badRequest.Value.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_NotController_ReturnsForbid()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, _, _) = await SetupGame(context, rondelPosition: 1);
+                var wrongUserId = "wrong-user";
+                
+                var controller = GetController(context, wrongUserId);
+                var result = await controller.BuildFactory(gameId, "Moscow");
+
+                Assert.IsType<ForbidResult>(result);
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_WrongRondelPosition_ReturnsBadRequest()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                // 2 is Production, not Factory
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 2);
+
+                var controller = GetController(context, userId);
+                var result = await controller.BuildFactory(gameId, "Moscow");
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Contains("Nation must be on 'Factory' slot", badRequest.Value.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_AlreadyBuiltThisTurn_ReturnsBadRequest()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
+                var ns = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
+                ns.HasBuiltThisTurn = true;
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+                var result = await controller.BuildFactory(gameId, "Moscow");
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Contains("Already built factory this turn", badRequest.Value.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_InvalidTerritory_ReturnsBadRequest()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
+
+                var controller = GetController(context, userId);
+                var result = await controller.BuildFactory(gameId, "InvalidName");
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Contains("Invalid territory", badRequest.Value.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_NotHomeCity_ReturnsBadRequest()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
+
+                var controller = GetController(context, userId);
+                // Paris is Europe's home city, not Russia's
+                var result = await controller.BuildFactory(gameId, "Paris");
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Contains("Can only build in Russia's home cities", badRequest.Value.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_FactoryAlreadyExists_ReturnsBadRequest()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
+                
+                var tMoscow = new TerritoryState { TerritoryId = "Moscow", GameId = gameId, HasFactory = true };
+                context.TerritoryStates.Add(tMoscow);
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+                var result = await controller.BuildFactory(gameId, "Moscow");
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Contains("Factory already exists", badRequest.Value.ToString());
+            }
+        }
+
+        [Fact]
         public async Task BuildFactory_HostileArmyPresent_ReturnsBadRequest()
         {
             var dbName = Guid.NewGuid().ToString();
@@ -337,6 +499,56 @@ namespace Imperial2030.Tests
 
                 var badRequest = Assert.IsType<BadRequestObjectResult>(result);
                 Assert.Contains("hostile foreign armies", badRequest.Value.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_InsufficientTreasury_ReturnsBadRequest()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
+                var ns = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
+                ns.Treasury = 4; // Less than 5
+                
+                var tMoscow = new TerritoryState { TerritoryId = "Moscow", GameId = gameId, HasFactory = false };
+                context.TerritoryStates.Add(tMoscow);
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+                var result = await controller.BuildFactory(gameId, "Moscow");
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Contains("Nation treasury insufficient", badRequest.Value.ToString());
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_HappyPath_BuildsFactoryAndDeductsTreasury()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
+                var ns = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
+                ns.Treasury = 10; // Enough for 5M cost
+                
+                var tMoscow = new TerritoryState { TerritoryId = "Moscow", GameId = gameId, HasFactory = false };
+                context.TerritoryStates.Add(tMoscow);
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+                var result = await controller.BuildFactory(gameId, "Moscow");
+
+                Assert.IsType<OkResult>(result);
+
+                var updatedNs = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
+                Assert.Equal(5, updatedNs.Treasury);
+                Assert.True(updatedNs.HasBuiltThisTurn);
+
+                var updatedTerritory = await context.TerritoryStates.FirstAsync(t => t.TerritoryId == "Moscow");
+                Assert.True(updatedTerritory.HasFactory);
             }
         }
     }
