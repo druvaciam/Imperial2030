@@ -644,12 +644,12 @@ public class BotService
                 
                 if (territoryDef != null)
                 {
-                    var tState = await ctx.TerritoryStates
-                        .FirstOrDefaultAsync(ts => ts.GameId == game.Id && ts.TerritoryId == tId);
+                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == tId);
 
                     if (tState == null)
                     {
                         tState = new TerritoryState { TerritoryId = tId, GameId = game.Id };
+                        game.TerritoryStates.Add(tState);
                         ctx.TerritoryStates.Add(tState);
                     }
 

@@ -775,14 +775,13 @@ public class ManeuverController : ControllerBase
                 
                 if (territoryDef != null)
                 {
-                    // Direct DB Check to avoid "Row not found" or Stale Entity issues
-                    // We do NOT use game.TerritoryStates here because it might be out of sync.
-                    var tState = await _context.TerritoryStates
-                        .FirstOrDefaultAsync(ts => ts.GameId == game.Id && ts.TerritoryId == tId);
+                    // Use in-memory collection instead of N+1 database queries
+                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == tId);
 
                     if (tState == null)
                     {
                         tState = new TerritoryState { TerritoryId = tId, GameId = game.Id };
+                        game.TerritoryStates.Add(tState);
                         _context.TerritoryStates.Add(tState);
                     }
 
