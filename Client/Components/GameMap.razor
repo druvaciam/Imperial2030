@@ -953,6 +953,15 @@
              <button class="btn btn-danger" @onclick="OpenStationaryBattleModal">Battle!</button>
         </div>
     }
+
+    @if (CanToggleHostility())
+    {
+        <div class="card p-2 bg-light shadow" style="position: absolute; top: 160px; right: 10px; z-index: 500;">
+             <button class="btn btn-sm @(GetSelectedUnit()?.IsHostile == true ? "btn-success" : "btn-danger")" @onclick="ToggleHostility">
+                 Make @(GetSelectedUnit()?.IsHostile == true ? "Friendly" : "Hostile")
+             </button>
+        </div>
+    }
 </div>
 
 <style>
@@ -1079,6 +1088,38 @@
             .Any();
             
         return enemies;
+    }
+
+    private Unit? GetSelectedUnit()
+    {
+        if (selectedUnitId == null || Game == null) return null;
+        return Game.Units.FirstOrDefault(u => u.Id == selectedUnitId.Value);
+    }
+
+    private bool CanToggleHostility()
+    {
+        if (selectedUnitId == null || Game == null || !IsMyTurn) return false;
+        var unit = GetSelectedUnit();
+        if (unit == null || unit.UnitType != UnitType.Army) return false;
+        
+        // Can only toggle hostility if it's our unit
+        if (unit.Nation != Game.CurrentTurnNation) return false;
+
+        var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == unit.TerritoryId);
+        if (territoryDef == null) return false;
+
+        // Is it a foreign home province?
+        return territoryDef.Nation.HasValue && territoryDef.Nation != unit.Nation;
+    }
+
+    private async Task ToggleHostility()
+    {
+        if (selectedUnitId == null || Game == null) return;
+        var error = await ManeuverService.ToggleHostility(Game.Id, selectedUnitId.Value);
+        if (error != null)
+        {
+             await JSRuntime.InvokeVoidAsync("alert", $"Failed to toggle hostility: {error}");
+        }
     }
 
     private void OpenStationaryBattleModal()
@@ -1589,7 +1630,7 @@
                     var effectiveController = tState?.Controller ?? neighborDef.Nation;
                     bool isControlledByUs = effectiveController == nation;
                     // Check for Hostile Armies (matches Server UnitType check)
-                    bool hasHostileUnits = Game.Units.Any(u => u.TerritoryId == neighborId && u.Nation != nation && u.UnitType == UnitType.Army);
+                    bool hasHostileUnits = Game.Units.Any(u => u.TerritoryId == neighborId && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile);
 
                     bool isRailStep = false;
                     // Rail Step requires moving from Home to Home through Controlled/Safe territory
@@ -1644,7 +1685,7 @@
         if (effectiveController != nation) return false;
 
         // 2. Hostile Unit Check (Suspends Rail)
-        var hostileUnits = Game.Units.Any(u => u.TerritoryId == territoryId && u.Nation != nation && u.UnitType == UnitType.Army);
+        var hostileUnits = Game.Units.Any(u => u.TerritoryId == territoryId && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile);
         if (hostileUnits) return false;
 
         return true;

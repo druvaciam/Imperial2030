@@ -156,7 +156,7 @@
                 var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
                 if (territoryDef != null && territoryDef.Nation == CurrentTurnNation)
                 {
-                    bool hasHostileArmy = Game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != CurrentTurnNation);
+                    bool hasHostileArmy = Game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != CurrentTurnNation && u.IsHostile);
                     if (!hasHostileArmy) factoryRevenue += 2;
                 }
             }
@@ -273,9 +273,25 @@
             int myFactories = Game.Territories.Count(ts => ts.HasFactory && myHomeCities.Any(hc => hc.Id == ts.TerritoryId));
             int maxFactories = myHomeCities.Count;
             
+            bool hasValidEmptyCity = false;
+            foreach (var city in myHomeCities)
+            {
+                var ts = Game.Territories.FirstOrDefault(t => t.TerritoryId == city.Id);
+                if (ts == null || !ts.HasFactory)
+                {
+                    bool hasHostile = Game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == Imperial2030.Shared.Models.UnitType.Army && u.Nation != CurrentTurnNation && u.IsHostile);
+                    if (!hasHostile)
+                    {
+                        hasValidEmptyCity = true;
+                        break;
+                    }
+                }
+            }
+            
             string canBuild;
             if (myFactories >= maxFactories) canBuild = "No (Max Factories Reached)";
             else if (nationState.Treasury < 5) canBuild = "No (Need 5M)";
+            else if (!hasValidEmptyCity) canBuild = "No (Blocked by Hostiles)";
             else canBuild = "Yes";
 
             return $"{baseMsg}\n\nTreasury: {nationState.Treasury}M\nCurrent Factories: {myFactories} / {maxFactories}\nCan Build: {canBuild}";
@@ -299,7 +315,7 @@
             int blockedFleets = 0;
             foreach (var f in myHomeFactories)
             {
-                bool hasHostile = Game.Units.Any(u => u.TerritoryId == f.Id && u.UnitType == Imperial2030.Shared.Models.UnitType.Army && u.Nation != CurrentTurnNation);
+                bool hasHostile = Game.Units.Any(u => u.TerritoryId == f.Id && u.UnitType == Imperial2030.Shared.Models.UnitType.Army && u.Nation != CurrentTurnNation && u.IsHostile);
                 if (hasHostile)
                 {
                     if (f.CityType == Imperial2030.Shared.Models.CityType.Brown) blockedArmies++;

@@ -18,7 +18,7 @@ public static class TaxationHelper
             var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
             if (territoryDef != null && territoryDef.Nation == nation) 
             {
-                bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation);
+                bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
                 if (!hasHostileArmy)
                 {
                     factoryRevenue += 2;

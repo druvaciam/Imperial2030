@@ -303,7 +303,7 @@ public class BotService
             var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
             if (def?.Nation == nation)
             {
-                bool blocked = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation);
+                bool blocked = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
                 if (!blocked) rev += 2;
             }
         }
@@ -419,7 +419,7 @@ public class BotService
             if (unitType == UnitType.Army) currentArmies++;
             else currentFleets++;
             produced++;
-            locationNames.Add(def.Name);
+            locationNames.Add($"{unitType} in {def.Name}");
         }
         ns.HasProducedThisTurn = true;
         var botName = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId)?.BotName ?? "Bot";
@@ -689,7 +689,7 @@ public class BotService
             if (unitType == UnitType.Army) currentArmies++;
             if (unitType == UnitType.Fleet) currentFleets++;
             imported++;
-            locationNames.Add(t.Name);
+            locationNames.Add($"{unitType} in {t.Name}");
         }
 
         ns.Treasury -= imported;

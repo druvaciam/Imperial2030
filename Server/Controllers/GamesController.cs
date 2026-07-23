@@ -1248,7 +1248,7 @@ public class GamesController : ControllerBase
             if (typeToProduce == UnitType.Army) createdArmies++;
             else createdFleets++;
 
-            producedDetails.Add(def.Name);
+            producedDetails.Add($"{typeToProduce} in {def.Name}");
         }
 
         if (createdUnits > 0)
@@ -1381,6 +1381,7 @@ public class GamesController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.Players)
             .Include(g => g.TerritoryStates)
+            .Include(g => g.Units)
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -1654,7 +1655,7 @@ public class GamesController : ControllerBase
 
         _context.Entry(nationState).State = EntityState.Modified;
         
-        var locationNames = request.Units.Select(u => TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == u.TerritoryId)?.Name ?? u.TerritoryId).ToList();
+        var locationNames = request.Units.Select(u => $"{u.UnitType} in " + (TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == u.TerritoryId)?.Name ?? u.TerritoryId)).ToList();
         LogAction(game, $"imported {request.Units.Count} units ({string.Join(", ", locationNames)})", "Import", game.CurrentTurnNation);
         await _context.SaveChangesAsync();
 

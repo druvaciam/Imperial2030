@@ -432,6 +432,44 @@ public class ManeuverController : ControllerBase
         return Ok();
     }
     
+    [HttpPost("{gameId}/toggle-hostility/{unitId}")]
+    public async Task<IActionResult> ToggleHostility(Guid gameId, Guid unitId)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        var game = await _context.Games
+            .Include(g => g.Units)
+            .Include(g => g.NationStates)
+            .Include(g => g.Players)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
+        if (game.CurrentManeuverPhase == ManeuverPhase.None) return BadRequest("Not in Maneuver phase.");
+
+        var unit = game.Units.FirstOrDefault(u => u.Id == unitId);
+        if (unit == null) return NotFound("Unit not found.");
+
+        var nation = game.CurrentTurnNation;
+        var nationState = game.NationStates.First(n => n.Nation == nation);
+        if (nationState.ControllerId == null) return BadRequest("No controller for this nation.");
+        
+        var controller = game.Players.First(p => p.Id == nationState.ControllerId);
+        if (controller.UserId != userId) return Forbid();
+
+        if (unit.Nation != nation) return BadRequest("You can only toggle hostility of your own units.");
+
+        unit.IsHostile = !unit.IsHostile;
+        
+        LogAction(game, $"toggled army in {unit.TerritoryId} to {(unit.IsHostile ? "Hostile" : "Friendly")}", "ToggleHostility", nation);
+
+        await _context.SaveChangesAsync();
+        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+
+        return Ok();
+    }
+    
     [HttpPost("{gameId}/destroy-factory")]
     public async Task<IActionResult> DestroyFactory(Guid gameId, [FromBody] DestroyFactoryRequest request)
     {
@@ -786,7 +824,7 @@ public class ManeuverController : ControllerBase
             var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tId).ToList();
             
             var activeUnits = unitsInTerritory.Where(u => u.Nation == activeNation).ToList();
-            var hostileUnits = unitsInTerritory.Where(u => u.Nation != activeNation).ToList();
+            var hostileUnits = unitsInTerritory.Where(u => u.Nation != activeNation && u.IsHostile).ToList();
 
             Console.WriteLine($"[Battle] Territory {tId}: {activeUnits.Count} Active vs {hostileUnits.Count} Hostile");
 
@@ -829,7 +867,7 @@ public class ManeuverController : ControllerBase
             var startState = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == startId);
             bool isStartControlled = (isStartHome && (startState == null || startState.Controller == nation)) ||
                                      (startState != null && startState.Controller == nation);
-            bool startHasHostiles = game.Units.Any(u => u.TerritoryId == startId && u.Nation != nation);
+            bool startHasHostiles = game.Units.Any(u => u.TerritoryId == startId && u.Nation != nation && u.IsHostile);
 
             if ((isStartHome || isStartControlled) && !startHasHostiles)
             {
@@ -962,7 +1000,7 @@ public class ManeuverController : ControllerBase
                     // Fallback to Owner if Controller is null
                     var effectiveController = tState?.Controller ?? neighborDef.Nation;
                     bool isControlledByUs = effectiveController == nation;
-                    bool hasHostileUnits = game.Units.Any(u => u.TerritoryId == neighborId && u.Nation != nation && u.UnitType == UnitType.Army);
+                    bool hasHostileUnits = game.Units.Any(u => u.TerritoryId == neighborId && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile);
 
                     bool isRailStep = false;
                     if (isCurrentHome && isNeighborHome && isControlledByUs && !hasHostileUnits)
@@ -1032,7 +1070,7 @@ public class ManeuverController : ControllerBase
             var effectiveController2 = startState2?.Controller ?? startDef2.Nation;
             bool isControlledByUs = effectiveController2 == nation;
             
-            bool startHasHostiles2 = game.Units.Any(u => u.TerritoryId == startId && u.Nation != nation);
+            bool startHasHostiles2 = game.Units.Any(u => u.TerritoryId == startId && u.Nation != nation && u.IsHostile);
 
             if (isStartHome2 && isControlledByUs && !startHasHostiles2)
             {

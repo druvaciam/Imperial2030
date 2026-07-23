@@ -88,10 +88,10 @@ namespace Imperial2030.Tests
 
             var player = new Player { Id = playerId, GameId = gameId, UserId = userId };
 
-            var nsRussia = new NationState 
-            { 
-                Nation = Nation.Russia, 
-                ControllerId = playerId, 
+            var nsRussia = new NationState
+            {
+                Nation = Nation.Russia,
+                ControllerId = playerId,
                 GameId = gameId,
                 RondelPosition = rondelPosition,
                 Treasury = 0
@@ -137,7 +137,7 @@ namespace Imperial2030.Tests
                 Assert.IsType<OkObjectResult>(result);
 
                 var units = await context.Units.Where(u => u.GameId == gameId).ToListAsync();
-                
+
                 // One hostile army should remain
                 Assert.Contains(units, u => u.Id == hostileArmy.Id);
 
@@ -147,7 +147,7 @@ namespace Imperial2030.Tests
                 // Vladivostok is NOT occupied, so it SHOULD produce an army (because it is a light brown city)
                 // Wait, Vladivostok is a port city (LightBlue) so it produces a Fleet.
                 Assert.Contains(units, u => u.Nation == Nation.Russia && u.TerritoryId == vladivostokId);
-                
+
                 // Total units should be 1 (hostile) + 1 (produced in Vladivostok) = 2
                 Assert.Equal(2, units.Count);
             }
@@ -212,17 +212,17 @@ namespace Imperial2030.Tests
                 var nationState = await context.NationStates.FirstAsync(n => n.GameId == gameId && n.Nation == Nation.Russia);
                 nationState.TaxRevenue = 6;
                 nationState.Treasury = 10;
-                
+
                 var controllerPlayer = await context.Players.FirstAsync(p => p.UserId == userId);
                 controllerPlayer.Cash = 0;
-                
+
                 // Set up territories so tax revenue equals 6 (Tier 1) again
                 // 1 Factory + 4 Flags = 2 + 4 = 6.
                 var t1 = new TerritoryState { TerritoryId = "Moscow", GameId = gameId, Controller = Nation.Russia, HasFactory = true };
                 var t2 = new TerritoryState { TerritoryId = "Vladivostok", GameId = gameId, Controller = Nation.Russia, HasFactory = false };
                 var t3 = new TerritoryState { TerritoryId = "StPetersburg", GameId = gameId, Controller = Nation.Russia, HasFactory = false };
                 var t4 = new TerritoryState { TerritoryId = "Kiev", GameId = gameId, Controller = Nation.Russia, HasFactory = false };
-                
+
                 context.TerritoryStates.AddRange(t1, t2, t3, t4);
                 await context.SaveChangesAsync();
 
@@ -235,11 +235,11 @@ namespace Imperial2030.Tests
                 Assert.IsType<OkObjectResult>(result);
 
                 var updatedController = await context.Players.FirstAsync(p => p.UserId == userId);
-                
+
                 Assert.Equal(expectedBonus, updatedController.Cash);
             }
         }
-        
+
         [Fact]
         public async Task SwissBank_PlayerWithoutNations_CanInvestAndGainControl()
         {
@@ -265,14 +265,14 @@ namespace Imperial2030.Tests
                 // P2 has NO nations, and is therefore a Swiss Bank player
                 var p2 = new Player { Id = p2Id, GameId = gameId, UserId = p2UserId, Cash = 20 };
 
-                var nsRussia = new NationState 
-                { 
-                    Nation = Nation.Russia, 
-                    ControllerId = p1Id, 
+                var nsRussia = new NationState
+                {
+                    Nation = Nation.Russia,
+                    ControllerId = p1Id,
                     GameId = gameId,
                     RondelPosition = 3 // Suppose moving to Investor (4)
                 };
-                
+
                 var bond9M = new Bond { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, Cost = 9, Interest = 3, HolderId = null }; // Available in bank
                 var bond2M = new Bond { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, Cost = 2, Interest = 1, HolderId = p1Id }; // P1 owns 2M
 
@@ -283,7 +283,7 @@ namespace Imperial2030.Tests
                 await context.SaveChangesAsync();
 
                 var controllerP1 = GetController(context, p1UserId);
-                
+
                 // Act 1: P1 (Russia) moves to Investor slot
                 await controllerP1.MoveNation(gameId, Nation.Russia, 4);
 
@@ -305,6 +305,38 @@ namespace Imperial2030.Tests
                 // Act 3: After P2 invests, the Investor card holder (P1) should get their turn
                 updatedGame = await context.Games.FirstAsync(g => g.Id == gameId);
                 Assert.Equal(p1Id, updatedGame.ActingPlayerId);
+            }
+        }
+
+        [Fact]
+        public async Task BuildFactory_HostileArmyPresent_ReturnsBadRequest()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                // RondelPosition 1 is Factory
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
+
+                // Give nation enough treasury
+                var ns = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
+                ns.Treasury = 10;
+                await context.SaveChangesAsync();
+
+                var moscowId = "Moscow";
+                var tMoscow = new TerritoryState { TerritoryId = moscowId, GameId = gameId, Controller = Nation.Russia, HasFactory = false };
+
+                // Hostile army in Moscow
+                var hostileArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.China, UnitType = UnitType.Army, TerritoryId = moscowId, IsHostile = true };
+
+                context.TerritoryStates.Add(tMoscow);
+                context.Units.Add(hostileArmy);
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+                var result = await controller.BuildFactory(gameId, moscowId);
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Contains("hostile foreign armies", badRequest.Value.ToString());
             }
         }
     }

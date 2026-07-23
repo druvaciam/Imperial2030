@@ -80,4 +80,14 @@ public class ManeuverService
         var response = await _http.PostAsJsonAsync($"api/maneuver/{gameId}/battle-response", request);
         return response.IsSuccessStatusCode;
     }
+
+    public async Task<string?> ToggleHostility(Guid gameId, Guid unitId)
+    {
+        var response = await _http.PostAsync($"api/maneuver/{gameId}/toggle-hostility/{unitId}", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            return await response.Content.ReadAsStringAsync();
+        }
+        return null;
+    }
 }
