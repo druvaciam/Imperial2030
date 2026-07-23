@@ -454,7 +454,7 @@ public class BotService
                 
                 bool isHostileMove = false;
                 if (hasEnemy) isHostileMove = true;
-                else if (isForeignHome) isHostileMove = Random.Shared.NextDouble() >= 0.5;
+                else if (isForeignHome) isHostileMove = true;
 
                 if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != nation)
                 {
@@ -566,7 +566,7 @@ public class BotService
                 
                 bool isHostileMove = false;
                 if (hasEnemy) isHostileMove = true;
-                else if (isForeignHome) isHostileMove = Random.Shared.NextDouble() >= 0.5;
+                else if (isForeignHome) isHostileMove = true;
 
                 if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != nation)
                 {
@@ -759,14 +759,22 @@ public class BotService
             LogAction(ctx, game, "passed on investment", "Investment", null, actor.BotName ?? "Bot");
         }
 
-        if (game.InvestorCardHolderId.HasValue)
+        if (game.PendingInvestorIds != null && game.PendingInvestorIds.Any())
         {
-            var sorted = game.Players.OrderBy(p => p.Id).ToList();
-            var idx = sorted.FindIndex(p => p.Id == game.InvestorCardHolderId.Value);
-            game.InvestorCardHolderId = sorted[(idx + 1) % sorted.Count].Id;
+            game.ActingPlayerId = game.PendingInvestorIds[0];
+            game.PendingInvestorIds.RemoveAt(0);
         }
-        game.IsInvestorTurn = false;
-        game.ActingPlayerId = null;
+        else
+        {
+            if (game.InvestorCardHolderId.HasValue)
+            {
+                var sorted = game.Players.OrderBy(p => p.Id).ToList();
+                var idx = sorted.FindIndex(p => p.Id == game.InvestorCardHolderId.Value);
+                game.InvestorCardHolderId = sorted[(idx + 1) % sorted.Count].Id;
+            }
+            game.IsInvestorTurn = false;
+            game.ActingPlayerId = null;
+        }
     }
 
     private async Task HandleBotBattleResponse(ApplicationDbContext ctx, Game game)
@@ -809,7 +817,7 @@ public class BotService
             .Include(g => g.TerritoryStates)
             .Include(g => g.Units)
             .AsSplitQuery()
-            .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
+            .FirstOrDefaultAsync(g => g.Id == gameId);
     }
 
     private void LogAction(ApplicationDbContext ctx, Game game, string message, string type, Nation? nation, string playerName)

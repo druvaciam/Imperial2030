@@ -293,5 +293,117 @@ namespace Imperial2030.Tests
 
             Assert.True(foundScenario, $"Ran {gameCount} games in 30 seconds but did not observe a Swiss Bank player winning.");
         }
+
+        [Fact]
+        public async Task TestBotPassesInvestmentToPendingInvestor()
+        {
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            var mockClientProxy = new Mock<IClientProxy>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var mockServiceProvider = new Mock<IServiceProvider>();
+                var scopeContext = GetDbContext(dbName);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                return scope.Object;
+            });
+
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object) { SkipDelays = true };
+
+            var gameId = Guid.NewGuid();
+            var humanId = Guid.NewGuid();
+            var botId = Guid.NewGuid();
+
+            var game = new Game
+            {
+                Id = gameId,
+                Status = GameStatus.InProgress,
+                IsInvestorTurn = true,
+                ActingPlayerId = botId,
+                PendingInvestorIds = new List<Guid> { humanId },
+                InvestorCardHolderId = humanId
+            };
+            context.Games.Add(game);
+
+            context.Players.Add(new Player { Id = humanId, GameId = gameId, IsBot = false });
+            context.Players.Add(new Player { Id = botId, GameId = gameId, IsBot = true, BotName = "Bot Swiss" });
+
+            await context.SaveChangesAsync();
+
+            await botService.TryPlayBotTurnAsync(gameId);
+
+            var updatedGame = await GetDbContext(dbName).Games.Include(g => g.Players).FirstAsync(g => g.Id == gameId);
+            
+            Assert.True(updatedGame.IsInvestorTurn);
+            Assert.Equal(humanId, updatedGame.ActingPlayerId);
+            Assert.Empty(updatedGame.PendingInvestorIds);
+            Assert.Equal(humanId, updatedGame.InvestorCardHolderId);
+        }
+
+        [Fact]
+        public async Task TestBotPassesInvestmentToPendingSwissBank()
+        {
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            var mockClientProxy = new Mock<IClientProxy>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var mockServiceProvider = new Mock<IServiceProvider>();
+                var scopeContext = GetDbContext(dbName);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                return scope.Object;
+            });
+
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object) { SkipDelays = true };
+
+            var gameId = Guid.NewGuid();
+            var humanId = Guid.NewGuid();
+            var bot1Id = Guid.NewGuid();
+            var bot2Id = Guid.NewGuid();
+
+            var game = new Game
+            {
+                Id = gameId,
+                Status = GameStatus.InProgress,
+                IsInvestorTurn = true,
+                ActingPlayerId = bot1Id,
+                PendingInvestorIds = new List<Guid> { bot2Id, humanId },
+                InvestorCardHolderId = humanId
+            };
+            context.Games.Add(game);
+
+            context.Players.Add(new Player { Id = humanId, GameId = gameId, IsBot = false });
+            context.Players.Add(new Player { Id = bot1Id, GameId = gameId, IsBot = true, BotName = "Bot Swiss 1" });
+            context.Players.Add(new Player { Id = bot2Id, GameId = gameId, IsBot = true, BotName = "Bot Swiss 2" });
+
+            await context.SaveChangesAsync();
+
+            await botService.TryPlayBotTurnAsync(gameId);
+
+            var updatedGame = await GetDbContext(dbName).Games.Include(g => g.Players).FirstAsync(g => g.Id == gameId);
+            
+            Assert.True(updatedGame.IsInvestorTurn);
+            Assert.Equal(bot2Id, updatedGame.ActingPlayerId);
+            Assert.Equal(new List<Guid> { humanId }, updatedGame.PendingInvestorIds);
+            Assert.Equal(humanId, updatedGame.InvestorCardHolderId);
+        }
     }
 }
