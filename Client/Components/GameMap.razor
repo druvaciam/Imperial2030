@@ -1798,9 +1798,49 @@
         var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
         if (territoryDef == null || Game == null) return "";
 
-        var territoryState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryId);
-        string controllerName = territoryState?.Controller?.ToString() ?? territoryDef.Nation?.ToString() ?? "None";
-        string baseMsg = $"{territoryDef.Name} ({territoryDef.Type}) - Controlled by {controllerName}";
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(territoryDef.Name);
+
+        // Owner
+        var tState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryDef.Id);
+        if (tState != null && tState.Controller != null)
+        {
+            sb.AppendLine($"Owner: {tState.Controller}");
+        }
+        else if (territoryDef.Nation != null)
+        {
+            sb.AppendLine($"Home Territory: {territoryDef.Nation}");
+        }
+
+        // Factory
+        if (tState != null && tState.HasFactory)
+        {
+            sb.AppendLine("Factory: Yes");
+        }
+
+        // Units
+        var units = Game.Units.Where(u => u.TerritoryId == territoryDef.Id).ToList();
+        if (units.Any())
+        {
+            var armies = units.Where(u => u.UnitType == UnitType.Army)
+                            .GroupBy(u => u.Nation)
+                            .Select(g => $"{g.Key}: {g.Count()}");
+            
+            var fleets = units.Where(u => u.UnitType == UnitType.Fleet)
+                            .GroupBy(u => u.Nation)
+                            .Select(g => $"{g.Key}: {g.Count()}");
+
+            if (armies.Any())
+            {
+                sb.AppendLine($"Armies: {string.Join(", ", armies)}");
+            }
+            if (fleets.Any())
+            {
+                sb.AppendLine($"Fleets: {string.Join(", ", fleets)}");
+            }
+        }
+
+        string baseMsg = sb.ToString().Trim();
 
         if (!IsMyTurn || Game.IsInvestorTurn) return baseMsg;
 
@@ -1831,7 +1871,7 @@
         {
             if (territoryDef.IsHomeCity(nation))
             {
-                if (territoryState != null && territoryState.HasFactory) return $"{baseMsg}\n\nFactory already built here.";
+                if (tState != null && tState.HasFactory) return $"{baseMsg}\n\nFactory already built here.";
                 if (ns.Treasury < 5) return $"{baseMsg}\n\nNot enough treasury (Need 5M, have {ns.Treasury}M) to build factory.";
                 return $"{baseMsg}\n\nClick to build factory for 5M.";
             }
@@ -1928,68 +1968,7 @@
         });
     }
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (Game == null) return;
 
-        var tooltips = new Dictionary<string, string>();
-
-        foreach (var tDef in Imperial2030.Shared.Constants.TerritoryData.AllTerritories)
-        {
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine(tDef.Name);
-
-            // Owner
-            var tState = Game.Territories.FirstOrDefault(t => t.TerritoryId == tDef.Id);
-            if (tState != null && tState.Controller != null)
-            {
-                sb.AppendLine($"Owner: {tState.Controller}");
-            }
-            else if (tDef.Nation != null)
-            {
-                sb.AppendLine($"Home Territory: {tDef.Nation}");
-            }
-
-            // Factory
-            if (tState != null && tState.HasFactory)
-            {
-                sb.AppendLine("Factory: Yes");
-            }
-
-            // Units
-            var units = Game.Units.Where(u => u.TerritoryId == tDef.Id).ToList();
-            if (units.Any())
-            {
-                var armies = units.Where(u => u.UnitType == UnitType.Army)
-                                .GroupBy(u => u.Nation)
-                                .Select(g => $"{g.Key}: {g.Count()}");
-                
-                var fleets = units.Where(u => u.UnitType == UnitType.Fleet)
-                                .GroupBy(u => u.Nation)
-                                .Select(g => $"{g.Key}: {g.Count()}");
-
-                if (armies.Any())
-                {
-                    sb.AppendLine($"Armies: {string.Join(", ", armies)}");
-                }
-                if (fleets.Any())
-                {
-                    sb.AppendLine($"Fleets: {string.Join(", ", fleets)}");
-                }
-            }
-
-            tooltips[tDef.Id] = sb.ToString().Trim();
-        }
-
-        try
-        {
-            await JSRuntime.InvokeVoidAsync("updateTerritoryTooltips", tooltips);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error updating tooltips: {ex.Message}");
-        }
-    }
     private (double x, double y, double w, double h)? GetTaxRectByTier(int tier)
     {
         if (TaxChartRects.TryGetValue(tier, out var r))
