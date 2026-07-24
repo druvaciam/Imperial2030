@@ -236,7 +236,7 @@ namespace Imperial2030.Tests
                 var observedSwissBanks = new HashSet<Guid>();
 
                 // 5. Play game
-                int maxTurns = 5000;
+                int maxTurns = 30000;
                 int turns = 0;
 
                 while (turns < maxTurns)
@@ -257,6 +257,9 @@ namespace Imperial2030.Tests
                     await botService.TryPlayBotTurnAsync(gameId);
                     turns++;
                 }
+
+                if (observedSwissBanks.Any())
+                    _output.WriteLine($"Swiss Bank player emerged in game {gameCount}!");
 
                 var finalGame = context.Games.AsNoTracking().FirstOrDefault(g => g.Id == gameId);
                 if (finalGame?.Status == GameStatus.Finished)
@@ -299,7 +302,7 @@ namespace Imperial2030.Tests
         {
             string dbName = Guid.NewGuid().ToString();
             var context = GetDbContext(dbName);
-            
+
             var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
             var mockClients = new Mock<IHubClients>();
             var mockClientProxy = new Mock<IClientProxy>();
@@ -342,7 +345,7 @@ namespace Imperial2030.Tests
             await botService.TryPlayBotTurnAsync(gameId);
 
             var updatedGame = await GetDbContext(dbName).Games.Include(g => g.Players).FirstAsync(g => g.Id == gameId);
-            
+
             Assert.True(updatedGame.IsInvestorTurn);
             Assert.Equal(humanId, updatedGame.ActingPlayerId);
             Assert.Empty(updatedGame.PendingInvestorIds);
@@ -354,7 +357,7 @@ namespace Imperial2030.Tests
         {
             string dbName = Guid.NewGuid().ToString();
             var context = GetDbContext(dbName);
-            
+
             var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
             var mockClients = new Mock<IHubClients>();
             var mockClientProxy = new Mock<IClientProxy>();
@@ -399,7 +402,7 @@ namespace Imperial2030.Tests
             await botService.TryPlayBotTurnAsync(gameId);
 
             var updatedGame = await GetDbContext(dbName).Games.Include(g => g.Players).FirstAsync(g => g.Id == gameId);
-            
+
             Assert.True(updatedGame.IsInvestorTurn);
             Assert.Equal(humanId, updatedGame.ActingPlayerId);
             Assert.Empty(updatedGame.PendingInvestorIds);
@@ -410,7 +413,7 @@ namespace Imperial2030.Tests
         {
             string dbName = Guid.NewGuid().ToString();
             var context = GetDbContext(dbName);
-            
+
             var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
             var mockClients = new Mock<IHubClients>();
             var mockClientProxy = new Mock<IClientProxy>();
@@ -420,7 +423,7 @@ namespace Imperial2030.Tests
             var scopeFactory = new Mock<IServiceScopeFactory>();
             var scope = new Mock<IServiceScope>();
             var sp = new Mock<IServiceProvider>();
-            
+
             scopeFactory.Setup(f => f.CreateScope()).Returns(scope.Object);
             scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
             sp.Setup(s => s.GetService(typeof(ApplicationDbContext))).Returns(() => GetDbContext(dbName));

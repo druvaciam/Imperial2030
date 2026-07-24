@@ -26,7 +26,17 @@ public class DefaultBotStrategy : BotStrategyBase
 
     public override Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)
     {
-        return availableBonds.FirstOrDefault(b => controlledNations.Contains(b.Nation) && b.Cost <= actor.Cash);
+        var affordableBonds = availableBonds.Where(b => b.Cost <= actor.Cash).ToList();
+        
+        // 1. Try to strengthen control of own nations first
+        var ownBond = affordableBonds.FirstOrDefault(b => controlledNations.Contains(b.Nation));
+        if (ownBond != null) return ownBond;
+
+        // 2. Buy bonds in the strongest nations first, then by highest yield (cost)
+        return affordableBonds
+            .OrderByDescending(b => game.NationStates.First(n => n.Nation == b.Nation).Power)
+            .ThenByDescending(b => b.Cost)
+            .FirstOrDefault();
     }
 
 
