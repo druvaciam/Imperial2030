@@ -66,8 +66,8 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = new Game 
-        { 
+        var game = new Game
+        {
             Name = req.Name,
             MaxPlayers = req.MaxPlayers,
             IsPrivate = req.IsPrivate,
@@ -147,7 +147,7 @@ public class GamesController : ControllerBase
 
         return Ok();
     }
-    
+
     [HttpPost("{gameId}/leave")]
     public async Task<IActionResult> LeaveGame(Guid gameId)
     {
@@ -189,7 +189,7 @@ public class GamesController : ControllerBase
 
         // Must save these changes before removing player? 
         // Or EF can figure it out in one transaction if we nullify first.
-        
+
         // Remove player from the DB context
         _context.Players.Remove(player);
         // Also remove from the in-memory collection so .Any() evaluates correctly
@@ -233,7 +233,7 @@ public class GamesController : ControllerBase
             LogAction(game, $"{User.Identity?.Name} left the game", "LeaveGame");
             await _context.SaveChangesAsync();
         }
-        
+
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
 
         return Ok();
@@ -243,7 +243,7 @@ public class GamesController : ControllerBase
     public async Task<IActionResult> DeleteGame(Guid gameId)
     {
         if (User.IsInRole("Guest")) return Forbid();
-        
+
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -262,7 +262,7 @@ public class GamesController : ControllerBase
         if (player == null || !player.IsHost) return Forbid();
 
         await _context.GameActions.Where(a => a.GameId == gameId).ExecuteDeleteAsync();
-        
+
         _context.Bonds.RemoveRange(game.Bonds);
         _context.NationStates.RemoveRange(game.NationStates);
         _context.TerritoryStates.RemoveRange(game.TerritoryStates);
@@ -282,7 +282,7 @@ public class GamesController : ControllerBase
     public async Task<ActionResult<GameDetailDto>> GetGame(Guid gameId)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        
+
         var game = await _context.Games
             .Include(g => g.Players)
                 .ThenInclude(p => p.User)
@@ -354,7 +354,7 @@ public class GamesController : ControllerBase
                 Interest = b.Interest,
                 HolderName = null
             }).ToList(),
-            Territories = game.TerritoryStates.Select(ts => new TerritoryStateDto 
+            Territories = game.TerritoryStates.Select(ts => new TerritoryStateDto
             {
                 TerritoryId = ts.TerritoryId,
                 HasFactory = ts.HasFactory,
@@ -479,7 +479,7 @@ public class GamesController : ControllerBase
         if (gameCheck.Players.Count < 2) return BadRequest("Need at least 2 players to start.");
         if (gameCheck.Status != GameStatus.Lobby) return BadRequest("Game is not in lobby state.");
 
-        try 
+        try
         {
             // --- Initialization Logic ---
             // PHASE 1: Create Entities
@@ -505,7 +505,7 @@ public class GamesController : ControllerBase
             };
             var territories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories;
             var newTerritoryStates = new List<TerritoryState>();
-            foreach(var t in territories)
+            foreach (var t in territories)
             {
                 newTerritoryStates.Add(new TerritoryState { TerritoryId = t.Id, GameId = gameId, HasFactory = startingFactories.Contains(t.Id) });
             }
@@ -559,7 +559,7 @@ public class GamesController : ControllerBase
             };
 
             // Map: Which player gets which packages
-            var distribution = new Dictionary<Nation, Player>(); 
+            var distribution = new Dictionary<Nation, Player>();
             // Key = Primary Nation of the package, Value = Player who receives it
 
             if (players.Count == 2)
@@ -572,7 +572,7 @@ public class GamesController : ControllerBase
 
                 // Assign explicitly based on rules "China and Russia randomly dealt"
                 // Let's assume P1 got China, P2 got Russia (randomness is in shuffledPlayers)
-                
+
                 // P1 Packages
                 distribution[Nation.China] = p1;
                 distribution[Nation.Europe] = p1;
@@ -621,15 +621,15 @@ public class GamesController : ControllerBase
             {
                 var primaryNation = kvp.Key;
                 var player = kvp.Value;
-                
+
                 // Find definition to know secondary
                 var def = packages.First(p => p.Primary == primaryNation);
-                
+
                 // Assign 9M Bond (Primary)
                 var bond9M = bonds.First(b => b.Nation == def.Primary && b.Cost == 9);
                 bond9M.HolderId = player.Id;
                 _context.Entry(bond9M).State = EntityState.Modified;
-                
+
                 // Credit Treasury for Primary
                 var nsPrimary = nationStates.First(ns => ns.Nation == def.Primary);
                 nsPrimary.Treasury += 9;
@@ -639,7 +639,7 @@ public class GamesController : ControllerBase
                 var bond2M = bonds.First(b => b.Nation == def.Secondary && b.Cost == 2);
                 bond2M.HolderId = player.Id;
                 _context.Entry(bond2M).State = EntityState.Modified;
-                
+
                 // Credit Treasury for Secondary
                 var nsSecondary = nationStates.First(ns => ns.Nation == def.Secondary);
                 nsSecondary.Treasury += 2;
@@ -693,7 +693,7 @@ public class GamesController : ControllerBase
                     _context.Entry(ns).State = EntityState.Modified;
                 }
             }
-            
+
             await _context.SaveChangesAsync();
             await _context.SaveChangesAsync();
             _context.ChangeTracker.Clear();
@@ -703,13 +703,13 @@ public class GamesController : ControllerBase
             // Let's assign to first player sorted by ID for simplicity.
             if (players.Any())
             {
-                 var sorted = players.OrderBy(p => p.Id).ToList();
-                 var gameToInit = await _context.Games.FirstOrDefaultAsync(g => g.Id == gameId);
-                 if (gameToInit != null) 
-                 {
-                     gameToInit.InvestorCardHolderId = sorted[0].Id; // Give to First Player
-                     _context.Entry(gameToInit).State = EntityState.Modified;
-                 }
+                var sorted = players.OrderBy(p => p.Id).ToList();
+                var gameToInit = await _context.Games.FirstOrDefaultAsync(g => g.Id == gameId);
+                if (gameToInit != null)
+                {
+                    gameToInit.InvestorCardHolderId = sorted[0].Id; // Give to First Player
+                    _context.Entry(gameToInit).State = EntityState.Modified;
+                }
             }
             await _context.SaveChangesAsync();
 
@@ -724,7 +724,7 @@ public class GamesController : ControllerBase
             if (gameToUpdate != null)
             {
                 gameToUpdate.Status = GameStatus.InProgress;
-                
+
                 var firstNs = gameToUpdate.NationStates.FirstOrDefault(ns => ns.Nation == gameToUpdate.CurrentTurnNation);
                 if (firstNs == null || !firstNs.ControllerId.HasValue)
                 {
@@ -746,12 +746,12 @@ public class GamesController : ControllerBase
                 p.Cash = startingCash;
                 // Count how many packages this player received
                 int pkgCount = distribution.Values.Count(v => v.Id == p.Id);
-                p.Cash -= pkgCount * 11; 
+                p.Cash -= pkgCount * 11;
                 _context.Entry(p).State = EntityState.Modified;
             }
 
             await _context.SaveChangesAsync();
-            
+
             var startedGame = await _context.Games.FindAsync(gameId);
             if (startedGame != null)
             {
@@ -773,7 +773,7 @@ public class GamesController : ControllerBase
             return StatusCode(500, $"Internal server error: {ex.Message}");
         }
     }
-    
+
     // Helper to find next player in rotation
     private Guid GetNextPlayerId(Game game, Guid currentId)
     {
@@ -809,7 +809,7 @@ public class GamesController : ControllerBase
         if (isLandedOn)
         {
             var bonds = game.Bonds.Where(b => b.Nation == nationState.Nation && b.HolderId != null).ToList();
-            
+
             int owedToController = 0;
             int owedToOthers = 0;
 
@@ -859,20 +859,20 @@ public class GamesController : ControllerBase
                 // Treasury insufficient for others
                 int treasuryAmount = nationState.Treasury;
                 nationState.Treasury = 0;
-                
+
                 // Calculate how much the controller can actually cover
                 int deficit = owedToOthers - treasuryAmount;
                 int paymentFromController = Math.Min(controller.Cash, deficit); // Cap at available cash
-                
+
                 controller.Cash -= paymentFromController;
                 if (paymentFromController > 0)
                 {
                     context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"personally contributed {paymentFromController}M to cover interest deficit" });
                 }
-                
+
                 // Total funds available for others
                 int totalForOthers = treasuryAmount + paymentFromController;
-                
+
                 // Distribute to others
                 if (totalForOthers >= owedToOthers)
                 {
@@ -889,16 +889,16 @@ public class GamesController : ControllerBase
                 else
                 {
                     // Partial payment (Pro-rata)
-                     double ratio = (double)totalForOthers / owedToOthers;
-                     foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
-                     {
-                         var holder = game.Players.First(p => p.Id == bond.HolderId);
-                         int payout = (int)(bond.Interest * ratio);
-                         holder.Cash += payout;
-                         context.Entry(holder).State = EntityState.Modified;
-                         var holderName = GetPlayerName(holder);
-                         context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {payout}M interest to {holderName}" });
-                     }
+                    double ratio = (double)totalForOthers / owedToOthers;
+                    foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+                    {
+                        var holder = game.Players.First(p => p.Id == bond.HolderId);
+                        int payout = (int)(bond.Interest * ratio);
+                        holder.Cash += payout;
+                        context.Entry(holder).State = EntityState.Modified;
+                        var holderName = GetPlayerName(holder);
+                        context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {payout}M interest to {holderName}" });
+                    }
                 }
 
                 if (owedToController > 0)
@@ -907,19 +907,19 @@ public class GamesController : ControllerBase
                 }
             }
         }
-        
+
         // 2. Activating the Investor
         // 2M Bonus
         if (game.InvestorCardHolderId.HasValue)
         {
-             var investor = game.Players.FirstOrDefault(p => p.Id == game.InvestorCardHolderId.Value);
-             if (investor != null)
-             {
-                 investor.Cash += 2;
-                 context.Entry(investor).State = EntityState.Modified;
-                 var investorName = GetPlayerName(investor);
-                 context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = investorName, ActionType = "InvestorBonus", Message = "received 2M Investor bonus" });
-             }
+            var investor = game.Players.FirstOrDefault(p => p.Id == game.InvestorCardHolderId.Value);
+            if (investor != null)
+            {
+                investor.Cash += 2;
+                context.Entry(investor).State = EntityState.Modified;
+                var investorName = GetPlayerName(investor);
+                context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = investorName, ActionType = "InvestorBonus", Message = "received 2M Investor bonus" });
+            }
         }
 
         // Determine investment order: Swiss Bank players first, then Investor Card Holder
@@ -963,7 +963,7 @@ public class GamesController : ControllerBase
             {
                 if (!investmentMap.ContainsKey(bond.HolderId.Value))
                     investmentMap[bond.HolderId.Value] = 0;
-                
+
                 investmentMap[bond.HolderId.Value] += bond.Cost;
             }
         }
@@ -974,12 +974,12 @@ public class GamesController : ControllerBase
         // We don't track purchase time perfectly, but we know the Acting Player just bought one.
         // So if Acting Player ties with current controller, Acting Player takes it? 
         // Or if Acting Player ties with someone else?
-        
+
         // Simpler Heuristic for now:
         // 1. Sort by Total Investment Descending.
         // 2. If Tie, and one is the current controller, keep controller.
         // 3. If Tie, and one is Acting Player (who just bought), they take it (New Arrival).
-        
+
         if (!investmentMap.Any()) return;
 
         var currentControllerId = nationState.ControllerId;
@@ -1019,9 +1019,9 @@ public class GamesController : ControllerBase
                 }
                 else
                 {
-                     // Fallback: Pick first
-                     nationState.ControllerId = candidates[0];
-                     context.Entry(nationState).State = EntityState.Modified;
+                    // Fallback: Pick first
+                    nationState.ControllerId = candidates[0];
+                    context.Entry(nationState).State = EntityState.Modified;
                 }
             }
         }
@@ -1049,10 +1049,10 @@ public class GamesController : ControllerBase
         if (targetSlot < 0 || targetSlot > 7) return BadRequest($"Invalid slot {targetSlot}. Must be 0-7.");
 
         var nationState = game.NationStates.First(n => n.Nation == nation);
-        
+
         // Controller Check
         if (nationState.ControllerId == null) return BadRequest("No controller for this nation.");
-        
+
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
@@ -1074,10 +1074,10 @@ public class GamesController : ControllerBase
             if (currentSlot.Value == targetSlot) return BadRequest("Must move to a different slot.");
 
             int distance = (targetSlot - currentSlot.Value + 8) % 8;
-            
+
             if (distance == 0) return BadRequest("Must move at least 1 step."); // Should be covered by above equality check but safe.
-            // distance is 1..7
-            
+                                                                                // distance is 1..7
+
             if (distance > 3)
             {
                 // Cost per additional step = 1 + Power Factor (Power / 5)
@@ -1093,29 +1093,29 @@ public class GamesController : ControllerBase
         controller.Cash -= cost;
         nationState.RondelPosition = targetSlot;
         nationState.HasMovedThisTurn = true;
-        
+
         // Reset Action Flags for the new slot
         nationState.HasProducedThisTurn = false;
         nationState.HasBuiltThisTurn = false;
         nationState.HasImportedThisTurn = false;
-        
+
         // Turn advancement is now manual via EndTurn endpoint
-        
+
         // Reset Unit Movement for this nation
-        foreach(var u in game.Units.Where(u => u.Nation == nation))
+        foreach (var u in game.Units.Where(u => u.Nation == nation))
         {
-             u.HasMoved = false;
-             u.HasConvoyed = false; 
-             _context.Entry(u).State = EntityState.Modified;
+            u.HasMoved = false;
+            u.HasConvoyed = false;
+            _context.Entry(u).State = EntityState.Modified;
         }
         _context.Entry(controller).State = EntityState.Modified;
         _context.Entry(nationState).State = EntityState.Modified;
 
         await _context.SaveChangesAsync();
-        
+
         LogAction(game, $"moved to {GetRondelSlotName(targetSlot)} (Cost: {cost}M)", "Move", nation);
         await _context.SaveChangesAsync();
-        
+
         // Check for Investor Slot (Index 4)
         bool triggeredInvestor = false;
         if (currentSlot != null)
@@ -1126,7 +1126,7 @@ public class GamesController : ControllerBase
             for (int i = 1; i <= dist; i++)
             {
                 int step = (currentSlot.Value + i) % 8;
-                if (step == 4) 
+                if (step == 4)
                 {
                     triggeredInvestor = true;
                     break;
@@ -1153,7 +1153,7 @@ public class GamesController : ControllerBase
         if (targetSlot == 3 || targetSlot == 7)
         {
             game.CurrentManeuverPhase = ManeuverPhase.Fleets;
-            
+
             bool hasFleets = game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved);
             if (!hasFleets)
             {
@@ -1176,13 +1176,13 @@ public class GamesController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
-        
+
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
-        
+
         // Trigger bot if Investor Phase was activated for a bot
         if (game.IsInvestorTurn)
         {
-             _botService.TriggerBotTurn(gameId, 2500);
+            _botService.TriggerBotTurn(gameId, 2500);
         }
 
         return Ok();
@@ -1217,7 +1217,7 @@ public class GamesController : ControllerBase
 
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
-        
+
         var currentNation = game.CurrentTurnNation;
         var nationState = game.NationStates.First(n => n.Nation == currentNation);
 
@@ -1248,7 +1248,7 @@ public class GamesController : ControllerBase
             var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tState.TerritoryId);
             if (def == null) continue;
 
-            if (def.Nation != currentNation) continue; 
+            if (def.Nation != currentNation) continue;
 
             var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tState.TerritoryId).ToList();
             bool isBlockaded = unitsInTerritory.Any(u => u.Nation != currentNation && u.UnitType == UnitType.Army && u.IsHostile);
@@ -1268,7 +1268,7 @@ public class GamesController : ControllerBase
                 UnitType = typeToProduce,
                 IsHostile = false
             };
-            
+
             _context.Units.Add(newUnit);
             createdUnits++;
             if (typeToProduce == UnitType.Army) createdArmies++;
@@ -1281,7 +1281,7 @@ public class GamesController : ControllerBase
         {
             nationState.HasProducedThisTurn = true;
             _context.Entry(nationState).State = EntityState.Modified;
-            
+
             LogAction(game, $"produced {createdUnits} units ({string.Join(", ", producedDetails)})", "Production", currentNation);
 
             await _context.SaveChangesAsync();
@@ -1309,59 +1309,59 @@ public class GamesController : ControllerBase
         if (game == null) return NotFound();
         if (!game.IsInvestorTurn) return BadRequest("Not investor turn.");
         if (game.ActingPlayerId == null) return BadRequest("No acting player.");
-        
+
         var actingPlayer = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId);
         if (actingPlayer == null || actingPlayer.UserId != userId) return Forbid();
 
         if (action.ActionType == "Buy")
         {
-             if (action.BondId == null) return BadRequest("BondId required.");
-             var bond = game.Bonds.FirstOrDefault(b => b.Id == action.BondId);
-             if (bond == null) return BadRequest("Bond not found.");
-             if (bond.HolderId != null) return BadRequest("Bond already owned."); 
+            if (action.BondId == null) return BadRequest("BondId required.");
+            var bond = game.Bonds.FirstOrDefault(b => b.Id == action.BondId);
+            if (bond == null) return BadRequest("Bond not found.");
+            if (bond.HolderId != null) return BadRequest("Bond already owned.");
 
-             int cost = bond.Cost;
-             
-             // Trade In Logic
-             if (action.TradeInBondId.HasValue)
-             {
-                 var tradeIn = game.Bonds.FirstOrDefault(b => b.Id == action.TradeInBondId.Value);
-                 if (tradeIn == null) return BadRequest("Trade-in bond not found.");
-                 if (tradeIn.HolderId != actingPlayer.Id) return BadRequest("You do not own the trade-in bond.");
-                 if (tradeIn.Nation != bond.Nation) return BadRequest("Trade-in must be for same nation.");
-                 if (tradeIn.Cost >= bond.Cost) return BadRequest("New bond must be higher value.");
-                 
-                 cost = bond.Cost - tradeIn.Cost;
-                 
-                 // Return old bond to bank
-                 tradeIn.HolderId = null;
-                 _context.Entry(tradeIn).State = EntityState.Modified;
-             }
-             
-             // Check funds
-             if (actingPlayer.Cash < cost) return BadRequest("Insufficient funds.");
+            int cost = bond.Cost;
 
-             actingPlayer.Cash -= cost;
-             bond.HolderId = actingPlayer.Id;
-             
-             // Pay to Treasury
-             var ns = game.NationStates.First(n => n.Nation == bond.Nation);
-             ns.Treasury += cost;
-             
-             _context.Entry(ns).State = EntityState.Modified;
-             _context.Entry(bond).State = EntityState.Modified;
-             _context.Entry(actingPlayer).State = EntityState.Modified;
-             
-             // Update Controller Logic
-             UpdateNationController(_context, game, ns.Nation);
+            // Trade In Logic
+            if (action.TradeInBondId.HasValue)
+            {
+                var tradeIn = game.Bonds.FirstOrDefault(b => b.Id == action.TradeInBondId.Value);
+                if (tradeIn == null) return BadRequest("Trade-in bond not found.");
+                if (tradeIn.HolderId != actingPlayer.Id) return BadRequest("You do not own the trade-in bond.");
+                if (tradeIn.Nation != bond.Nation) return BadRequest("Trade-in must be for same nation.");
+                if (tradeIn.Cost >= bond.Cost) return BadRequest("New bond must be higher value.");
 
-             LogAction(game, $"bought {bond.Nation} {bond.Cost}M bond", "Investment");
+                cost = bond.Cost - tradeIn.Cost;
+
+                // Return old bond to bank
+                tradeIn.HolderId = null;
+                _context.Entry(tradeIn).State = EntityState.Modified;
+            }
+
+            // Check funds
+            if (actingPlayer.Cash < cost) return BadRequest("Insufficient funds.");
+
+            actingPlayer.Cash -= cost;
+            bond.HolderId = actingPlayer.Id;
+
+            // Pay to Treasury
+            var ns = game.NationStates.First(n => n.Nation == bond.Nation);
+            ns.Treasury += cost;
+
+            _context.Entry(ns).State = EntityState.Modified;
+            _context.Entry(bond).State = EntityState.Modified;
+            _context.Entry(actingPlayer).State = EntityState.Modified;
+
+            // Update Controller Logic
+            UpdateNationController(_context, game, ns.Nation);
+
+            LogAction(game, $"bought {bond.Nation} {bond.Cost}M bond", "Investment");
         }
         else
         {
-             LogAction(game, "passed on investment", "Investment");
+            LogAction(game, "passed on investment", "Investment");
         }
-        
+
         // Advance queue
         if (game.PendingInvestorIds != null && game.PendingInvestorIds.Any())
         {
@@ -1380,7 +1380,7 @@ public class GamesController : ControllerBase
             game.IsInvestorTurn = false;
             game.ActingPlayerId = null;
         }
-        
+
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
 
@@ -1425,7 +1425,7 @@ public class GamesController : ControllerBase
         // 1. Validate Rondel Position
         // Assuming slot 1 is Factory (based on Rondel.razor)
         if (nationState.RondelPosition != 1) return BadRequest("Nation must be on 'Factory' slot.");
-        
+
         // 1b. Validate Per Turn Limit
         if (nationState.HasBuiltThisTurn) return BadRequest("Already built factory this turn.");
 
@@ -1452,7 +1452,7 @@ public class GamesController : ControllerBase
         // 6. Execute Build
         nationState.Treasury -= FactoryCost;
         territoryState.HasFactory = true;
-        
+
         // Set flag
         nationState.HasBuiltThisTurn = true;
 
@@ -1471,8 +1471,6 @@ public class GamesController : ControllerBase
 
         return Ok();
     }
-
-    // Removed private AdvanceTurn delegate method
 
     [HttpPost("{gameId}/end-turn")]
     public async Task<IActionResult> EndTurn(Guid gameId)
@@ -1505,7 +1503,7 @@ public class GamesController : ControllerBase
         game.AdvanceTurn();
 
         _context.Entry(game).State = EntityState.Modified;
-        
+
         LogAction(game, $"ended their turn", "EndTurn", nation);
         await _context.SaveChangesAsync();
 
@@ -1516,6 +1514,7 @@ public class GamesController : ControllerBase
 
         return Ok();
     }
+
     [HttpPost("{gameId}/taxation")]
     public async Task<IActionResult> ExecuteTaxation(Guid gameId)
     {
@@ -1551,7 +1550,7 @@ public class GamesController : ControllerBase
         int oldTreasury = nationState.Treasury;
         // --- Apply Centralized Taxation Logic ---
         var result = Imperial2030.Server.Helpers.TaxationHelper.ApplyTaxation(game, nationState, controller);
-        
+
         // Mark Controller as modified if they gained cash
         if (result.Bonus > 0)
         {
@@ -1563,23 +1562,22 @@ public class GamesController : ControllerBase
         int treasuryGain = nationState.Treasury - oldTreasury;
         LogAction(game, $"collected taxes: {result.TotalTaxRevenue}M (Soldiers' Pay: -{result.SoldiersPay}M, Treasury Gain: {(treasuryGain >= 0 ? "+" : "")}{treasuryGain}M, Bonus: {result.Bonus}M, Power: +{result.PowerGain})", "Taxation", nation);
         await _context.SaveChangesAsync();
-        
+
         // --- Game End Check ---
         if (nationState.Power >= 25)
         {
-             game.Status = GameStatus.Finished;
-             _context.Entry(game).State = EntityState.Modified;
-             await _context.SaveChangesAsync();
-             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); // Notify update FIRST so clients see 25 Power
-             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameEnded", gameId); // Notify end
-             return Ok(new { Message = "Game Over", Winner = nation });
+            game.Status = GameStatus.Finished;
+            _context.Entry(game).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); // Notify update FIRST so clients see 25 Power
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameEnded", gameId); // Notify end
+            return Ok(new { Message = "Game Over", Winner = nation });
         }
-
 
         // --- Step 5: Turn Advance ---
         // Same logic as EndTurn (resets all turn state flags automatically)
         game.AdvanceTurn();
-        
+
         _context.Entry(game).State = EntityState.Modified;
         await _context.SaveChangesAsync();
 
@@ -1588,15 +1586,14 @@ public class GamesController : ControllerBase
         // Trigger bot if next nation is bot-controlled
         _botService.TriggerBotTurn(gameId, 2500);
 
-        return Ok(new 
-        { 
-            TaxRevenue = result.TotalTaxRevenue, 
-            SoldiersPay = result.SoldiersPay, 
-            Bonus = result.Bonus, 
-            PowerGain = result.PowerGain 
+        return Ok(new
+        {
+            TaxRevenue = result.TotalTaxRevenue,
+            SoldiersPay = result.SoldiersPay,
+            Bonus = result.Bonus,
+            PowerGain = result.PowerGain
         });
     }
-
 
     [HttpPost("{gameId}/import")]
     public async Task<IActionResult> ExecuteImport(Guid gameId, [FromBody] ImportRequest request)
@@ -1622,7 +1619,7 @@ public class GamesController : ControllerBase
         if (controller.UserId != userId) return Forbid();
 
         // 5 is Import slot
-        if (nationState.RondelPosition != 5) return BadRequest("Not in Import phase."); 
+        if (nationState.RondelPosition != 5) return BadRequest("Not in Import phase.");
         if (nationState.HasImportedThisTurn) return BadRequest("Already imported this turn.");
 
         if (request.Units.Count > 3) return BadRequest("Cannot import more than 3 units.");
@@ -1659,14 +1656,14 @@ public class GamesController : ControllerBase
 
         if (currentArmies + requestedArmies > Imperial2030.Shared.Constants.NationData.GetMaxArmies(game.CurrentTurnNation))
             return BadRequest($"Cannot import. Maximum armies allowed is {Imperial2030.Shared.Constants.NationData.GetMaxArmies(game.CurrentTurnNation)}.");
-        
+
         if (currentFleets + requestedFleets > Imperial2030.Shared.Constants.NationData.GetMaxFleets(game.CurrentTurnNation))
             return BadRequest($"Cannot import. Maximum fleets allowed is {Imperial2030.Shared.Constants.NationData.GetMaxFleets(game.CurrentTurnNation)}.");
 
         // Execute
         nationState.Treasury -= cost;
         nationState.HasImportedThisTurn = true;
-        
+
         foreach (var unitReq in request.Units)
         {
             var newUnit = new Unit
@@ -1676,21 +1673,22 @@ public class GamesController : ControllerBase
                 TerritoryId = unitReq.TerritoryId,
                 UnitType = unitReq.UnitType,
                 IsHostile = false, // Default to standing (friendly)
-                HasMoved = false 
+                HasMoved = false
             };
             _context.Units.Add(newUnit);
         }
 
         _context.Entry(nationState).State = EntityState.Modified;
-        
+
         var locationNames = request.Units.Select(u => $"{u.UnitType} in " + (TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == u.TerritoryId)?.Name ?? u.TerritoryId)).ToList();
         LogAction(game, $"imported {request.Units.Count} units ({string.Join(", ", locationNames)})", "Import", game.CurrentTurnNation);
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
-        
+
         return Ok($"Imported {request.Units.Count} units ({string.Join(", ", locationNames)}).");
     }
+
     private void LogAction(Game game, string message, string type, Nation? nation = null)
     {
         var action = new GameAction

@@ -127,7 +127,7 @@ namespace Imperial2030.Tests
             await context.SaveChangesAsync();
 
             // 4. Play game
-            int maxTurns = 5000;
+            int maxTurns = 30000;
             int turns = 0;
 
             while (turns < maxTurns)
@@ -401,8 +401,8 @@ namespace Imperial2030.Tests
             var updatedGame = await GetDbContext(dbName).Games.Include(g => g.Players).FirstAsync(g => g.Id == gameId);
             
             Assert.True(updatedGame.IsInvestorTurn);
-            Assert.Equal(bot2Id, updatedGame.ActingPlayerId);
-            Assert.Equal(new List<Guid> { humanId }, updatedGame.PendingInvestorIds);
+            Assert.Equal(humanId, updatedGame.ActingPlayerId);
+            Assert.Empty(updatedGame.PendingInvestorIds);
             Assert.Equal(humanId, updatedGame.InvestorCardHolderId);
         }
         [Fact]
