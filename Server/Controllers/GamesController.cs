@@ -426,13 +426,17 @@ public class GamesController : ControllerBase
         int botIndex = game.Players.Count(p => p.IsBot);
         var botName = botIndex < BotNames.Length ? BotNames[botIndex] : $"Bot {botIndex + 1}";
 
+        var botTypes = new[] { "Default", "Aggressive", "Friendly", "Greedy" };
+        var randomBotType = botTypes[Random.Shared.Next(botTypes.Length)];
+
         var bot = new Player
         {
             UserId = null,
             GameId = gameId,
             IsHost = false,
             IsBot = true,
-            BotName = botName
+            BotName = botName + $" ({randomBotType})",
+            BotType = randomBotType
         };
 
         _context.Players.Add(bot);

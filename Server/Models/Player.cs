@@ -19,6 +19,7 @@ public class Player
     public bool IsHost { get; set; }
     public bool IsBot { get; set; } = false;
     public string? BotName { get; set; }
+    public string? BotType { get; set; }
 
     // Gameplay specific properties
     public int Cash { get; set; } = 0; // Starting cash depends on starting nation or generic start

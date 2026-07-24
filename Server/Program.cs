@@ -15,6 +15,10 @@ builder.Services.AddControllersWithViews();
 builder.Services.AddRazorPages();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<Imperial2030.Server.Services.PresenceTracker>();
+builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy>();
+builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.AggressiveBotStrategy>();
+builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.FriendlyBotStrategy>();
+builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.GreedyBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.BotService>();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");

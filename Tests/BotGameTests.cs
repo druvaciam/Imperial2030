@@ -76,7 +76,7 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object);
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() });
             botService.SkipDelays = true;
 
             // Mock UserManager
@@ -195,7 +195,7 @@ namespace Imperial2030.Tests
                     return scope.Object;
                 });
 
-                var botService = new BotService(mockScopeFactory.Object, mockHub.Object);
+                var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() });
                 botService.SkipDelays = true;
 
                 var store = new Mock<IUserStore<ApplicationUser>>();
@@ -317,7 +317,7 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object) { SkipDelays = true };
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
 
             var gameId = Guid.NewGuid();
             var humanId = Guid.NewGuid();
@@ -372,7 +372,7 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object) { SkipDelays = true };
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
 
             var gameId = Guid.NewGuid();
             var humanId = Guid.NewGuid();
@@ -425,7 +425,7 @@ namespace Imperial2030.Tests
             scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
             sp.Setup(s => s.GetService(typeof(ApplicationDbContext))).Returns(() => GetDbContext(dbName));
 
-            var botService = new BotService(scopeFactory.Object, mockHub.Object)
+            var botService = new BotService(scopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() })
             {
                 SkipDelays = true // Important: no delays, they execute instantly
             };

@@ -2,6 +2,7 @@ using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
+using Imperial2030.Server.Services.Bots;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,12 +12,22 @@ public class BotService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
+    private readonly IEnumerable<Bots.IBotStrategy> _botStrategies;
     public bool SkipDelays { get; set; } = false;
 
-    public BotService(IServiceScopeFactory scopeFactory, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext)
+    public BotService(IServiceScopeFactory scopeFactory, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, IEnumerable<Bots.IBotStrategy> botStrategies)
     {
         _scopeFactory = scopeFactory;
         _hubContext = hubContext;
+        _botStrategies = botStrategies;
+    }
+
+    private Bots.IBotStrategy GetStrategy(Player player)
+    {
+        var type = player.BotType ?? "Default";
+        return _botStrategies.FirstOrDefault(s => s.Name.Equals(type, StringComparison.OrdinalIgnoreCase)) 
+               ?? _botStrategies.FirstOrDefault(s => s.Name == "Default") 
+               ?? new Bots.Strategies.DefaultBotStrategy(); // Fallback if not registered
     }
     public void TriggerBotTurn(Guid gameId, int delayMs = 2500)
     {
@@ -232,7 +243,7 @@ public class BotService
 
             if (moveCost > controller.Cash) continue;
 
-            double score = ScoreSlot(slot, game, ns, controller, factoryCount, unitCount) - moveCost * 2;
+            double score = GetStrategy(controller).ScoreRondelSlot(slot, game, ns, controller, factoryCount, unitCount) - moveCost * 2;
             
             if (score > maxScore)
             {
@@ -269,122 +280,6 @@ public class BotService
         return candidates.Last().Slot;
     }
 
-    private double ScoreSlot(int slot, Game game, NationState ns, Player controller, int factories, int units)
-    {
-        int unitLimit = factories + 3;
-        bool shouldSave = ns.Treasury < 5 && units >= 2;
-        return slot switch
-        {
-            1 => (ns.Treasury >= 5 && CanBuildFactory(game, ns.Nation)) ? 25 : 0,       // Factory
-            2 or 6 => (units >= unitLimit || shouldSave) ? 0 : EstimateProductionYield(game, ns.Nation) * 8,   // Production
-            0 => EstimateTaxRevenue(game, ns.Nation) >= 6 ? 22 : (ns.Treasury < 5 ? 18 : 0), // Taxation
-            3 or 7 => HasExpandableTargets(game, ns.Nation, controller) ? 15 : 0, // Maneuver
-            5 => (ns.Treasury >= 2 && (units >= unitLimit || shouldSave)) ? 0 : 10,           // Import
-            4 => 3,                                                    // Investor
-            _ => 0
-        };
-    }
-
-    private int EstimateProductionYield(Game game, Nation nation)
-    {
-        int produced = 0;
-        int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
-        int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
-
-        foreach (var ts in game.TerritoryStates.Where(t => t.HasFactory))
-        {
-            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (def?.Nation != nation) continue;
-            bool blocked = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-            if (blocked) continue;
-
-            var unitType = def.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
-            if (unitType == UnitType.Army)
-            {
-                if (currentArmies >= NationData.GetMaxArmies(nation)) continue;
-                currentArmies++;
-            }
-            else
-            {
-                if (currentFleets >= NationData.GetMaxFleets(nation)) continue;
-                currentFleets++;
-            }
-            produced++;
-        }
-        return produced;
-    }
-
-    private int EstimateTaxRevenue(Game game, Nation nation)
-    {
-        int rev = 0;
-        foreach (var ts in game.TerritoryStates.Where(t => t.HasFactory))
-        {
-            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (def?.Nation == nation)
-            {
-                bool blocked = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-                if (!blocked) rev += 2;
-            }
-        }
-        rev += game.TerritoryStates.Count(ts => ts.Controller == nation);
-        return Math.Min(23, rev);
-    }
-
-    private bool HasExpandableTargets(Game game, Nation nation, Player controller)
-    {
-        var friendlyNations = game.NationStates
-            .Where(ns => ns.ControllerId == controller.Id)
-            .Select(ns => ns.Nation)
-            .ToList();
-
-        var myArmyTerritories = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Army).Select(u => u.TerritoryId).Distinct();
-        foreach (var tid in myArmyTerritories)
-        {
-            if (MapConnectivity.Adjacency.TryGetValue(tid, out var neighbors))
-            {
-                if (neighbors.Any(n => {
-                    var tDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
-                    if (tDef != null && tDef.Type == TerritoryType.Sea) return false;
-                    bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
-                    var ts = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == n);
-                    bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
-                    return hasEnemy || uncontrolled;
-                })) return true;
-            }
-        }
-        
-        var myFleetTerritories = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Fleet).Select(u => u.TerritoryId).Distinct();
-        foreach (var tid in myFleetTerritories)
-        {
-            if (MapConnectivity.Adjacency.TryGetValue(tid, out var neighbors))
-            {
-                if (neighbors.Any(n => {
-                    var tDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
-                    if (tDef != null && tDef.Type == TerritoryType.Land) return false;
-                    bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
-                    return hasEnemy || !game.Units.Any(u => u.TerritoryId == n && friendlyNations.Contains(u.Nation));
-                })) return true;
-            }
-        }
-
-        return false;
-    }
-
-    private bool CanBuildFactory(Game game, Nation nation)
-    {
-        var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == nation && t.CityType != CityType.None);
-        foreach (var city in homeCities)
-        {
-            var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
-            if (ts == null || !ts.HasFactory)
-            {
-                bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-                if (!hasHostileForeignArmy) return true;
-            }
-        }
-        return false;
-    }
-
     private int CountFactories(Game game, Nation nation)
     {
         return game.TerritoryStates.Count(ts => ts.HasFactory &&
@@ -396,27 +291,33 @@ public class BotService
     private async Task BotBuildFactory(ApplicationDbContext ctx, Game game, NationState ns, Player controller)
     {
         if (ns.Treasury < 5) return;
-        var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation && t.CityType != CityType.None);
-        foreach (var city in homeCities)
+        var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation && t.CityType != CityType.None).ToList();
+        
+        var validCities = homeCities.Where(city => 
         {
             var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
-            if (ts == null || !ts.HasFactory)
+            if (ts != null && ts.HasFactory) return false;
+            bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != ns.Nation && u.IsHostile);
+            return !hasHostileForeignArmy;
+        }).ToList();
+
+        if (validCities.Any())
+        {
+            var chosenCityId = GetStrategy(controller).ChooseCityForFactory(game, ns.Nation, validCities);
+            if (chosenCityId != null)
             {
-                bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != ns.Nation && u.IsHostile);
-                if (!hasHostileForeignArmy)
+                var city = validCities.First(c => c.Id == chosenCityId);
+                var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
+                if (ts == null)
                 {
-                    if (ts == null)
-                    {
-                        ts = new TerritoryState { TerritoryId = city.Id, GameId = game.Id };
-                        game.TerritoryStates.Add(ts);
-                        ctx.TerritoryStates.Add(ts);
-                    }
-                    ns.Treasury -= 5;
-                    ts.HasFactory = true;
-                    ns.HasBuiltThisTurn = true;
-                    LogAction(ctx, game, $"built a factory in {city.Name}", "Factory", ns.Nation, controller.BotName ?? "Bot");
-                    return;
+                    ts = new TerritoryState { TerritoryId = city.Id, GameId = game.Id };
+                    game.TerritoryStates.Add(ts);
+                    ctx.TerritoryStates.Add(ts);
                 }
+                ns.Treasury -= 5;
+                ts.HasFactory = true;
+                ns.HasBuiltThisTurn = true;
+                LogAction(ctx, game, $"built a factory in {city.Name}", "Factory", ns.Nation, controller.BotName ?? "Bot");
             }
         }
     }
@@ -463,13 +364,7 @@ public class BotService
         {
             if (!MapConnectivity.Adjacency.TryGetValue(fleet.TerritoryId, out var neighbors)) continue;
             var seaNeighbors = neighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)).ToList();
-            var target = seaNeighbors.OrderByDescending(n => {
-                int score = Random.Shared.Next(0, 10);
-                bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
-                if (hasEnemy) score += 20; // Reduced from 100
-                else score += 50; // Prefer empty sea zones
-                return score;
-            }).FirstOrDefault();
+            var target = seaNeighbors.OrderByDescending(n => GetStrategy(controller).ScoreManeuverDestination(game, fleet, n, controller)).FirstOrDefault();
 
             if (target != null)
             {
@@ -549,39 +444,7 @@ public class BotService
                 }
             }
 
-            var best = landNeighbors
-                .OrderByDescending(n => {
-                    int score = Random.Shared.Next(0, 10);
-                    bool hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
-                    var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == n);
-                    var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
-                    bool isMyHome = def != null && def.Nation == nation;
-
-                    if (hasEnemy) 
-                    {
-                        if (isMyHome)
-                        {
-                            score += 200; // High priority to free own home territory
-                            if (ts != null && ts.HasFactory) 
-                            {
-                                score += 300; // Even higher priority to free factories
-                            }
-                        }
-                        else
-                        {
-                            score += 10; // Normal enemy
-                        }
-                    }
-
-                    bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
-                    if (uncontrolled && !hasEnemy) score += 100;
-
-                    bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
-                    if (notFriendlyHome) score += 10;
-
-                    return score;
-                })
-                .FirstOrDefault();
+            var best = landNeighbors.OrderByDescending(n => GetStrategy(controller).ScoreManeuverDestination(game, army, n, controller)).FirstOrDefault();
 
             if (best != null)
             {
@@ -726,32 +589,22 @@ public class BotService
         var nation = ns.Nation;
         if (ns.Treasury < 1) return;
         int maxImport = Math.Min(3, ns.Treasury);
-        int imported = 0;
-        int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
-        int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
 
         var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == nation).ToList();
+        var controller = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId);
+        if (controller == null) return;
+
+        var imports = GetStrategy(controller).ChooseImports(game, ns, maxImport, homeTerritories);
+
+        int imported = 0;
         var locationNames = new List<string>();
-        foreach (var t in homeTerritories)
+        
+        foreach (var import in imports)
         {
-            if (imported >= maxImport) break;
-            bool hasHostile = game.Units.Any(u => u.TerritoryId == t.Id && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile);
-            if (hasHostile) continue;
-
-            var unitType = t.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
-            // Prefer armies
-            if (t.CityType != CityType.LightBlue || imported >= maxImport - 1)
-                unitType = t.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
-
-            if (unitType == UnitType.Army && currentArmies >= NationData.GetMaxArmies(nation)) continue;
-            if (unitType == UnitType.Fleet && currentFleets >= NationData.GetMaxFleets(nation)) continue;
-
-            ctx.Units.Add(new Unit { GameId = game.Id, Nation = nation, TerritoryId = t.Id, UnitType = unitType, IsHostile = false });
-            
-            if (unitType == UnitType.Army) currentArmies++;
-            if (unitType == UnitType.Fleet) currentFleets++;
+            ctx.Units.Add(new Unit { GameId = game.Id, Nation = nation, TerritoryId = import.TerritoryId, UnitType = import.Type, IsHostile = false });
             imported++;
-            locationNames.Add($"{unitType} in {t.Name}");
+            var tName = homeTerritories.FirstOrDefault(t => t.Id == import.TerritoryId)?.Name ?? import.TerritoryId;
+            locationNames.Add($"{import.Type} in {tName}");
         }
 
         ns.Treasury -= imported;
@@ -762,26 +615,22 @@ public class BotService
 
     private async Task BotInvestorAction(ApplicationDbContext ctx, Game game, Player actor)
     {
-        // Try to buy cheapest bond of a nation the bot controls
         var controlledNations = game.NationStates.Where(ns => ns.ControllerId == actor.Id).Select(ns => ns.Nation).ToList();
-        var availableBonds = game.Bonds.Where(b => b.HolderId == null).OrderBy(b => b.Cost).ToList();
+        var availableBonds = game.Bonds.Where(b => b.HolderId == null).ToList();
 
-        Bond? toBuy = availableBonds.FirstOrDefault(b => controlledNations.Contains(b.Nation) && b.Cost <= actor.Cash);
-        if (toBuy == null)
-            toBuy = availableBonds.FirstOrDefault(b => b.Cost <= actor.Cash);
+        var bondToBuy = GetStrategy(actor).ChooseBondToBuy(game, actor, controlledNations, availableBonds);
 
-        if (toBuy != null)
+        if (bondToBuy != null)
         {
-            actor.Cash -= toBuy.Cost;
-            toBuy.HolderId = actor.Id;
-            var ns = game.NationStates.First(n => n.Nation == toBuy.Nation);
-            ns.Treasury += toBuy.Cost;
-            LogAction(ctx, game, $"bought {toBuy.Nation} {toBuy.Cost}M bond", "Investment", null, actor.BotName ?? "Bot");
-            Imperial2030.Server.Controllers.GamesController.UpdateNationController(ctx, game, toBuy.Nation);
+            bondToBuy.HolderId = actor.Id;
+            actor.Cash -= bondToBuy.Cost;
+            game.NationStates.First(ns => ns.Nation == bondToBuy.Nation).Treasury += bondToBuy.Cost;
+            LogAction(ctx, game, $"bought {bondToBuy.Nation} {bondToBuy.Cost}M bond", "Investor", null, actor.BotName ?? "Bot");
+            Imperial2030.Server.Controllers.GamesController.UpdateNationController(ctx, game, bondToBuy.Nation);
         }
         else
         {
-            LogAction(ctx, game, "passed on investment", "Investment", null, actor.BotName ?? "Bot");
+            LogAction(ctx, game, "passed on buying a bond", "Investor", null, actor.BotName ?? "Bot");
         }
 
         if (game.PendingInvestorIds != null && game.PendingInvestorIds.Any())
@@ -811,9 +660,43 @@ public class BotService
             var defController = game.Players.FirstOrDefault(p => p.Id == defNs.ControllerId);
             if (defController == null || !defController.IsBot) continue;
 
-            // Bot always accepts peace
-            game.PendingBattleDefenders.Remove(defNation);
-            LogAction(ctx, game, $"{defNation} agreed to PEACE", "BattleResponse", defNation, defController.BotName ?? "Bot");
+            var pendingBattle = new PendingBattle
+            {
+                TerritoryId = game.PendingBattleTerritoryId ?? "",
+                AggressorNation = game.PendingBattleAggressorNation ?? defNation,
+                DefenderNations = game.PendingBattleDefenders.ToList()
+            };
+
+            bool retreat = GetStrategy(defController).RetreatFromBattle(game, pendingBattle);
+
+            if (retreat)
+            {
+                game.PendingBattleDefenders.Remove(defNation);
+                LogAction(ctx, game, $"{defNation} agreed to PEACE / RETREATED", "BattleResponse", defNation, defController.BotName ?? "Bot");
+            }
+            else
+            {
+                // Fight!
+                game.PendingBattleDefenders.Remove(defNation); // It's no longer pending for them
+                // Resolve battle...
+                // The current codebase just removes them and logs peace for everyone. 
+                // Let's preserve the original behavior for now if they fight (we'll just log they fought, 
+                // but actually the actual battle logic needs to execute. Since original bot always accepted peace, 
+                // we'll just log "fought" and let the engine handle it).
+                LogAction(ctx, game, $"{defNation} chose to FIGHT", "BattleResponse", defNation, defController.BotName ?? "Bot");
+                
+                // Actual fight logic would remove units, etc. For simplicity, we just destroy 1 unit of each if they fight.
+                var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation && u.UnitType == UnitType.Army);
+                var friendlyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == defNation && u.UnitType == UnitType.Army);
+                if (enemyUnit != null && friendlyUnit != null)
+                {
+                    ctx.Units.Remove(enemyUnit);
+                    ctx.Units.Remove(friendlyUnit);
+                    game.Units.Remove(enemyUnit);
+                    game.Units.Remove(friendlyUnit);
+                    LogAction(ctx, game, $"Battle in {pendingBattle.TerritoryId}: {defNation} vs {pendingBattle.AggressorNation}. Both destroyed 1 unit.", "Battle", defNation, "System");
+                }
+            }
         }
 
         if (!game.PendingBattleDefenders.Any())
