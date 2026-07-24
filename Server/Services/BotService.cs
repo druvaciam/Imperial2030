@@ -30,44 +30,62 @@ public class BotService
         });
     }
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> _activeBotGames = new();
+
     public async Task TryPlayBotTurnAsync(Guid gameId)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-        var game = await LoadGame(ctx, gameId);
-        if (game == null || game.Status != GameStatus.InProgress) return;
-
-        // Handle bot investor phase
-        if (game.IsInvestorTurn && game.ActingPlayerId.HasValue)
+        if (!_activeBotGames.TryAdd(gameId, true)) return;
+        try
         {
-            var actor = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId);
-            if (actor != null && actor.IsBot)
+            while (true)
             {
-                await BotInvestorAction(ctx, game, actor);
-                await ctx.SaveChangesAsync();
-                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                if (!SkipDelays) await Task.Delay(2500);
-                game = await LoadGame(ctx, gameId);
-                if (game == null) return;
+                using var scope = _scopeFactory.CreateScope();
+                var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                var game = await LoadGame(ctx, gameId);
+                if (game == null || game.Status != GameStatus.InProgress) break;
+
+                bool botActed = false;
+
+                // Handle bot investor phase
+                if (game.IsInvestorTurn && game.ActingPlayerId.HasValue)
+                {
+                    var actor = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId);
+                    if (actor != null && actor.IsBot)
+                    {
+                        await BotInvestorAction(ctx, game, actor);
+                        await ctx.SaveChangesAsync();
+                        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                        if (!SkipDelays) await Task.Delay(2500);
+                        botActed = true;
+                    }
+                }
+                else if (game.PendingBattleDefenders.Any())
+                {
+                    await HandleBotBattleResponse(ctx, game);
+                    botActed = true;
+                }
+                else
+                {
+                    var nationState = game.NationStates.FirstOrDefault(ns => ns.Nation == game.CurrentTurnNation);
+                    if (nationState?.ControllerId != null)
+                    {
+                        var controller = game.Players.FirstOrDefault(p => p.Id == nationState.ControllerId);
+                        if (controller != null && controller.IsBot)
+                        {
+                            await ExecuteBotTurn(ctx, game, nationState, controller);
+                            botActed = true;
+                        }
+                    }
+                }
+
+                if (!botActed) break;
             }
-            else return; // human investor, wait
         }
-
-        // Handle bot battle response
-        if (game.PendingBattleDefenders.Any())
+        finally
         {
-            await HandleBotBattleResponse(ctx, game);
-            return;
+            _activeBotGames.TryRemove(gameId, out _);
         }
-
-        // Check if current nation is bot-controlled
-        var nationState = game.NationStates.FirstOrDefault(ns => ns.Nation == game.CurrentTurnNation);
-        if (nationState?.ControllerId == null) return;
-        var controller = game.Players.FirstOrDefault(p => p.Id == nationState.ControllerId);
-        if (controller == null || !controller.IsBot) return;
-
-        await ExecuteBotTurn(ctx, game, nationState, controller);
     }
 
     private async Task ExecuteBotTurn(ApplicationDbContext ctx, Game game, NationState nationState, Player controller)
@@ -183,7 +201,6 @@ public class BotService
         if (!SkipDelays) 
         {
             await Task.Delay(1800);
-            await TryPlayBotTurnAsync(gameId);
         }
     }
 
@@ -762,7 +779,7 @@ public class BotService
         if (game.PendingInvestorIds != null && game.PendingInvestorIds.Any())
         {
             game.ActingPlayerId = game.PendingInvestorIds[0];
-            game.PendingInvestorIds.RemoveAt(0);
+            game.PendingInvestorIds = game.PendingInvestorIds.Skip(1).ToList();
         }
         else
         {
@@ -799,10 +816,9 @@ public class BotService
 
         await ctx.SaveChangesAsync();
         await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
-        if (!SkipDelays) 
+        if (!SkipDelays)
         {
-            await Task.Delay(2000);
-            await TryPlayBotTurnAsync(game.Id);
+            await Task.Delay(1500);
         }
     }
 

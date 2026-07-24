@@ -405,5 +405,73 @@ namespace Imperial2030.Tests
             Assert.Equal(new List<Guid> { humanId }, updatedGame.PendingInvestorIds);
             Assert.Equal(humanId, updatedGame.InvestorCardHolderId);
         }
+        [Fact]
+        public async Task TestConcurrentBotTurnsArePreventedByLock()
+        {
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            var mockClientProxy = new Mock<IClientProxy>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+
+            var scopeFactory = new Mock<IServiceScopeFactory>();
+            var scope = new Mock<IServiceScope>();
+            var sp = new Mock<IServiceProvider>();
+            
+            scopeFactory.Setup(f => f.CreateScope()).Returns(scope.Object);
+            scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
+            sp.Setup(s => s.GetService(typeof(ApplicationDbContext))).Returns(() => GetDbContext(dbName));
+
+            var botService = new BotService(scopeFactory.Object, mockHub.Object)
+            {
+                SkipDelays = true // Important: no delays, they execute instantly
+            };
+
+            var gameId = Guid.NewGuid();
+            var botId = Guid.NewGuid();
+            var humanId = Guid.NewGuid();
+
+            var game = new Game
+            {
+                Id = gameId,
+                Name = "Test Game",
+                Status = GameStatus.InProgress,
+                CurrentTurnNation = Nation.Russia
+            };
+
+            // Add Bot controlling Russia
+            game.Players.Add(new Player { Id = botId, GameId = gameId, IsBot = true, BotName = "Bot Alpha", Cash = 10 });
+            game.NationStates.Add(new NationState { Nation = Nation.Russia, ControllerId = botId, Treasury = 0 });
+
+            // Add Human controlling China
+            game.Players.Add(new Player { Id = humanId, GameId = gameId, IsBot = false, Cash = 10 });
+            game.NationStates.Add(new NationState { Nation = Nation.China, ControllerId = humanId, Treasury = 0 });
+
+            context.Games.Add(game);
+            await context.SaveChangesAsync();
+
+            // Act: Fire 20 concurrent tasks!
+            var tasks = new List<Task>();
+            for (int i = 0; i < 20; i++)
+            {
+                tasks.Add(Task.Run(() => botService.TryPlayBotTurnAsync(gameId)));
+            }
+
+            await Task.WhenAll(tasks);
+
+            // Assert
+            var updatedGame = await GetDbContext(dbName).Games.Include(g => g.Actions).FirstAsync(g => g.Id == gameId);
+
+            // Turn should have advanced to China (the human)
+            Assert.Equal(Nation.China, updatedGame.CurrentTurnNation);
+
+            // Only ONE action (Move/EndTurn) should have been logged for Russia.
+            // A typical turn produces exactly 2 actions: Move and EndTurn.
+            // If the lock failed, there would be many more actions or a DbUpdateConcurrencyException.
+            Assert.Equal(2, updatedGame.Actions.Count);
+        }
     }
 }

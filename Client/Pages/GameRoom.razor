@@ -125,7 +125,8 @@ else
                                           style="width: 10px; height: 10px; background-color: @(player.IsOnline ? (player.IsActiveInGame ? "#28a745" : "#ffc107") : "#dc3545");"
                                           title="@(player.IsOnline ? (player.IsActiveInGame ? "In Game" : "Online") : "Offline")"></span>
                                 }
-                                @player.UserName
+                                <span class="text-truncate" style="max-width: 100px;">@player.UserName</span>
+                                <span class="ms-1" style="font-size: 1.1em; white-space: nowrap;" title="Controlled Nations">@GetPlayerControlledNationsString(player)</span>
                             </span>
                             <div class="d-flex align-items-center flex-wrap justify-content-end gap-1">
                                 <span class="badge bg-success" title="Current Victory Points (Cash + Bond Value * Multiplier)">@GetPlayerScore(player) VP</span>
@@ -995,6 +996,31 @@ else
         if (game == null) return "Unknown";
         var winner = game.NationStates.OrderByDescending(n => n.Power).FirstOrDefault();
         return winner?.Nation.ToString() ?? "Unknown";
+    }
+
+    private string GetPlayerControlledNationsString(PlayerDto player)
+    {
+        if (game == null) return "";
+        var controlledNations = game.NationStates
+            .Where(ns => ns.ControllerId == player.Id)
+            .Select(ns => ns.Nation)
+            .ToList();
+            
+        if (controlledNations.Count == 0)
+            return "🏦";
+            
+        var acronyms = controlledNations.Select(n => n switch
+        {
+            Imperial2030.Shared.Models.Nation.Russia => "🇷🇺",
+            Imperial2030.Shared.Models.Nation.China => "🇨🇳",
+            Imperial2030.Shared.Models.Nation.India => "🇮🇳",
+            Imperial2030.Shared.Models.Nation.Brazil => "🇧🇷",
+            Imperial2030.Shared.Models.Nation.USA => "🇺🇸",
+            Imperial2030.Shared.Models.Nation.Europe => "🇪🇺",
+            _ => ""
+        });
+        
+        return string.Join(" ", acronyms);
     }
 
     private int GetPlayerScore(PlayerDto player)

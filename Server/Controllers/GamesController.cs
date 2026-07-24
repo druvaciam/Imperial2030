@@ -300,7 +300,7 @@ public class GamesController : ControllerBase
 
         if (game == null) return NotFound();
 
-        return new GameDetailDto
+        var dto = new GameDetailDto
         {
             Id = game.Id,
             Name = game.Name,
@@ -378,6 +378,32 @@ public class GamesController : ControllerBase
                 Message = a.Message
             }).ToList()
         };
+
+        if (game.Status == GameStatus.InProgress)
+        {
+            bool botTurn = false;
+            if (game.IsInvestorTurn && game.ActingPlayerId.HasValue)
+            {
+                var actor = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId);
+                if (actor != null && actor.IsBot) botTurn = true;
+            }
+            else if (!game.IsInvestorTurn)
+            {
+                var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+                if (ns?.ControllerId != null)
+                {
+                    var controller = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId);
+                    if (controller != null && controller.IsBot) botTurn = true;
+                }
+            }
+
+            if (botTurn)
+            {
+                _botService.TriggerBotTurn(gameId, 1500);
+            }
+        }
+
+        return dto;
     }
 
     private static readonly string[] BotNames = { "Bot Alpha", "Bot Bravo", "Bot Charlie", "Bot Delta", "Bot Echo" };
@@ -1340,7 +1366,7 @@ public class GamesController : ControllerBase
         if (game.PendingInvestorIds != null && game.PendingInvestorIds.Any())
         {
             game.ActingPlayerId = game.PendingInvestorIds.First();
-            game.PendingInvestorIds.RemoveAt(0);
+            game.PendingInvestorIds = game.PendingInvestorIds.Skip(1).ToList();
         }
         else
         {
