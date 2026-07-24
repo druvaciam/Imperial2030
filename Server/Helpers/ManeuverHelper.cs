@@ -85,18 +85,16 @@ namespace Imperial2030.Server.Helpers
             return reachable.Contains(endId);
         }
 
-        public static List<Unit>? GetConvoyFleets(Game game, string startId, string destId, List<Nation> usableFleetNations)
+        public static List<Unit>? GetConvoyFleets(Game game, string startId, string destId, Nation armyNation)
         {
-            var destinations = GetAllReachableArmyDestinations(game, startId, usableFleetNations);
+            var destinations = GetAllReachableArmyDestinations(game, startId, armyNation);
             var dest = destinations.FirstOrDefault(d => d.TerritoryId == destId && d.IsConvoy);
             return dest?.ConvoyFleets;
         }
 
-        public static List<ArmyDestination> GetAllReachableArmyDestinations(Game game, string startId, List<Nation> usableFleetNations)
+        public static List<ArmyDestination> GetAllReachableArmyDestinations(Game game, string startId, Nation armyNation)
         {
             var results = new Dictionary<string, ArmyDestination>();
-            var armyNation = game.Units.FirstOrDefault(u => u.TerritoryId == startId && u.UnitType == UnitType.Army)?.Nation;
-            if (!armyNation.HasValue) return results.Values.ToList();
 
             // 1. Immediate Land Neighbors (Cost 1 or less implicitly)
             if (MapConnectivity.Adjacency.TryGetValue(startId, out var immediateNeighbors))
@@ -112,7 +110,7 @@ namespace Imperial2030.Server.Helpers
             }
 
             // 2. Rail Reachable (Cost 0/1 within Home)
-            var railReachable = GetRailReachableTerritories(game, startId, armyNation.Value, includeExitPoints: true);
+            var railReachable = GetRailReachableTerritories(game, startId, armyNation, includeExitPoints: true);
             foreach (var r in railReachable)
             {
                 if (r != startId)
@@ -126,15 +124,15 @@ namespace Imperial2030.Server.Helpers
             var startDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == startId);
             if (startDef != null && startDef.Type == TerritoryType.Land)
             {
-                bool isStartHome = startDef.Nation == armyNation.Value;
+                bool isStartHome = startDef.Nation == armyNation;
                 var startState = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == startId);
-                bool isStartControlled = (isStartHome && (startState == null || startState.Controller == armyNation.Value)) ||
-                                         (startState != null && startState.Controller == armyNation.Value);
-                bool startHasHostiles = game.Units.Any(u => u.TerritoryId == startId && u.Nation != armyNation.Value && u.IsHostile);
+                bool isStartControlled = (isStartHome && (startState == null || startState.Controller == armyNation)) ||
+                                         (startState != null && startState.Controller == armyNation);
+                bool startHasHostiles = game.Units.Any(u => u.TerritoryId == startId && u.Nation != armyNation && u.IsHostile);
 
                 if ((isStartHome || isStartControlled) && !startHasHostiles)
                 {
-                    var railOnly = GetRailReachableTerritories(game, startId, armyNation.Value, includeExitPoints: false);
+                    var railOnly = GetRailReachableTerritories(game, startId, armyNation, includeExitPoints: false);
                     foreach (var r in railOnly) launchPoints.Add(r);
                 }
             }
@@ -162,7 +160,7 @@ namespace Imperial2030.Server.Helpers
                     if (canal != default)
                     {
                        var tState = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == canal.ControllerId);
-                       if (tState != null && tState.Controller != null && tState.Controller != armyNation.Value)
+                       if (tState != null && tState.Controller != null && tState.Controller != armyNation)
                        {
                            continue; // Canal blocked
                        }
@@ -176,7 +174,7 @@ namespace Imperial2030.Server.Helpers
                         if (visitedSea.Contains(neighbor)) continue;
 
                         var fleet = game.Units.FirstOrDefault(u => 
-                            usableFleetNations.Contains(u.Nation) && 
+                            u.Nation == armyNation && 
                             u.TerritoryId == neighbor && 
                             u.UnitType == UnitType.Fleet && 
                             !u.HasConvoyed &&
@@ -202,14 +200,15 @@ namespace Imperial2030.Server.Helpers
             return results.Values.ToList();
         }
 
-        public static List<Unit>? ValidateSpecificConvoyFleets(Game game, string startId, string destId, Nation armyNation, List<Guid> fleetIds, List<Nation> usableFleetNations)
+        public static List<Unit>? ValidateSpecificConvoyFleets(Game game, string startId, string destId, Nation armyNation, List<Guid> fleetIds)
         {
+            var destinations = GetAllReachableArmyDestinations(game, startId, armyNation);
             var fleets = new List<Unit>();
             foreach(var fId in fleetIds)
             {
                 var f = game.Units.FirstOrDefault(u => u.Id == fId);
                 if(f == null) return null;
-                if (!usableFleetNations.Contains(f.Nation)) return null;
+                if (f.Nation != armyNation) return null;
                 if (f.UnitType != UnitType.Fleet) return null;
                 if (f.HasConvoyed) return null;
                 fleets.Add(f);
@@ -273,3 +272,4 @@ namespace Imperial2030.Server.Helpers
         }
     }
 }
+

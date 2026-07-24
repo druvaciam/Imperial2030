@@ -1564,7 +1564,11 @@ public class GamesController : ControllerBase
         // Save Changes
         _context.Entry(nationState).State = EntityState.Modified;
         int treasuryGain = nationState.Treasury - oldTreasury;
-        LogAction(game, $"collected taxes: {result.TotalTaxRevenue}M (Soldiers' Pay: -{result.SoldiersPay}M, Treasury Gain: {(treasuryGain >= 0 ? "+" : "")}{treasuryGain}M, Bonus: {result.Bonus}M, Power: +{result.PowerGain})", "Taxation", nation);
+        string soldiersPayStr = result.SoldiersPay > 0 ? $"-{result.SoldiersPay}" : result.SoldiersPay.ToString();
+        string tGainStr = treasuryGain > 0 ? $"+{treasuryGain}" : treasuryGain.ToString();
+        string bonusStr = result.Bonus > 0 ? $"+{result.Bonus}" : result.Bonus.ToString();
+        string powerStr = result.PowerGain > 0 ? $"+{result.PowerGain}" : result.PowerGain.ToString();
+        LogAction(game, $"collected taxes: {result.TotalTaxRevenue}M (Soldiers' Pay: {soldiersPayStr}M, Treasury Gain: {tGainStr}M, Bonus: {bonusStr}M, Power: {powerStr})", "Taxation", nation);
         await _context.SaveChangesAsync();
 
         // --- Game End Check ---
@@ -1708,3 +1712,4 @@ public class GamesController : ControllerBase
         // Note: Caller must SaveChanges
     }
 }
+

@@ -190,7 +190,12 @@
             int newTreasury = tempTreasury - actualBonus;
             int treasuryGain = newTreasury - nationState.Treasury;
 
-            return $"{baseMsg}\n\nRevenue: {totalTaxRevenue}M\nSoldiers' Pay: -{actualPay}M\nNation Treasury Gain: {(treasuryGain >= 0 ? "+" : "")}{treasuryGain}M\nController {controllerName}{youIndicator} Bonus: +{actualBonus}M\nPower Gain: +{powerGain}";
+            string payStr = actualPay > 0 ? $"-{actualPay}" : actualPay.ToString();
+            string tGainStr = treasuryGain > 0 ? $"+{treasuryGain}" : treasuryGain.ToString();
+            string bonusStr = actualBonus > 0 ? $"+{actualBonus}" : actualBonus.ToString();
+            string powerStr = powerGain > 0 ? $"+{powerGain}" : powerGain.ToString();
+            
+            return $"{baseMsg}\n\nRevenue: {totalTaxRevenue}M\nSoldiers' Pay: {payStr}M\nNation Treasury Gain: {tGainStr}M\nController {controllerName}{youIndicator} Bonus: {bonusStr}M\nPower Gain: {powerStr}";
         }
         else if (index == 4) // Investor Calculation
         {
@@ -405,3 +410,4 @@
         100% { box-shadow: 0 0 10px 2px rgba(241, 196, 15, 0.4); }
     }
 </style>
+

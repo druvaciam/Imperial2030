@@ -431,7 +431,7 @@ public class BotService
         var armies = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved).ToList();
         foreach (var army in armies)
         {
-            var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, army.TerritoryId, friendlyNations.ToList());
+            var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, army.TerritoryId, army.Nation);
             var convoyPaths = new Dictionary<string, List<Unit>>();
             var landNeighbors = new HashSet<string>();
 
@@ -567,8 +567,12 @@ public class BotService
         var result = Imperial2030.Server.Helpers.TaxationHelper.ApplyTaxation(game, ns, controller);
         
         int treasuryGain = ns.Treasury - oldTreasury;
+        string soldiersPayStr = result.SoldiersPay > 0 ? $"-{result.SoldiersPay}" : result.SoldiersPay.ToString();
+        string tGainStr = treasuryGain > 0 ? $"+{treasuryGain}" : treasuryGain.ToString();
+        string bonusStr = result.Bonus > 0 ? $"+{result.Bonus}" : result.Bonus.ToString();
+        string powerStr = result.PowerGain > 0 ? $"+{result.PowerGain}" : result.PowerGain.ToString();
 
-        LogAction(ctx, game, $"collected taxes: {result.TotalTaxRevenue}M (Soldiers' Pay: -{result.SoldiersPay}M, Treasury Gain: {(treasuryGain >= 0 ? "+" : "")}{treasuryGain}M, Bonus: {result.Bonus}M, Power: +{result.PowerGain})", "Taxation", nation, controller.BotName ?? "Bot");
+        LogAction(ctx, game, $"collected taxes: {result.TotalTaxRevenue}M (Soldiers' Pay: {soldiersPayStr}M, Treasury Gain: {tGainStr}M, Bonus: {bonusStr}M, Power: {powerStr})", "Taxation", nation, controller.BotName ?? "Bot");
 
         if (ns.Power >= 25)
         {
@@ -746,3 +750,5 @@ public class BotService
         4 => "Investor", 5 => "Import", 6 => "Production", 7 => "Maneuver", _ => $"Slot {slot}"
     };
 }
+
+

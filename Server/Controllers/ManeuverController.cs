@@ -315,7 +315,7 @@ public class ManeuverController : ControllerBase
                 if (request.ConvoyFleetIds != null && request.ConvoyFleetIds.Any())
                 {
                     // Validate specific fleets provided by client
-                    usedFleets = Imperial2030.Server.Helpers.ManeuverHelper.ValidateSpecificConvoyFleets(game, unit.TerritoryId, request.DestinationId, nation, request.ConvoyFleetIds, new List<Nation> { nation });
+                    usedFleets = Imperial2030.Server.Helpers.ManeuverHelper.ValidateSpecificConvoyFleets(game, unit.TerritoryId, request.DestinationId, nation, request.ConvoyFleetIds);
                     if (usedFleets == null)
                     {
                         return BadRequest("Invalid convoy path with specified fleets.");
@@ -324,7 +324,7 @@ public class ManeuverController : ControllerBase
                 else
                 {
                     // Auto-select fleets
-                    usedFleets = Imperial2030.Server.Helpers.ManeuverHelper.GetConvoyFleets(game, unit.TerritoryId, request.DestinationId, new List<Nation> { nation });
+                    usedFleets = Imperial2030.Server.Helpers.ManeuverHelper.GetConvoyFleets(game, unit.TerritoryId, request.DestinationId, nation);
                 }
 
                 if (usedFleets != null)
@@ -869,3 +869,4 @@ public class ManeuverController : ControllerBase
         // Note: Caller must SaveChanges
     }
 }
+

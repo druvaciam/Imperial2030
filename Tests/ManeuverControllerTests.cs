@@ -513,5 +513,72 @@ namespace Imperial2030.Tests
                 Assert.Empty(updatedGame.Units);
             }
         }
+
+        [Fact]
+        public async Task MoveArmy_Convoy_Chicago_To_NorthAfrica()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                // Arrange
+                var gameId = Guid.NewGuid();
+                var userId = "user1";
+                var playerId = Guid.NewGuid();
+                var game = new Game
+                {
+                    Id = gameId,
+                    Status = GameStatus.InProgress,
+                    CurrentTurnNation = Nation.USA,
+                    CurrentManeuverPhase = ManeuverPhase.Armies,
+                    NationStates = new List<NationState>
+                     {
+                         new NationState { Nation = Nation.USA, ControllerId = playerId, GameId = gameId, Power = 0 }
+                     },
+                    Players = new List<Player>
+                     {
+                         new Player { Id = playerId, UserId = userId, GameId = gameId }
+                     },
+                    Units = new List<Unit>(),
+                    TerritoryStates = new List<TerritoryState>()
+                };
+
+                // Add a Europe Army in Chicago FIRST so FirstOrDefault picks it
+                var europeArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Europe, UnitType = UnitType.Army, TerritoryId = "Chicago", HasMoved = false, IsHostile = false };
+                game.Units.Add(europeArmy);
+
+                // Start USA Army in Chicago
+                var army = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.USA, UnitType = UnitType.Army, TerritoryId = "Chicago", HasMoved = false };
+                game.Units.Add(army);
+
+                // USA Fleet in NorthAtlantic
+                var fleet1 = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.USA, UnitType = UnitType.Fleet, TerritoryId = "NorthAtlantic", HasConvoyed = false };
+                game.Units.Add(fleet1);
+
+                await context.Games.AddAsync(game);
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+
+                // Act
+                var request = new MoveUnitRequest
+                {
+                    UnitId = army.Id,
+                    DestinationId = "North-Africa"
+                };
+
+                var result = await controller.MoveArmy(gameId, request);
+
+                // Assert
+                Assert.IsType<OkResult>(result);
+
+                var updatedGame = await context.Games.Include(g => g.Units).FirstAsync(g => g.Id == gameId);
+                var updatedArmy = updatedGame.Units.First(u => u.Id == army.Id);
+                Assert.Equal("North-Africa", updatedArmy.TerritoryId);
+                Assert.True(updatedArmy.HasMoved);
+
+                var updatedFleet1 = updatedGame.Units.First(u => u.Id == fleet1.Id);
+                Assert.True(updatedFleet1.HasConvoyed);
+            }
+        }
     }
 }
