@@ -551,5 +551,68 @@ namespace Imperial2030.Tests
                 Assert.True(updatedTerritory.HasFactory);
             }
         }
+        [Theory]
+        [InlineData(2, 19)]
+        [InlineData(3, 21)]
+        [InlineData(4, 23)]
+        public async Task ExecuteTaxation_CapAt15Flags(int factoryCount, int expectedTax)
+        {
+            var dbName = Guid.NewGuid().ToString();
+            var gId = Guid.Empty;
+            var uId = "";
+
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 0);
+                gId = gameId;
+                uId = userId;
+
+                var game = await context.Games.Include(g => g.NationStates).FirstAsync(g => g.Id == gameId);
+                game.CurrentTurnNation = Nation.Russia;
+                var russiaState = game.NationStates.First(n => n.Nation == Nation.Russia);
+                russiaState.ControllerId = game.Players.First(p => p.UserId == userId).Id;
+
+                var tsList = new List<TerritoryState>();
+                foreach (var tDef in Imperial2030.Shared.Constants.TerritoryData.AllTerritories)
+                {
+                    var ts = new TerritoryState { GameId = gameId, TerritoryId = tDef.Id, Controller = null, HasFactory = false };
+                    context.TerritoryStates.Add(ts);
+                    tsList.Add(ts);
+                }
+
+                var factories = new[] { "Moscow", "Vladivostok", "Murmansk", "Novosibirsk" };
+                for (int i = 0; i < factoryCount; i++)
+                {
+                    var ts = tsList.FirstOrDefault(t => t.TerritoryId == factories[i]);
+                    if (ts != null) ts.HasFactory = true;
+                }
+
+                var controlledTerritories = new[] { 
+                    "Switzerland", "Ukraine", "Korea", "Mongolia", "Kazakhstan",
+                    "Japan", "Turkey", "Guinea", "Quebec", "Mexico",
+                    "Colombia", "Afghanistan", "Alaska", "Canada",
+                    "NorthAtlantic", "SouthAtlantic", "IndianOcean", "MediterraneanSea", "PacificOcean"
+                };
+                
+                foreach (var territory in controlledTerritories)
+                {
+                    var ts = tsList.FirstOrDefault(t => t.TerritoryId == territory);
+                    if (ts != null) ts.Controller = Nation.Russia;
+                }
+                
+                await context.SaveChangesAsync();
+            }
+
+            // ACT & ASSERT in a fresh context to avoid EF Core tracking anomalies
+            using (var verifyContext = GetDbContext(dbName))
+            {
+                var controller = GetController(verifyContext, uId);
+                var result = await controller.ExecuteTaxation(gId);
+                Assert.IsType<OkObjectResult>(result);
+                
+                var updatedRussia = await verifyContext.NationStates.FirstAsync(n => n.GameId == gId && n.Nation == Nation.Russia);
+                Assert.Equal(expectedTax, updatedRussia.TaxRevenue);
+            }
+        }
     }
 }

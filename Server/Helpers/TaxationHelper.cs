@@ -27,6 +27,7 @@ public static class TaxationHelper
         }
 
         int flagRevenue = game.TerritoryStates.Count(ts => ts.Controller == nation);
+        flagRevenue = Math.Min(15, flagRevenue);
         int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
 
         nationState.Treasury += totalTaxRevenue;
