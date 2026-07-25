@@ -11,7 +11,7 @@ if __name__ == "__main__":
 
     print("Starting Training...")
     # Train for a larger number of timesteps now that the loop is fixed
-    model.learn(total_timesteps=32000)
+    model.learn(total_timesteps=50000)
 
     print("Saving Model...")
     model.save("imperial_ppo_bot")
