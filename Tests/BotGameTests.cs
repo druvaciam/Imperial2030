@@ -281,7 +281,7 @@ namespace Imperial2030.Tests
                         {
                             var nation = nations.First(n => n.Nation == b.Nation);
                             int multiplier = nation.Power / 5;
-                            score += b.Cost * multiplier;
+                            score += b.Interest * multiplier;
                         }
                         scores[p.Id] = score;
                     }

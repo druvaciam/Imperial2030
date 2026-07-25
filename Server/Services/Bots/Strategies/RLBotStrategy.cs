@@ -97,7 +97,7 @@ public class RLBotStrategy : BotStrategyBase
 
     private float[] GetStateVector(Game game, Player rlPlayer)
     {
-        float[] state = new float[20];
+        float[] state = new float[32]; // Increased from 20 to 32
         if (rlPlayer == null) return state;
 
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
@@ -111,16 +111,25 @@ public class RLBotStrategy : BotStrategyBase
                 state[i++] = ns.Power;
                 state[i++] = ns.Treasury;
                 state[i++] = ns.ControllerId == rlPlayer.Id ? 1.0f : 0.0f;
+                state[i++] = ns.RondelPosition ?? -1.0f; // NEW: Rondel Position
             }
             else
             {
                 state[i++] = 0;
                 state[i++] = 0;
                 state[i++] = 0;
+                state[i++] = -1.0f; // NEW: Rondel Position
             }
         }
-        state[18] = rlPlayer.Cash;
-        state[19] = game.IsInvestorTurn ? 1.0f : 0.0f;
+
+        // 6 floats for one-hot encoding of CurrentTurnNation
+        foreach (var nation in imperial2030Nations)
+        {
+            state[i++] = game.CurrentTurnNation == nation ? 1.0f : 0.0f;
+        }
+
+        state[i++] = rlPlayer.Cash;
+        state[i++] = game.IsInvestorTurn ? 1.0f : 0.0f;
 
         return state;
     }

@@ -300,7 +300,8 @@ public class TrainingController : ControllerBase
         if (game == null) return NotFound();
 
         var player = game.Players.First(p => p.Id == session.RLPlayerId);
-        float reward = 0;
+        
+        float prevVP = CalculateVP(game, session.RLPlayerId);
 
         // Apply Macro Action through BotService
         RLBotStrategy.TrainingActionOverride.Value = req.Action;
@@ -314,10 +315,11 @@ public class TrainingController : ControllerBase
         bool done = await AdvanceUntilRLTurn(game.Id, session.RLPlayerId);
         game = await _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstAsync(g => g.Id == session.GameId);
 
+        float newVP = CalculateVP(game, session.RLPlayerId);
+        float reward = newVP - prevVP;
+
         if (done || game.Status == GameStatus.Finished)
         {
-            // Calculate final reward (Victory Points)
-            reward += CalculateVP(game, session.RLPlayerId);
             return Ok(new StepResponse { State = GetStateVector(game.Id, session.RLPlayerId), Reward = reward, Done = true, ActionMask = new bool[10] });
         }
 
@@ -373,10 +375,10 @@ public class TrainingController : ControllerBase
     private float[] GetStateVector(Guid gameId, Guid rlPlayerId)
     {
         var game = _context.Games.Include(g => g.NationStates).Include(g => g.Players).FirstOrDefault(g => g.Id == gameId);
-        if (game == null) return new float[20];
+        if (game == null) return new float[32]; // Increased from 20 to 32
 
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
-        float[] state = new float[20];
+        float[] state = new float[32]; // Increased from 20 to 32
         if (rlPlayer == null) return state;
 
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
@@ -390,16 +392,25 @@ public class TrainingController : ControllerBase
                 state[i++] = ns.Power;
                 state[i++] = ns.Treasury;
                 state[i++] = ns.ControllerId == rlPlayerId ? 1.0f : 0.0f;
+                state[i++] = ns.RondelPosition ?? -1.0f; // NEW: Rondel Position
             }
             else
             {
                 state[i++] = 0;
                 state[i++] = 0;
                 state[i++] = 0;
+                state[i++] = -1.0f; // NEW: Rondel Position
             }
         }
-        state[18] = rlPlayer.Cash;
-        state[19] = game.IsInvestorTurn ? 1.0f : 0.0f;
+
+        // 6 floats for one-hot encoding of CurrentTurnNation
+        foreach (var nation in imperial2030Nations)
+        {
+            state[i++] = game.CurrentTurnNation == nation ? 1.0f : 0.0f;
+        }
+
+        state[i++] = rlPlayer.Cash;
+        state[i++] = game.IsInvestorTurn ? 1.0f : 0.0f;
 
         return state;
     }

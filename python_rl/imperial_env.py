@@ -17,8 +17,8 @@ class ImperialEnv(gym.Env):
         # Actions: 0=Factory, 1=Production, 2=Import, 3=ManeuverAggro, 4=ManeuverDef, 5=Taxation, 6=Investor, 7=BuyBond
         self.action_space = spaces.Discrete(8)
         
-        # State: 20 floats
-        self.observation_space = spaces.Box(low=-1000, high=1000, shape=(20,), dtype=np.float32)
+        # State: 32 floats
+        self.observation_space = spaces.Box(low=-1000, high=1000, shape=(32,), dtype=np.float32)
 
     def step(self, action):
         if self.session_id is None:
