@@ -1,27 +1,29 @@
-using Imperial2030.Server.Models;
+using System.Net;
+using System.Net.Sockets;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Imperial2030.Server.Data;
-using Imperial2030.Server.Services;
+using Imperial2030.Server.Models;
 using Imperial2030.Server.Services.Bots.Strategies;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json.Serialization;
 
-namespace Imperial2030.Server.Controllers;
+namespace Imperial2030.Server.Services;
 
-[ApiController]
-[Route("api/[controller]")]
-public class TrainingController : ControllerBase
+public class TcpTrainingServer : BackgroundService
 {
-    private static readonly Dictionary<string, TrainingSession> _sessions = new();
-    private readonly ApplicationDbContext _context;
+    private readonly IServiceProvider _serviceProvider;
     private readonly BotService _botService;
+    private readonly ILogger<TcpTrainingServer> _logger;
 
-    public TrainingController(ApplicationDbContext context, BotService botService)
+    private static readonly Dictionary<string, TrainingSession> _sessions = new();
+
+    public TcpTrainingServer(IServiceProvider serviceProvider, BotService botService, ILogger<TcpTrainingServer> logger)
     {
-        _context = context;
+        _serviceProvider = serviceProvider;
         _botService = botService;
+        _logger = logger;
     }
 
     public class TrainingSession
@@ -30,20 +32,120 @@ public class TrainingController : ControllerBase
         public Guid RLPlayerId { get; set; }
     }
 
+    public class TcpRequest
+    {
+        [JsonPropertyName("command")]
+        public string Command { get; set; } = ""; // "reset" or "step"
+
+        [JsonPropertyName("sessionId")]
+        public string SessionId { get; set; } = "";
+
+        [JsonPropertyName("action")]
+        public int Action { get; set; }
+    }
+
     public class ResetResponse
     {
+        [JsonPropertyName("sessionId")]
         public string SessionId { get; set; } = "";
+
+        [JsonPropertyName("state")]
         public float[] State { get; set; } = Array.Empty<float>();
+
+        [JsonPropertyName("actionMask")]
         public bool[] ActionMask { get; set; } = Array.Empty<bool>();
     }
 
-    [HttpPost("reset")]
-    public async Task<IActionResult> Reset()
+    public class StepResponse
     {
+        [JsonPropertyName("state")]
+        public float[] State { get; set; } = Array.Empty<float>();
+
+        [JsonPropertyName("reward")]
+        public float Reward { get; set; }
+
+        [JsonPropertyName("done")]
+        public bool Done { get; set; }
+
+        [JsonPropertyName("actionMask")]
+        public bool[] ActionMask { get; set; } = Array.Empty<bool>();
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 5295);
+        listener.Start();
+        _logger.LogInformation("TcpTrainingServer listening on 127.0.0.1:5295");
+
+        try
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                var client = await listener.AcceptTcpClientAsync(stoppingToken);
+                _ = HandleClientAsync(client, stoppingToken); // Fire and forget
+            }
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    private async Task HandleClientAsync(TcpClient client, CancellationToken stoppingToken)
+    {
+        using (client)
+        using (var networkStream = client.GetStream())
+        using (var reader = new StreamReader(networkStream))
+        using (var writer = new StreamWriter(networkStream) { AutoFlush = true })
+        {
+            _logger.LogInformation("RL Client connected");
+            try
+            {
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    var line = await reader.ReadLineAsync(stoppingToken);
+                    if (line == null) break; // Client disconnected
+
+                    var req = JsonSerializer.Deserialize<TcpRequest>(line);
+                    if (req == null) continue;
+
+                    if (req.Command == "reset")
+                    {
+                        var res = await HandleResetAsync();
+                        await writer.WriteLineAsync(JsonSerializer.Serialize(res));
+                    }
+                    else if (req.Command == "step")
+                    {
+                        var res = await HandleStepAsync(req);
+                        if (res != null)
+                        {
+                            await writer.WriteLineAsync(JsonSerializer.Serialize(res));
+                        }
+                        else
+                        {
+                            await writer.WriteLineAsync("{}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling RL client");
+            }
+            _logger.LogInformation("RL Client disconnected");
+        }
+    }
+
+    private async Task<ResetResponse> HandleResetAsync()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
         // Cleanup old finished games to free up memory
-        var nMinsAgo = DateTime.UtcNow.AddMinutes(-2);
+        var nSecAgo = DateTime.UtcNow.AddSeconds(-10);
         var oldGames = await _context.Games
-            .Where(g => g.Status == GameStatus.Finished && g.CreatedAt < nMinsAgo)
+            .Where(g => g.Status == GameStatus.Finished && g.CreatedAt < nSecAgo)
             .ToListAsync();
 
         if (oldGames.Any())
@@ -98,7 +200,6 @@ public class TrainingController : ControllerBase
         _context.ChangeTracker.Clear();
 
         // --- Official Imperial 2030 Initialization Logic ---
-        // PHASE 1: Create Entities
         var newBonds = new List<Bond>();
         var newNationStates = new List<NationState>();
 
@@ -116,7 +217,7 @@ public class TrainingController : ControllerBase
             "Chicago", "NewOrleans",       // USA
             "Paris", "London"              // Europe
         };
-        var territories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories;
+        var territories = TerritoryData.AllTerritories;
         var newTerritoryStates = new List<TerritoryState>();
         foreach (var t in territories)
         {
@@ -144,7 +245,6 @@ public class TrainingController : ControllerBase
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
-        // PHASE 2: Distribution Logic (Official Imperial 2030 Rules)
         var bonds = await _context.Bonds.Where(b => b.GameId == gameId).ToListAsync();
         var nationStates = await _context.NationStates.Where(ns => ns.GameId == gameId).ToListAsync();
         var allPlayers = await _context.Players.Where(p => p.GameId == gameId).OrderBy(p => p.Id).ToListAsync();
@@ -196,7 +296,6 @@ public class TrainingController : ControllerBase
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
-        // PHASE 3: Assign Controllers
         var bondsHeld = await _context.Bonds.Where(b => b.GameId == gameId && b.HolderId != null).ToListAsync();
         var nationStatesToUpdate = await _context.NationStates.Where(ns => ns.GameId == gameId).ToListAsync();
 
@@ -241,7 +340,6 @@ public class TrainingController : ControllerBase
         }
         await _context.SaveChangesAsync();
 
-        // PHASE 4: Update Game Status and Player Cash
         var gameToUpdate = await _context.Games.Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == gameId);
         var playersToUpdate = await _context.Players.Where(p => p.GameId == gameId).ToListAsync();
 
@@ -256,7 +354,7 @@ public class TrainingController : ControllerBase
             _context.Entry(gameToUpdate).State = EntityState.Modified;
         }
 
-        int startingCash = 13; // 6 players always in RL training
+        int startingCash = 13;
         foreach (var p in playersToUpdate)
         {
             p.Cash = startingCash;
@@ -271,39 +369,26 @@ public class TrainingController : ControllerBase
         var sessionId = Guid.NewGuid().ToString();
         _sessions[sessionId] = new TrainingSession { GameId = gameId, RLPlayerId = rlPlayer.Id };
 
-        var state = GetStateVector(gameId, rlPlayer.Id);
-        var mask = GetActionMask(gameId, rlPlayer.Id);
+        var state = GetStateVector(_context, gameId, rlPlayer.Id);
+        var mask = GetActionMask(_context, gameId, rlPlayer.Id);
 
-        return Ok(new ResetResponse { SessionId = sessionId, State = state, ActionMask = mask });
+        return new ResetResponse { SessionId = sessionId, State = state, ActionMask = mask };
     }
 
-    public class StepRequest
+    private async Task<StepResponse?> HandleStepAsync(TcpRequest req)
     {
-        public string SessionId { get; set; } = "";
-        public int Action { get; set; }
-    }
+        if (!_sessions.TryGetValue(req.SessionId, out var session)) return null;
 
-    public class StepResponse
-    {
-        public float[] State { get; set; } = Array.Empty<float>();
-        public float Reward { get; set; }
-        public bool Done { get; set; }
-        public bool[] ActionMask { get; set; } = Array.Empty<bool>();
-    }
-
-    [HttpPost("step")]
-    public async Task<IActionResult> Step([FromBody] StepRequest req)
-    {
-        if (!_sessions.TryGetValue(req.SessionId, out var session)) return NotFound();
+        using var scope = _serviceProvider.CreateScope();
+        var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         var game = await _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == session.GameId);
-        if (game == null) return NotFound();
+        if (game == null) return null;
 
         var player = game.Players.First(p => p.Id == session.RLPlayerId);
-        
-        float prevVP = CalculateVP(game, session.RLPlayerId);
 
-        // Apply Macro Action through BotService
+        float prevVP = CalculateVP(_context, game, session.RLPlayerId);
+
         RLBotStrategy.TrainingActionOverride.Value = req.Action;
         _botService.SkipDelays = true;
         await _botService.TryPlayBotTurnAsync(game.Id, singleTurnOnly: true);
@@ -311,32 +396,30 @@ public class TrainingController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        // Wait until it's the RL agent's turn again, or game ends
-        bool done = await AdvanceUntilRLTurn(game.Id, session.RLPlayerId);
+        bool done = await AdvanceUntilRLTurn(_context, game.Id, session.RLPlayerId);
         game = await _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstAsync(g => g.Id == session.GameId);
 
-        float newVP = CalculateVP(game, session.RLPlayerId);
+        float newVP = CalculateVP(_context, game, session.RLPlayerId);
         float reward = newVP - prevVP;
 
         if (done || game.Status == GameStatus.Finished)
         {
-            return Ok(new StepResponse { State = GetStateVector(game.Id, session.RLPlayerId), Reward = reward, Done = true, ActionMask = new bool[10] });
+            return new StepResponse { State = GetStateVector(_context, game.Id, session.RLPlayerId), Reward = reward, Done = true, ActionMask = new bool[10] };
         }
 
-        return Ok(new StepResponse { State = GetStateVector(game.Id, session.RLPlayerId), Reward = reward, Done = false, ActionMask = GetActionMask(game.Id, session.RLPlayerId) });
+        return new StepResponse { State = GetStateVector(_context, game.Id, session.RLPlayerId), Reward = reward, Done = false, ActionMask = GetActionMask(_context, game.Id, session.RLPlayerId) };
     }
 
-    private async Task<bool> AdvanceUntilRLTurn(Guid gameId, Guid rlPlayerId)
+    private async Task<bool> AdvanceUntilRLTurn(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId)
     {
         int safety = 0;
         while (safety++ < 1000)
         {
-            _context.ChangeTracker.Clear(); // CRITICAL: Prevent EF from caching the old CurrentTurnNation
+            _context.ChangeTracker.Clear();
 
             var g = _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstOrDefault(x => x.Id == gameId);
             if (g == null || g.Status == GameStatus.Finished) return true;
 
-            // If it's RL's turn and they need to act (investor or nation controller)
             if (g.IsInvestorTurn && g.ActingPlayerId == rlPlayerId) return false;
 
             if (!g.IsInvestorTurn && !g.PendingBattleDefenders.Any())
@@ -345,13 +428,12 @@ public class TrainingController : ControllerBase
                 if (ns != null && ns.ControllerId == rlPlayerId) return false;
             }
 
-            // It's another bot's turn, let BotService play it
             await _botService.TryPlayBotTurnAsync(gameId, singleTurnOnly: true);
         }
         return true;
     }
 
-    private float CalculateVP(Game game, Guid playerId)
+    private float CalculateVP(ApplicationDbContext _context, Game game, Guid playerId)
     {
         var player = game.Players.FirstOrDefault(p => p.Id == playerId);
         if (player == null) return 0;
@@ -372,13 +454,13 @@ public class TrainingController : ControllerBase
         return score;
     }
 
-    private float[] GetStateVector(Guid gameId, Guid rlPlayerId)
+    private float[] GetStateVector(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId)
     {
         var game = _context.Games.Include(g => g.NationStates).Include(g => g.Players).FirstOrDefault(g => g.Id == gameId);
-        if (game == null) return new float[32]; // Increased from 20 to 32
+        if (game == null) return new float[32];
 
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
-        float[] state = new float[32]; // Increased from 20 to 32
+        float[] state = new float[32];
         if (rlPlayer == null) return state;
 
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
@@ -392,18 +474,17 @@ public class TrainingController : ControllerBase
                 state[i++] = ns.Power;
                 state[i++] = ns.Treasury;
                 state[i++] = ns.ControllerId == rlPlayerId ? 1.0f : 0.0f;
-                state[i++] = ns.RondelPosition ?? -1.0f; // NEW: Rondel Position
+                state[i++] = ns.RondelPosition ?? -1.0f;
             }
             else
             {
                 state[i++] = 0;
                 state[i++] = 0;
                 state[i++] = 0;
-                state[i++] = -1.0f; // NEW: Rondel Position
+                state[i++] = -1.0f;
             }
         }
 
-        // 6 floats for one-hot encoding of CurrentTurnNation
         foreach (var nation in imperial2030Nations)
         {
             state[i++] = game.CurrentTurnNation == nation ? 1.0f : 0.0f;
@@ -415,7 +496,7 @@ public class TrainingController : ControllerBase
         return state;
     }
 
-    private bool[] GetActionMask(Guid gameId, Guid rlPlayerId)
+    private bool[] GetActionMask(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId)
     {
         var mask = new bool[8];
         var game = _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);

@@ -27,6 +27,11 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 
 var isTrainingMode = args.Contains("--training");
 
+if (isTrainingMode)
+{
+    builder.Services.AddHostedService<Imperial2030.Server.Services.TcpTrainingServer>();
+}
+
 builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext>(options =>
 {
     if (isTrainingMode)
