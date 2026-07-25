@@ -126,42 +126,43 @@ namespace Imperial2030.Tests
             foreach (var p in allPlayers) p.IsBot = true;
             await context.SaveChangesAsync();
 
-            // 4. Play game
-            int maxTurns = 30000;
-            int turns = 0;
-
-            while (turns < maxTurns)
+            int timeoutTicks = 0;
+            while (timeoutTicks < 500)
             {
-                var game = context.Games.AsNoTracking().Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
-                Assert.NotNull(game);
+                using var scope = mockScopeFactory.Object.CreateScope();
+                var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                var game = ctx.Games.AsNoTracking().FirstOrDefault(g => g.Id == gameId);
 
-                if (game.Status == GameStatus.Finished)
+                if (game == null || game.Status == GameStatus.Finished) break;
+
+                if (timeoutTicks % 10 == 0)
                 {
-                    _output.WriteLine($"Game finished successfully after {turns} actions.");
-                    break;
+                    var fullGame = ctx.Games.AsNoTracking().Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
+                    if (fullGame != null)
+                    {
+                        var maxPower = fullGame.NationStates.Any() ? fullGame.NationStates.Max(ns => ns.Power) : 0;
+                        var currentNation = fullGame.CurrentTurnNation;
+                        var currentNs = fullGame.NationStates.FirstOrDefault(n => n.Nation == currentNation);
+                        var controllerId = currentNs?.ControllerId;
+                        var ctrlPlayer = ctx.Players.AsNoTracking().FirstOrDefault(p => p.Id == controllerId);
+
+                        _output.WriteLine($"Tick {timeoutTicks}, Max Power: {maxPower}, Current Nation: {currentNation}, Controller: {controllerId}, IsBot: {ctrlPlayer?.IsBot}, IsInvestor: {fullGame.IsInvestorTurn}");
+                    }
                 }
 
-                if (turns % 100 == 0)
-                {
-                    var maxPower = game.NationStates.Max(ns => ns.Power);
-                    var currentNation = game.CurrentTurnNation;
-                    var currentNs = game.NationStates.FirstOrDefault(n => n.Nation == currentNation);
-                    var controllerId = currentNs?.ControllerId;
-                    var ctrlPlayer = context.Players.AsNoTracking().FirstOrDefault(p => p.Id == controllerId);
-
-                    _output.WriteLine($"Turn {turns}, Max Power: {maxPower}, Current Nation: {currentNation}, Controller: {controllerId}, IsBot: {ctrlPlayer?.IsBot}, IsInvestor: {game.IsInvestorTurn}");
-                }
-
-                // Call bot service
-                await botService.TryPlayBotTurnAsync(gameId);
-
-                turns++;
+                await Task.Delay(50);
+                timeoutTicks++;
             }
 
             // Assert that the game is indeed finished
             var finalGame = context.Games.AsNoTracking().FirstOrDefault(g => g.Id == gameId);
             Assert.NotNull(finalGame);
             Assert.Equal(GameStatus.Finished, finalGame.Status);
+
+            using var metricScope = mockScopeFactory.Object.CreateScope();
+            var metricCtx = metricScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            int turns = metricCtx.GameActions.Count(a => a.GameId == gameId);
+            _output.WriteLine($"Game finished successfully after {turns} actions.");
         }
 
         [Fact(Skip = "Takes a long time, run manually when checking organic Swiss bank scenario")]
@@ -171,7 +172,7 @@ namespace Imperial2030.Tests
             bool foundScenario = false;
             int gameCount = 0;
 
-            while (stopWatch.Elapsed.TotalSeconds < 120)
+            while (stopWatch.Elapsed.TotalSeconds < 150)
             {
                 gameCount++;
                 var dbName = Guid.NewGuid().ToString();
@@ -236,12 +237,13 @@ namespace Imperial2030.Tests
                 var observedSwissBanks = new HashSet<Guid>();
 
                 // 5. Play game
-                int maxTurns = 30000;
-                int turns = 0;
+                int timeoutTicks = 0;
 
-                while (turns < maxTurns)
+                while (timeoutTicks < 500)
                 {
-                    var game = context.Games.AsNoTracking().Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
+                    using var scope = mockScopeFactory.Object.CreateScope();
+                    var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                    var game = ctx.Games.AsNoTracking().Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
                     if (game == null || game.Status == GameStatus.Finished) break;
 
                     // Check for Swiss Banks
@@ -254,8 +256,8 @@ namespace Imperial2030.Tests
                         }
                     }
 
-                    await botService.TryPlayBotTurnAsync(gameId);
-                    turns++;
+                    await Task.Delay(50);
+                    timeoutTicks++;
                 }
 
                 if (observedSwissBanks.Any())
@@ -287,8 +289,12 @@ namespace Imperial2030.Tests
                     var winnerId = scores.OrderByDescending(kvp => kvp.Value).First().Key;
                     if (observedSwissBanks.Contains(winnerId))
                     {
+                        using var metricScope = mockScopeFactory.Object.CreateScope();
+                        var metricCtx = metricScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                        int actualTurns = metricCtx.GameActions.Count(a => a.GameId == gameId);
+
                         foundScenario = true;
-                        _output.WriteLine($"Found a Swiss Bank winner in game {gameCount} after {turns} turns!");
+                        _output.WriteLine($"Found a Swiss Bank winner in game {gameCount} after {actualTurns} turns!");
                         break;
                     }
                 }
@@ -475,6 +481,134 @@ namespace Imperial2030.Tests
             // A typical turn produces exactly 2 actions: Move and EndTurn.
             // If the lock failed, there would be many more actions or a DbUpdateConcurrencyException.
             Assert.Equal(2, updatedGame.Actions.Count);
+        }
+
+        [Fact]//(Skip = "Requires Python server running on localhost:5001")]
+        public async Task TestRLBotWinRate()
+        {
+            int rlWins = 0;
+            int totalGames = 10;
+            for (int g = 0; g < totalGames; g++)
+            {
+                var dbName = Guid.NewGuid().ToString();
+                using var context = GetDbContext(dbName);
+
+                var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+                var mockClients = new Mock<IHubClients>();
+                var mockClientProxy = new Mock<IClientProxy>();
+                mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+                mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+                mockClients.Setup(c => c.All).Returns(mockClientProxy.Object);
+
+                var mockScopeFactory = new Mock<IServiceScopeFactory>();
+                mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+                {
+                    var scope = new Mock<IServiceScope>();
+                    var mockServiceProvider = new Mock<IServiceProvider>();
+                    var scopeContext = GetDbContext(dbName);
+                    mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                    scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                    return scope.Object;
+                });
+
+                var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> {
+                    new Imperial2030.Server.Services.Bots.Strategies.RandomBotStrategy(),
+                    new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy(),
+                    new Imperial2030.Server.Services.Bots.Strategies.GreedyBotStrategy(),
+                    new Imperial2030.Server.Services.Bots.Strategies.AggressiveBotStrategy(),
+                    new Imperial2030.Server.Services.Bots.Strategies.FriendlyBotStrategy(),
+                    new Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy()
+                });
+                botService.SkipDelays = true;
+
+                var store = new Mock<IUserStore<ApplicationUser>>();
+                var mockUserManager = new Mock<UserManager<ApplicationUser>>(store.Object, null, null, null, null, null, null, null, null);
+                var mockPresenceTracker = new Mock<PresenceTracker>();
+
+                var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService);
+
+                var userId = "host-user-id";
+                var httpContext = new DefaultHttpContext();
+                var claims = new List<Claim> { new Claim(ClaimTypes.NameIdentifier, userId) };
+                var identity = new ClaimsIdentity(claims, "TestAuthType");
+                httpContext.User = new ClaimsPrincipal(identity);
+
+                gamesController.ControllerContext = new ControllerContext(new ActionContext(httpContext, new Microsoft.AspNetCore.Routing.RouteData(), new Microsoft.AspNetCore.Mvc.Controllers.ControllerActionDescriptor()));
+
+                var createReq = new CreateGameRequest { Name = $"RLTestGame_{g}", MaxPlayers = 6, IsPrivate = false };
+                var createRes = await gamesController.CreateGame(createReq);
+                var gameId = Assert.IsType<GameDto>(Assert.IsType<CreatedAtActionResult>(createRes.Result).Value).Id;
+
+                for (int i = 0; i < 5; i++)
+                {
+                    await gamesController.AddBot(gameId);
+                }
+
+                // Force them to be Random / RL bots
+                var players = context.Players.Where(p => p.GameId == gameId).ToList();
+                players[0].IsBot = true;
+                players[0].BotName = "RL Bot";
+                players[0].BotType = "RL"; // Fix actual strategy name
+
+                var randomOpponents = new[] { "Random", "Default", "Greedy", "Aggressive", "Friendly" };
+                var rng = new Random(g); // Use g for seed or just new Random()
+                for (int i = 1; i < 6; i++)
+                {
+                    players[i].IsBot = true;
+                    var opponentType = randomOpponents[rng.Next(randomOpponents.Length)];
+                    players[i].BotName = $"{opponentType} Bot {i}";
+                    players[i].BotType = opponentType;
+                }
+                await context.SaveChangesAsync();
+
+                var startRes = await gamesController.StartGame(gameId);
+                Assert.IsAssignableFrom<OkResult>(startRes);
+
+                // The RL model is now correctly polled on state changes, so it should play out efficiently.
+                int maxTurns = 20000;
+                int timeoutTicks = 0;
+                while (timeoutTicks < 500) // 500 * 50ms = 25 seconds timeout per game
+                {
+                    using var scope = mockScopeFactory.Object.CreateScope();
+                    var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                    var game = ctx.Games.AsNoTracking().FirstOrDefault(g => g.Id == gameId);
+                    if (game == null || game.Status == GameStatus.Finished) break;
+
+                    await Task.Delay(50);
+                    timeoutTicks++;
+                }
+
+                if (timeoutTicks >= 500)
+                {
+                    var game = context.Games.AsNoTracking().Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
+                    _output.WriteLine($"Game {g} hit timeout! IsInvestorTurn={game?.IsInvestorTurn}, ActingPlayerId={game?.ActingPlayerId}, CurrentNation={game?.CurrentTurnNation}");
+                }
+
+                // Count the number of moves played by the bots to get an accurate "turns" metric
+                using var metricScope = mockScopeFactory.Object.CreateScope();
+                var metricCtx = metricScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                int turns = metricCtx.GameActions.Count(a => a.GameId == gameId);
+
+                var finalGame = context.Games.AsNoTracking().Include(g => g.Players).ThenInclude(p => p.Bonds).Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
+                if (finalGame != null && finalGame.Status == GameStatus.Finished)
+                {
+                    var winner = finalGame.Players.OrderByDescending(p =>
+                    {
+                        int score = p.Cash;
+                        foreach (var b in p.Bonds)
+                        {
+                            var ns = finalGame.NationStates.FirstOrDefault(n => n.Nation == b.Nation);
+                            if (ns != null)
+                                score += b.Interest * (ns.Power / 5);
+                        }
+                        return score;
+                    }).First();
+                    if (winner.BotType == "RL") rlWins++;
+                    _output.WriteLine($"Game {g} finished in {turns} turns. Winner: {winner.BotName}");
+                }
+            }
+
+            _output.WriteLine($"RL Bot Win Rate: {rlWins}/{totalGames} ({(float)rlWins / totalGames * 100}%)");
         }
     }
 }
