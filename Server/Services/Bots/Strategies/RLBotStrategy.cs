@@ -13,11 +13,13 @@ public class RLBotStrategy : BotStrategyBase
     public override string Name => "RL";
     public static AsyncLocal<int?> TrainingActionOverride = new AsyncLocal<int?>();
     public static bool IsTraining = false;
+    
+    public static int InvalidActionCount = 0;
+    public static int TotalActionCount = 0;
 
-    private readonly HttpClient _httpClient = new HttpClient();
+    public HttpClient _httpClient = new HttpClient();
     private float[] _lastState = null;
-    private int _cachedDesiredSlot = -1;
-    private readonly Random _random = new Random();
+    private int _cachedAction = -1;
 
     private bool IsSameState(float[] s1, float[] s2)
     {
@@ -31,17 +33,7 @@ public class RLBotStrategy : BotStrategyBase
     {
         if (TrainingActionOverride.Value.HasValue)
         {
-            _cachedDesiredSlot = TrainingActionOverride.Value.Value switch
-            {
-                0 => 1,
-                1 => 2,
-                2 => 5,
-                3 => 3,
-                4 => 3,
-                5 => 0,
-                6 => 4,
-                _ => -1
-            };
+            _cachedAction = TrainingActionOverride.Value.Value;
         }
         else if (IsTraining)
         {
@@ -54,39 +46,22 @@ public class RLBotStrategy : BotStrategyBase
             if (!IsSameState(state, _lastState))
             {
                 _lastState = state;
-                try
-                {
-                    var req = new { state = state };
-                    var content = new StringContent(JsonSerializer.Serialize(req), Encoding.UTF8, "application/json");
-                    
-                    var response = _httpClient.PostAsync("http://127.0.0.1:5001/predict", content).GetAwaiter().GetResult();
-                    if (response.IsSuccessStatusCode)
-                    {
-                        var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                        var result = JsonSerializer.Deserialize<JsonElement>(body);
-                        int action = result.GetProperty("action").GetInt32();
-                        
-                        _cachedDesiredSlot = action switch
-                        {
-                            0 => 1,
-                            1 => 2, // or 6
-                            2 => 5,
-                            3 => 3, // or 7
-                            4 => 3, // or 7
-                            5 => 0,
-                            6 => 4,
-                            _ => -1
-                        };
-                    }
-                }
-                catch (Exception ex)
-                {
-                    throw new InvalidOperationException("Failed to communicate with RL Python server at localhost:5001. Ensure the model server is running.", ex);
-                }
+                var mask = GetActionMask(game, controller.Id);
+                _cachedAction = GetActionFromPython(game, controller, mask);
             }
         }
 
-        int desiredSlot = _cachedDesiredSlot;
+        int desiredSlot = _cachedAction switch
+        {
+            0 => 1,
+            1 => 2, // or 6
+            2 => 5,
+            3 => 3, // or 7
+            4 => 3, // or 7
+            5 => 0,
+            6 => 4,
+            _ => -1
+        };
 
         if (slot == desiredSlot || (desiredSlot == 2 && slot == 6) || (desiredSlot == 3 && slot == 7))
         {
@@ -268,6 +243,102 @@ public class RLBotStrategy : BotStrategyBase
         {
             return TrainingActionOverride.Value.Value == 9; // 9 = Retreat, 8 = Fight
         }
-        return false;
+        else if (IsTraining)
+        {
+            throw new RlTrainingPauseException();
+        }
+
+        var defNationToResolve = game.PendingBattleDefenders.FirstOrDefault();
+        if (defNationToResolve == default) return false;
+
+        var controllerId = game.NationStates.First(ns => ns.Nation == defNationToResolve).ControllerId;
+        var controller = game.Players.First(p => p.Id == controllerId);
+
+        var mask = GetActionMask(game, controller.Id);
+        int action = GetActionFromPython(game, controller, mask);
+        return action == 9;
+    }
+
+    private int GetActionFromPython(Game game, Player controller, bool[] actionMask)
+    {
+        var state = GetStateVector(game, controller);
+        
+        var req = new { state = state, actionMask = actionMask };
+        var content = new StringContent(JsonSerializer.Serialize(req), Encoding.UTF8, "application/json");
+        
+        var response = _httpClient.PostAsync("http://127.0.0.1:5001/predict", content).GetAwaiter().GetResult();
+        if (response.IsSuccessStatusCode)
+        {
+            var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            var result = JsonSerializer.Deserialize<JsonElement>(body);
+            int action = result.GetProperty("action").GetInt32();
+            
+            System.Console.WriteLine($"RL Python returned Action: {action}");
+            TotalActionCount++;
+            if (action < 0 || action > 9 || !actionMask[action]) InvalidActionCount++;
+            
+            return action;
+        }
+        throw new InvalidOperationException("Failed to communicate with RL Python server.");
+    }
+
+    private bool[] GetActionMask(Game game, Guid rlPlayerId)
+    {
+        bool[] mask = new bool[10];
+        
+        var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
+        if (rlPlayer == null) return mask;
+
+        if (game.PendingBattleDefenders.Any())
+        {
+            bool rlIsDefender = game.PendingBattleDefenders.Any(def => 
+                game.NationStates.Any(ns => ns.Nation == def && ns.ControllerId == rlPlayerId));
+            
+            if (rlIsDefender)
+            {
+                mask[8] = true; // Fight
+                mask[9] = true; // Retreat
+                return mask;
+            }
+        }
+
+        if (game.IsInvestorTurn)
+        {
+            mask[7] = true;
+            return mask;
+        }
+
+        var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+        if (ns == null || ns.ControllerId != rlPlayerId) return mask;
+
+        mask[0] = IsSlotValid(ns, rlPlayer, 1);
+        mask[1] = IsSlotValid(ns, rlPlayer, 2) || IsSlotValid(ns, rlPlayer, 6);
+        mask[2] = IsSlotValid(ns, rlPlayer, 5);
+        mask[3] = IsSlotValid(ns, rlPlayer, 3) || IsSlotValid(ns, rlPlayer, 7);
+        mask[4] = mask[3];
+        mask[5] = IsSlotValid(ns, rlPlayer, 0);
+        mask[6] = IsSlotValid(ns, rlPlayer, 4);
+        mask[7] = false;
+
+        if (!mask.Any(m => m)) mask[5] = true;
+
+        return mask;
+    }
+
+    private bool IsSlotValid(NationState ns, Player rlPlayer, int targetSlot)
+    {
+        if (ns.RondelPosition.HasValue && ns.RondelPosition.Value == targetSlot) return false;
+
+        int moveCost = 0;
+        if (ns.RondelPosition.HasValue)
+        {
+            int dist = (targetSlot - ns.RondelPosition.Value + 8) % 8;
+            if (dist > 3)
+            {
+                int pf = ns.Power / 5;
+                moveCost = (dist - 3) * (1 + pf);
+            }
+        }
+        return rlPlayer.Cash >= moveCost;
     }
 }

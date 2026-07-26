@@ -617,7 +617,50 @@ namespace Imperial2030.Tests
                 }
             }
 
+            _output.WriteLine($"Total Actions Queried to Python Server: {Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.TotalActionCount}");
+            _output.WriteLine($"Invalid Actions (Ignored/Randomized): {Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.InvalidActionCount}");
+            if (Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.TotalActionCount > 0)
+            {
+                _output.WriteLine($"Invalid Action Rate: {Math.Round((double)Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.InvalidActionCount / Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.TotalActionCount * 100, 2)}%");
+            }
+
             _output.WriteLine($"RL Bot Win Rate: {rlWins}/{totalGames} ({(float)rlWins / totalGames * 100}%)");
+        }
+        [Fact]
+        public void RlBotStrategy_WhenPythonServerReturnsInvalidAction_FallsBackToDefaultOrFirstChoice()
+        {
+            // Arrange
+            Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.IsTraining = false;
+            var bot = new Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy();
+
+            // We mock the HTTP client to return an invalid action (e.g., action = 8 which is Fight, not a RondelSlot)
+            var fakeResponse = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new System.Net.Http.StringContent("{\"action\": 8}", System.Text.Encoding.UTF8, "application/json")
+            };
+            bot._httpClient = new System.Net.Http.HttpClient(new FakeHttpMessageHandler(fakeResponse));
+
+            var game = new Game();
+            var player = new Player { Id = Guid.NewGuid(), Cash = 10 };
+            game.Players.Add(player);
+
+            var ns = new NationState { Nation = Nation.Russia, RondelPosition = 0, ControllerId = player.Id };
+            game.NationStates.Add(ns);
+
+            // Act
+            // Evaluate scores for all possible next slots
+            var scoreSlot1 = bot.ScoreRondelSlot(1, game, ns, player, 0, 0); // Investor
+            var scoreSlot2 = bot.ScoreRondelSlot(2, game, ns, player, 0, 0); // Import
+            var scoreSlot3 = bot.ScoreRondelSlot(3, game, ns, player, 0, 0); // Production1
+
+            // Assert
+            // Because action 8 is invalid for choosing a rondel slot, _cachedDesiredSlot becomes -1. 
+            // Thus all slots get the exact same fallback penalty (-100).
+            // This proves that without action masks, the bot's hallucinated action gets ignored by the strategy, 
+            // and the backend is forced to just take the highest tie-broken default.
+            Assert.Equal(-100.0, scoreSlot1);
+            Assert.Equal(-100.0, scoreSlot2);
+            Assert.Equal(-100.0, scoreSlot3);
         }
     }
 }

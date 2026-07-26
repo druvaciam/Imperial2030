@@ -142,22 +142,33 @@ public class TcpTrainingServer : BackgroundService
         using var scope = _serviceProvider.CreateScope();
         var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        // Cleanup old finished games to free up memory
-        var nSecAgo = DateTime.UtcNow.AddSeconds(-10);
+        // Cleanup old finished games to free up memory immediately
         var oldGames = await _context.Games
-            .Where(g => g.Status == GameStatus.Finished && g.CreatedAt < nSecAgo)
+            .Where(g => g.Status == GameStatus.Finished)
             .ToListAsync();
 
-        if (oldGames.Any())
+        if (oldGames.Count > 0)
         {
             var oldGameIds = oldGames.Select(g => g.Id).ToList();
 
-            _context.GameActions.RemoveRange(_context.GameActions.Where(a => oldGameIds.Contains(a.GameId)));
-            _context.Units.RemoveRange(_context.Units.Where(u => oldGameIds.Contains(u.GameId)));
-            _context.TerritoryStates.RemoveRange(_context.TerritoryStates.Where(t => oldGameIds.Contains(t.GameId)));
-            _context.NationStates.RemoveRange(_context.NationStates.Where(n => oldGameIds.Contains(n.GameId)));
-            _context.Bonds.RemoveRange(_context.Bonds.Where(b => oldGameIds.Contains(b.GameId)));
-            _context.Players.RemoveRange(_context.Players.Where(p => oldGameIds.Contains(p.GameId)));
+            var gameActions = await _context.GameActions.Where(a => oldGameIds.Contains(a.GameId)).ToListAsync();
+            _context.GameActions.RemoveRange(gameActions);
+
+            var units = await _context.Units.Where(u => oldGameIds.Contains(u.GameId)).ToListAsync();
+            _context.Units.RemoveRange(units);
+
+            var territoryStates = await _context.TerritoryStates.Where(t => oldGameIds.Contains(t.GameId)).ToListAsync();
+            _context.TerritoryStates.RemoveRange(territoryStates);
+
+            var oldNationStates = await _context.NationStates.Where(n => oldGameIds.Contains(n.GameId)).ToListAsync();
+            _context.NationStates.RemoveRange(oldNationStates);
+
+            var oldBonds = await _context.Bonds.Where(b => oldGameIds.Contains(b.GameId)).ToListAsync();
+            _context.Bonds.RemoveRange(oldBonds);
+
+            var oldPlayers = await _context.Players.Where(p => oldGameIds.Contains(p.GameId)).ToListAsync();
+            _context.Players.RemoveRange(oldPlayers);
+
             _context.Games.RemoveRange(oldGames);
 
             await _context.SaveChangesAsync();
@@ -417,7 +428,31 @@ public class TcpTrainingServer : BackgroundService
                 reward -= 1000; // LOSS
             }
 
-            return new StepResponse { State = GetStateVector(_context, game.Id, session.RLPlayerId), Reward = reward, Done = true, ActionMask = new bool[10] };
+            var stateResponse = GetStateVector(_context, game.Id, session.RLPlayerId);
+
+            // Immediately cleanup the finished game to prevent memory buildup and 10-second freezes
+            var gameActions = await _context.GameActions.Where(a => a.GameId == game.Id).ToListAsync();
+            _context.GameActions.RemoveRange(gameActions);
+
+            var units = await _context.Units.Where(u => u.GameId == game.Id).ToListAsync();
+            _context.Units.RemoveRange(units);
+
+            var territoryStates = await _context.TerritoryStates.Where(t => t.GameId == game.Id).ToListAsync();
+            _context.TerritoryStates.RemoveRange(territoryStates);
+
+            var nationStates = await _context.NationStates.Where(n => n.GameId == game.Id).ToListAsync();
+            _context.NationStates.RemoveRange(nationStates);
+
+            var bondsHeld = await _context.Bonds.Where(b => b.GameId == game.Id).ToListAsync();
+            _context.Bonds.RemoveRange(bondsHeld);
+
+            var gamePlayers = await _context.Players.Where(p => p.GameId == game.Id).ToListAsync();
+            _context.Players.RemoveRange(gamePlayers);
+
+            _context.Games.Remove(game);
+            await _context.SaveChangesAsync();
+
+            return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[10] };
         }
 
         return new StepResponse { State = GetStateVector(_context, game.Id, session.RLPlayerId), Reward = reward, Done = false, ActionMask = GetActionMask(_context, game.Id, session.RLPlayerId) };
@@ -437,7 +472,7 @@ public class TcpTrainingServer : BackgroundService
 
             if (g.PendingBattleDefenders.Any())
             {
-                bool rlIsDefender = g.PendingBattleDefenders.Any(def => 
+                bool rlIsDefender = g.PendingBattleDefenders.Any(def =>
                     g.NationStates.Any(ns => ns.Nation == def && ns.ControllerId == rlPlayerId));
                 if (rlIsDefender) return false;
             }
@@ -468,7 +503,7 @@ public class TcpTrainingServer : BackgroundService
                 if (useDense)
                 {
                     var allGameFactories = _context.TerritoryStates.Where(t => t.GameId == game.Id && t.HasFactory).ToList();
-                    var homeFactories = allGameFactories.Where(t => 
+                    var homeFactories = allGameFactories.Where(t =>
                         TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == nation.Nation).ToList();
 
                     float factoryScore = 0;
@@ -594,9 +629,9 @@ public class TcpTrainingServer : BackgroundService
         }
 
         // Pending Battle Context (13 floats)
-        var defNationToResolve = game.PendingBattleDefenders.FirstOrDefault(def => 
+        var defNationToResolve = game.PendingBattleDefenders.FirstOrDefault(def =>
             game.NationStates.Any(ns => ns.Nation == def && ns.ControllerId == rlPlayerId));
-        
+
         if (defNationToResolve != default)
         {
             state[i++] = 1.0f;
@@ -625,9 +660,9 @@ public class TcpTrainingServer : BackgroundService
 
         if (game.PendingBattleDefenders.Any())
         {
-            bool rlIsDefender = game.PendingBattleDefenders.Any(def => 
+            bool rlIsDefender = game.PendingBattleDefenders.Any(def =>
                 game.NationStates.Any(ns => ns.Nation == def && ns.ControllerId == rlPlayerId));
-            
+
             if (rlIsDefender)
             {
                 mask[8] = true; // Fight
