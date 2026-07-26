@@ -20,12 +20,25 @@
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.3" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.28.0" />
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Client\Imperial2030.Client.csproj" />
     <ProjectReference Include="..\Shared\Imperial2030.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="imperial_ppo_bot.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="imperial_ppo_bot.onnx.data">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Update="vec_normalize.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 

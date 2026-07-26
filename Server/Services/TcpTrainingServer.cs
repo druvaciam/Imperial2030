@@ -185,7 +185,7 @@ public class TcpTrainingServer : BackgroundService
             CurrentTurnNation = Nation.Russia
         };
 
-        var randomOpponents = new[] { "Random", "Default" };
+        var randomOpponents = new[] { "Random", "Default", "Greedy", "Aggressive", "Friendly" };
         var rng = new Random();
         var players = new List<Player>();
         for (int i = 0; i < 6; i++)

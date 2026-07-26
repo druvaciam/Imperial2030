@@ -486,16 +486,7 @@ namespace Imperial2030.Tests
         [Fact]
         public async Task TestRLBotWinRate()
         {
-            try
-            {
-                using var pingClient = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-                await pingClient.GetAsync("http://127.0.0.1:5001/");
-            }
-            catch (Exception)
-            {
-                _output.WriteLine("Python RL server is not running on 127.0.0.1:5001. Skipping TestRLBotWinRate.");
-                return;
-            }
+
             int rlWins = 0;
             int totalGames = 100;
             for (int g = 0; g < totalGames; g++)
@@ -560,7 +551,7 @@ namespace Imperial2030.Tests
                 players[0].BotName = "RL Bot";
                 players[0].BotType = "RL"; // Fix actual strategy name
 
-                var randomOpponents = new[] { "Random", "Default" };//, "Greedy", "Aggressive", "Friendly" };
+                var randomOpponents = new[] { "Random", "Default", "Greedy", "Aggressive", "Friendly" };
                 var rng = new Random(g); // Use g for seed or just new Random()
                 for (int i = 1; i < 6; i++)
                 {
@@ -576,7 +567,7 @@ namespace Imperial2030.Tests
 
                 // The RL model is now correctly polled on state changes, so it should play out efficiently.
                 int timeoutTicks = 0;
-                while (timeoutTicks < 500) // 500 * 50ms = 25 seconds timeout per game
+                while (timeoutTicks < 100) // 100 * 50ms = 5 seconds timeout per game
                 {
                     using var scope = mockScopeFactory.Object.CreateScope();
                     var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -587,7 +578,7 @@ namespace Imperial2030.Tests
                     timeoutTicks++;
                 }
 
-                if (timeoutTicks >= 500)
+                if (timeoutTicks >= 100)
                 {
                     var game = context.Games.AsNoTracking().Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
                     _output.WriteLine($"Game {g} hit timeout! IsInvestorTurn={game?.IsInvestorTurn}, ActingPlayerId={game?.ActingPlayerId}, CurrentNation={game?.CurrentTurnNation}");
@@ -625,42 +616,6 @@ namespace Imperial2030.Tests
             }
 
             _output.WriteLine($"RL Bot Win Rate: {rlWins}/{totalGames} ({(float)rlWins / totalGames * 100}%)");
-        }
-        [Fact]
-        public void RlBotStrategy_WhenPythonServerReturnsInvalidAction_FallsBackToDefaultOrFirstChoice()
-        {
-            // Arrange
-            Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.IsTraining = false;
-            var bot = new Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy();
-
-            // We mock the HTTP client to return an invalid action (e.g., action = 8 which is Fight, not a RondelSlot)
-            var fakeResponse = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
-            {
-                Content = new System.Net.Http.StringContent("{\"action\": 8}", System.Text.Encoding.UTF8, "application/json")
-            };
-            bot._httpClient = new System.Net.Http.HttpClient(new FakeHttpMessageHandler(fakeResponse));
-
-            var game = new Game();
-            var player = new Player { Id = Guid.NewGuid(), Cash = 10 };
-            game.Players.Add(player);
-
-            var ns = new NationState { Nation = Nation.Russia, RondelPosition = 0, ControllerId = player.Id };
-            game.NationStates.Add(ns);
-
-            // Act
-            // Evaluate scores for all possible next slots
-            var scoreSlot1 = bot.ScoreRondelSlot(1, game, ns, player, 0, 0); // Investor
-            var scoreSlot2 = bot.ScoreRondelSlot(2, game, ns, player, 0, 0); // Import
-            var scoreSlot3 = bot.ScoreRondelSlot(3, game, ns, player, 0, 0); // Production1
-
-            // Assert
-            // Because action 8 is invalid for choosing a rondel slot, _cachedDesiredSlot becomes -1. 
-            // Thus all slots get the exact same fallback penalty (-100).
-            // This proves that without action masks, the bot's hallucinated action gets ignored by the strategy, 
-            // and the backend is forced to just take the highest tie-broken default.
-            Assert.Equal(-100.0, scoreSlot1);
-            Assert.Equal(-100.0, scoreSlot2);
-            Assert.Equal(-100.0, scoreSlot3);
         }
     }
 }

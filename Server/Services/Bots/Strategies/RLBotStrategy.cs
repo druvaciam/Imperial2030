@@ -3,6 +3,8 @@ using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 using System.Text;
 using System.Text.Json;
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace Imperial2030.Server.Services.Bots.Strategies;
 
@@ -17,7 +19,36 @@ public class RLBotStrategy : BotStrategyBase
     public static int InvalidActionCount = 0;
     public static int TotalActionCount = 0;
 
-    public HttpClient _httpClient = new HttpClient();
+    private static InferenceSession? _onnxSession;
+    private static float[]? _normMean;
+    private static float[]? _normVar;
+    private static float _normEpsilon;
+
+    static RLBotStrategy()
+    {
+        try
+        {
+            string basePath = AppContext.BaseDirectory;
+            string onnxPath = Path.Combine(basePath, "imperial_ppo_bot.onnx");
+            string jsonPath = Path.Combine(basePath, "vec_normalize.json");
+
+            if (File.Exists(onnxPath) && File.Exists(jsonPath))
+            {
+                _onnxSession = new InferenceSession(onnxPath);
+                var json = File.ReadAllText(jsonPath);
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                _normMean = root.GetProperty("mean").EnumerateArray().Select(x => (float)x.GetDouble()).ToArray();
+                _normVar = root.GetProperty("var").EnumerateArray().Select(x => (float)x.GetDouble()).ToArray();
+                _normEpsilon = (float)root.GetProperty("epsilon").GetDouble();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading ONNX model: {ex.Message}");
+        }
+    }
+
     private float[] _lastState = null;
     private int _cachedAction = -1;
 
@@ -47,7 +78,7 @@ public class RLBotStrategy : BotStrategyBase
             {
                 _lastState = state;
                 var mask = GetActionMask(game, controller.Id);
-                _cachedAction = GetActionFromPython(game, controller, mask);
+                _cachedAction = GetActionFromOnnx(game, controller, mask);
             }
         }
 
@@ -256,30 +287,64 @@ public class RLBotStrategy : BotStrategyBase
         var controller = game.Players.First(p => p.Id == controllerId);
 
         var mask = GetActionMask(game, controller.Id);
-        int action = GetActionFromPython(game, controller, mask);
+        int action = GetActionFromOnnx(game, controller, mask);
         return action == 9;
     }
 
-    private int GetActionFromPython(Game game, Player controller, bool[] actionMask)
+    private int GetActionFromOnnx(Game game, Player controller, bool[] actionMask)
     {
         var state = GetStateVector(game, controller);
 
-        var req = new { state = state, actionMask = actionMask };
-        var content = new StringContent(JsonSerializer.Serialize(req), Encoding.UTF8, "application/json");
-
-        var response = _httpClient.PostAsync("http://127.0.0.1:5001/predict", content).GetAwaiter().GetResult();
-        if (response.IsSuccessStatusCode)
+        if (_onnxSession == null || _normMean == null || _normVar == null)
         {
-            var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-            var result = JsonSerializer.Deserialize<JsonElement>(body);
-            int action = result.GetProperty("action").GetInt32();
-
-            TotalActionCount++;
-            if (action < 0 || action > 9 || !actionMask[action]) InvalidActionCount++;
-
-            return action;
+            // Fallback to random if model isn't loaded
+            var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();
+            if (validIndices.Count == 0) return 0;
+            return validIndices[Random.Shared.Next(validIndices.Count)];
         }
-        throw new InvalidOperationException("Failed to communicate with RL Python server.");
+
+        // Normalize state
+        for (int j = 0; j < state.Length; j++)
+        {
+            state[j] = (state[j] - _normMean[j]) / (float)Math.Sqrt(_normVar[j] + _normEpsilon);
+        }
+
+        // Create Tensor
+        var inputTensor = new DenseTensor<float>(state, new[] { 1, state.Length });
+        var inputs = new List<NamedOnnxValue>
+        {
+            NamedOnnxValue.CreateFromTensor("input", inputTensor)
+        };
+
+        // Run Inference
+        using var results = _onnxSession.Run(inputs);
+        var output = results.First().AsTensor<float>();
+
+        // Apply Mask & ArgMax
+        int bestAction = -1;
+        float maxLogit = float.MinValue;
+
+        for (int j = 0; j < 10; j++)
+        {
+            if (actionMask[j])
+            {
+                if (output[0, j] > maxLogit)
+                {
+                    maxLogit = output[0, j];
+                    bestAction = j;
+                }
+            }
+        }
+
+        TotalActionCount++;
+        if (bestAction < 0 || bestAction > 9 || !actionMask[bestAction])
+        {
+            InvalidActionCount++;
+            var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();
+            return validIndices.Count > 0 ? validIndices[0] : 0;
+        }
+
+        return bestAction;
     }
 
     private bool[] GetActionMask(Game game, Guid rlPlayerId)
@@ -311,7 +376,7 @@ public class RLBotStrategy : BotStrategyBase
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
         if (ns == null || ns.ControllerId != rlPlayerId) return mask;
 
-        mask[0] = IsSlotValid(ns, rlPlayer, 1);
+        mask[0] = IsSlotValid(ns, rlPlayer, 1) && ns.Treasury >= 5 && CanBuildFactory(game, ns.Nation);
         mask[1] = IsSlotValid(ns, rlPlayer, 2) || IsSlotValid(ns, rlPlayer, 6);
         mask[2] = IsSlotValid(ns, rlPlayer, 5);
         mask[3] = IsSlotValid(ns, rlPlayer, 3) || IsSlotValid(ns, rlPlayer, 7);
