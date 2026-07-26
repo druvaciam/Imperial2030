@@ -71,11 +71,24 @@ public class DefaultBotStrategy : BotStrategyBase
             }
         }
 
-        bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
+        bool hasEnemyFactory = ts != null && ts.HasFactory && def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
+        if (hasEnemyFactory)
+        {
+            var targetNation = def.Nation.Value;
+            int investment = game.Bonds.Where(b => b.HolderId == controller.Id && b.Nation == targetNation).Sum(b => b.Cost);
+            if (investment <= 2 && Random.Shared.Next(0, 10) < 5) // 50% chance to block if investment is low
+            {
+                score += 150;
+            }
+        }
+
+        bool isHomeProvince = def != null && def.Nation.HasValue;
+        bool uncontrolled = !isHomeProvince && (ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value));
         if (uncontrolled && !hasEnemy) score += 100;
 
         bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
         if (notFriendlyHome) score += 10;
+        else if (!hasEnemy) score -= 50; // Penalize moving within friendly home territories if there is no enemy
 
         return score;
     }

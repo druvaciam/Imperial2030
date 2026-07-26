@@ -57,8 +57,13 @@ public class FriendlyBotStrategy : BotStrategyBase
             }
         }
 
-        bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
-        if (uncontrolled && !hasEnemy) score += 150; // HIGH preference for empty territories
+        bool isHomeProvince = def != null && def.Nation.HasValue;
+        bool uncontrolled = !isHomeProvince && (ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value));
+        if (uncontrolled && !hasEnemy) score += 100;
+
+        bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
+        if (notFriendlyHome) score += 10;
+        else if (!hasEnemy) score -= 50; // Penalize moving within friendly home territories if there is no enemy
 
         return score;
     }

@@ -260,11 +260,13 @@ public class RLBotStrategy : BotStrategyBase
             }
         }
 
-        bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
+        bool isHomeProvince = def != null && def.Nation.HasValue;
+        bool uncontrolled = !isHomeProvince && (ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value));
         if (uncontrolled && !hasEnemy) score += 100;
 
         bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
         if (notFriendlyHome) score += 10;
+        else if (!hasEnemy) score -= 50; // Penalize moving within friendly home territories if there is no enemy
 
         return score;
     }
@@ -378,7 +380,7 @@ public class RLBotStrategy : BotStrategyBase
 
         mask[0] = IsSlotValid(ns, rlPlayer, 1) && ns.Treasury >= 5 && CanBuildFactory(game, ns.Nation);
         mask[1] = IsSlotValid(ns, rlPlayer, 2) || IsSlotValid(ns, rlPlayer, 6);
-        mask[2] = IsSlotValid(ns, rlPlayer, 5);
+        mask[2] = IsSlotValid(ns, rlPlayer, 5) && ns.Treasury >= 1;
         mask[3] = IsSlotValid(ns, rlPlayer, 3) || IsSlotValid(ns, rlPlayer, 7);
         mask[4] = mask[3];
         mask[5] = IsSlotValid(ns, rlPlayer, 0);

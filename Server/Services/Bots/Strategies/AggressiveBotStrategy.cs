@@ -57,8 +57,19 @@ public class AggressiveBotStrategy : BotStrategyBase
             }
         }
 
-        bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
-        if (uncontrolled && !hasEnemy) score += 50; // Less care about empty territories
+        bool hasEnemyFactory = ts != null && ts.HasFactory && def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
+        if (hasEnemyFactory)
+        {
+            score += 200; // Aggressively block enemy factories
+        }
+
+        bool isHomeProvince = def != null && def.Nation.HasValue;
+        bool uncontrolled = !isHomeProvince && (ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value));
+        if (uncontrolled && !hasEnemy) score += 100;
+
+        bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
+        if (notFriendlyHome) score += 10;
+        else if (!hasEnemy) score -= 50; // Penalize moving within friendly home territories if there is no enemy
 
         return score;
     }
