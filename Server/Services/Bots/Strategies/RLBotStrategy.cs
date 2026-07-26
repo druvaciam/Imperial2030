@@ -13,7 +13,7 @@ public class RLBotStrategy : BotStrategyBase
     public override string Name => "RL";
     public static AsyncLocal<int?> TrainingActionOverride = new AsyncLocal<int?>();
     public static bool IsTraining = false;
-    
+
     public static int InvalidActionCount = 0;
     public static int TotalActionCount = 0;
 
@@ -76,7 +76,7 @@ public class RLBotStrategy : BotStrategyBase
         if (rlPlayer == null) return state;
 
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
-        
+
         int i = 0;
         foreach (var nation in imperial2030Nations)
         {
@@ -125,7 +125,8 @@ public class RLBotStrategy : BotStrategyBase
         state[i++] = game.IsInvestorTurn ? 1.0f : 0.0f;
 
         // Global Scoreboard (6 players * 9 floats = 54 floats)
-        var allPlayers = game.Players.Select(p => {
+        var allPlayers = game.Players.Select(p =>
+        {
             float score = p.Cash;
             var playerBonds = game.Bonds.Where(b => b.HolderId == p.Id).ToList();
             foreach (var bond in playerBonds)
@@ -163,9 +164,9 @@ public class RLBotStrategy : BotStrategyBase
         }
 
         // Pending Battle Context (13 floats)
-        var defNationToResolve = game.PendingBattleDefenders.FirstOrDefault(def => 
+        var defNationToResolve = game.PendingBattleDefenders.FirstOrDefault(def =>
             game.NationStates.Any(ns => ns.Nation == def && ns.ControllerId == rlPlayer.Id));
-        
+
         if (defNationToResolve != default)
         {
             state[i++] = 1.0f;
@@ -186,7 +187,7 @@ public class RLBotStrategy : BotStrategyBase
     public override Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)
     {
         var affordableBonds = availableBonds.Where(b => b.Cost <= actor.Cash).ToList();
-        
+
         // 1. Try to strengthen control of own nations first
         var ownBond = affordableBonds.FirstOrDefault(b => controlledNations.Contains(b.Nation));
         if (ownBond != null) return ownBond;
@@ -212,12 +213,12 @@ public class RLBotStrategy : BotStrategyBase
         var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == destinationId);
         bool isMyHome = def != null && def.Nation == nation;
 
-        if (hasEnemy) 
+        if (hasEnemy)
         {
             if (isMyHome)
             {
                 score += 200; // High priority to free own home territory
-                if (ts != null && ts.HasFactory) 
+                if (ts != null && ts.HasFactory)
                 {
                     score += 300; // Even higher priority to free factories
                 }
@@ -262,21 +263,20 @@ public class RLBotStrategy : BotStrategyBase
     private int GetActionFromPython(Game game, Player controller, bool[] actionMask)
     {
         var state = GetStateVector(game, controller);
-        
+
         var req = new { state = state, actionMask = actionMask };
         var content = new StringContent(JsonSerializer.Serialize(req), Encoding.UTF8, "application/json");
-        
+
         var response = _httpClient.PostAsync("http://127.0.0.1:5001/predict", content).GetAwaiter().GetResult();
         if (response.IsSuccessStatusCode)
         {
             var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             var result = JsonSerializer.Deserialize<JsonElement>(body);
             int action = result.GetProperty("action").GetInt32();
-            
-            System.Console.WriteLine($"RL Python returned Action: {action}");
+
             TotalActionCount++;
             if (action < 0 || action > 9 || !actionMask[action]) InvalidActionCount++;
-            
+
             return action;
         }
         throw new InvalidOperationException("Failed to communicate with RL Python server.");
@@ -285,15 +285,15 @@ public class RLBotStrategy : BotStrategyBase
     private bool[] GetActionMask(Game game, Guid rlPlayerId)
     {
         bool[] mask = new bool[10];
-        
+
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
         if (rlPlayer == null) return mask;
 
         if (game.PendingBattleDefenders.Any())
         {
-            bool rlIsDefender = game.PendingBattleDefenders.Any(def => 
+            bool rlIsDefender = game.PendingBattleDefenders.Any(def =>
                 game.NationStates.Any(ns => ns.Nation == def && ns.ControllerId == rlPlayerId));
-            
+
             if (rlIsDefender)
             {
                 mask[8] = true; // Fight

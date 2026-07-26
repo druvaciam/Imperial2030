@@ -497,7 +497,7 @@ namespace Imperial2030.Tests
                 return;
             }
             int rlWins = 0;
-            int totalGames = 20;
+            int totalGames = 100;
             for (int g = 0; g < totalGames; g++)
             {
                 var dbName = Guid.NewGuid().ToString();

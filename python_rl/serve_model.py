@@ -5,24 +5,33 @@ import os
 
 app = Flask(__name__)
 
-model_path = "imperial_ppo_bot.zip"
+model_path_best = "imperial_ppo_bot_best.zip"
+model_path_latest = "imperial_ppo_bot.zip"
 model = None
 
-if os.path.exists(model_path):
-    print("Loading Trained MaskablePPO Model...")
-    model = MaskablePPO.load("imperial_ppo_bot")
+# Prioritize the best model, fallback to the latest checkpoint
+active_model_path = model_path_best if os.path.exists(model_path_best) else model_path_latest
+
+if os.path.exists(active_model_path):
+    print(f"Loading Trained MaskablePPO Model from {active_model_path}...")
+    model = MaskablePPO.load(active_model_path)
 else:
     print("Warning: Model not found. Will return random actions.")
 
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from imperial_env import ImperialEnv
 
-vec_env_path = "vec_normalize.pkl"
+vec_env_path_best = "vec_normalize_best.pkl"
+vec_env_path_latest = "vec_normalize.pkl"
 vec_env = None
-if os.path.exists(vec_env_path):
-    print("Loading VecNormalize statistics...")
+
+# Prioritize the best stats, fallback to the latest stats
+active_vec_path = vec_env_path_best if os.path.exists(vec_env_path_best) else vec_env_path_latest
+
+if os.path.exists(active_vec_path):
+    print(f"Loading VecNormalize statistics from {active_vec_path}...")
     dummy_env = DummyVecEnv([lambda: ImperialEnv()])
-    vec_env = VecNormalize.load(vec_env_path, dummy_env)
+    vec_env = VecNormalize.load(active_vec_path, dummy_env)
     vec_env.training = False
     vec_env.norm_reward = False
 

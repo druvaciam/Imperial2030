@@ -31,6 +31,7 @@ if __name__ == "__main__":
         vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
         model = MaskablePPO("MlpPolicy", vec_env, verbose=1)
 
+    import numpy as np
     from stable_baselines3.common.callbacks import BaseCallback
 
     class SaveOnStepCallback(BaseCallback):
@@ -38,22 +39,46 @@ if __name__ == "__main__":
             super().__init__(verbose)
             self.save_freq = save_freq
             self.save_path = save_path
+            self.best_mean_reward = -np.inf
+            self.best_reward_file = os.path.join(save_path, "best_reward.txt")
+            if os.path.exists(self.best_reward_file):
+                try:
+                    with open(self.best_reward_file, "r") as f:
+                        self.best_mean_reward = float(f.read().strip())
+                    if self.verbose > 0:
+                        print(f"Loaded previous best mean reward: {self.best_mean_reward:.2f}")
+                except Exception as e:
+                    print(f"Could not load best reward file: {e}")
 
         def _init_callback(self):
             os.makedirs(self.save_path, exist_ok=True)
 
         def _on_step(self):
             if self.n_calls % self.save_freq == 0:
+                # Save the latest model (for resuming training)
                 self.model.save(os.path.join(self.save_path, "imperial_ppo_bot"))
                 self.training_env.save(os.path.join(self.save_path, "vec_normalize.pkl"))
                 if self.verbose > 0:
-                    print(f"Saved model and normalize stats at step {self.num_timesteps}")
+                    print(f"Saved latest checkpoint at step {self.num_timesteps}")
+
+                # Check if we have a new best model
+                if len(self.model.ep_info_buffer) > 0:
+                    mean_reward = np.mean([ep_info["r"] for ep_info in self.model.ep_info_buffer])
+                    if mean_reward > self.best_mean_reward:
+                        self.best_mean_reward = mean_reward
+                        if self.verbose > 0:
+                            print(f"*** New best mean reward: {mean_reward:.2f}! Saving best model... ***")
+                        self.model.save(os.path.join(self.save_path, "imperial_ppo_bot_best"))
+                        self.training_env.save(os.path.join(self.save_path, "vec_normalize_best.pkl"))
+                        with open(self.best_reward_file, "w") as f:
+                            f.write(str(mean_reward))
+
             return True
 
     print("Starting Training...")
     # Train for a larger number of timesteps.
-    # It will automatically save every 10,000 steps to the current directory
-    callback = SaveOnStepCallback(save_freq=10000, save_path="./")
+    # It will automatically save every 5,000 steps to the current directory
+    callback = SaveOnStepCallback(save_freq=5000, save_path="./")
     model.learn(total_timesteps=1000000, reset_num_timesteps=False, callback=callback)
 
     print("Saving Final Model and VecNormalize statistics...")
