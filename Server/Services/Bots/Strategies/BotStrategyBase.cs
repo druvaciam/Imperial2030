@@ -13,7 +13,9 @@ public abstract class BotStrategyBase : IBotStrategy
     
     public virtual string? ChooseCityForFactory(Game game, Nation nation, List<Territory> validCities)
     {
-        return validCities.FirstOrDefault()?.Id;
+        if (validCities.Count == 0) return null;
+        var rng = new Random();
+        return validCities[rng.Next(validCities.Count)].Id;
     }
     
     public virtual List<(UnitType Type, string TerritoryId)> ChooseImports(Game game, NationState ns, int maxImport, List<Territory> homeTerritories)

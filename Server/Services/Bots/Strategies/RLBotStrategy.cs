@@ -97,7 +97,7 @@ public class RLBotStrategy : BotStrategyBase
 
     private float[] GetStateVector(Game game, Player rlPlayer)
     {
-        float[] state = new float[32]; // Increased from 20 to 32
+        float[] state = new float[135]; // Increased from 122 to 135
         if (rlPlayer == null) return state;
 
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
@@ -112,6 +112,12 @@ public class RLBotStrategy : BotStrategyBase
                 state[i++] = ns.Treasury;
                 state[i++] = ns.ControllerId == rlPlayer.Id ? 1.0f : 0.0f;
                 state[i++] = ns.RondelPosition ?? -1.0f; // NEW: Rondel Position
+
+                state[i++] = game.TerritoryStates.Count(t => t.HasFactory && Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == nation && Imperial2030.Shared.Constants.TerritoryData.AllTerritories.First(x => x.Id == t.TerritoryId).CityType == CityType.Brown);
+                state[i++] = game.TerritoryStates.Count(t => t.HasFactory && Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == nation && Imperial2030.Shared.Constants.TerritoryData.AllTerritories.First(x => x.Id == t.TerritoryId).CityType == CityType.LightBlue);
+                state[i++] = game.TerritoryStates.Count(t => t.Controller == nation);
+                state[i++] = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
+                state[i++] = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
             }
             else
             {
@@ -119,6 +125,11 @@ public class RLBotStrategy : BotStrategyBase
                 state[i++] = 0;
                 state[i++] = 0;
                 state[i++] = -1.0f; // NEW: Rondel Position
+                state[i++] = 0;
+                state[i++] = 0;
+                state[i++] = 0;
+                state[i++] = 0;
+                state[i++] = 0;
             }
         }
 
@@ -128,8 +139,71 @@ public class RLBotStrategy : BotStrategyBase
             state[i++] = game.CurrentTurnNation == nation ? 1.0f : 0.0f;
         }
 
+        // 6 floats for bond interest held by the RL player
+        var myBonds = game.Bonds.Where(b => b.HolderId == rlPlayer.Id).ToList();
+        foreach (var nation in imperial2030Nations)
+        {
+            state[i++] = myBonds.Where(b => b.Nation == nation).Sum(b => b.Interest);
+        }
+
         state[i++] = rlPlayer.Cash;
         state[i++] = game.IsInvestorTurn ? 1.0f : 0.0f;
+
+        // Global Scoreboard (6 players * 9 floats = 54 floats)
+        var allPlayers = game.Players.Select(p => {
+            float score = p.Cash;
+            var playerBonds = game.Bonds.Where(b => b.HolderId == p.Id).ToList();
+            foreach (var bond in playerBonds)
+            {
+                var nState = game.NationStates.FirstOrDefault(n => n.Nation == bond.Nation);
+                if (nState != null)
+                {
+                    score += bond.Interest * (nState.Power / 5);
+                }
+            }
+            return new { Player = p, Score = score };
+        }).OrderByDescending(x => x.Score).ToList();
+
+        for (int pIdx = 0; pIdx < 6; pIdx++)
+        {
+            if (pIdx < allPlayers.Count)
+            {
+                var pData = allPlayers[pIdx];
+                state[i++] = pData.Player.Id == rlPlayer.Id ? 1.0f : 0.0f;
+                state[i++] = pData.Score;
+                state[i++] = pData.Player.Cash;
+                foreach (var nation in imperial2030Nations)
+                {
+                    var ns = game.NationStates.FirstOrDefault(n => n.Nation == nation);
+                    state[i++] = (ns != null && ns.ControllerId == pData.Player.Id) ? 1.0f : 0.0f;
+                }
+            }
+            else
+            {
+                state[i++] = 0f;
+                state[i++] = 0f;
+                state[i++] = 0f;
+                for (int nIdx = 0; nIdx < 6; nIdx++) state[i++] = 0f;
+            }
+        }
+
+        // Pending Battle Context (13 floats)
+        var defNationToResolve = game.PendingBattleDefenders.FirstOrDefault(def => 
+            game.NationStates.Any(ns => ns.Nation == def && ns.ControllerId == rlPlayer.Id));
+        
+        if (defNationToResolve != default)
+        {
+            state[i++] = 1.0f;
+            foreach (var nation in imperial2030Nations)
+                state[i++] = game.PendingBattleAggressorNation == nation ? 1.0f : 0.0f;
+            foreach (var nation in imperial2030Nations)
+                state[i++] = defNationToResolve == nation ? 1.0f : 0.0f;
+        }
+        else
+        {
+            state[i++] = 0f;
+            for (int nIdx = 0; nIdx < 12; nIdx++) state[i++] = 0f;
+        }
 
         return state;
     }
@@ -190,7 +264,10 @@ public class RLBotStrategy : BotStrategyBase
 
     public override bool RetreatFromBattle(Game game, PendingBattle battle)
     {
-        // Default bot never retreats
+        if (TrainingActionOverride.Value.HasValue)
+        {
+            return TrainingActionOverride.Value.Value == 9; // 9 = Retreat, 8 = Fight
+        }
         return false;
     }
 }
