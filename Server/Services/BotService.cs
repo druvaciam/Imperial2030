@@ -251,6 +251,9 @@ public class BotService
             }
 
             if (moveCost > controller.Cash) continue;
+            
+            // Prevent useless Import if treasury is 0
+            if (slot == 4 && ns.Treasury == 0) continue;
 
             double score = GetStrategy(controller).ScoreRondelSlot(slot, game, ns, controller, factoryCount, unitCount) - moveCost * 2;
 
@@ -453,11 +456,19 @@ public class BotService
                     convoyPaths[dest.TerritoryId] = dest.ConvoyFleets;
                 }
             }
+            landNeighbors.Add(army.TerritoryId); // Allow staying put
 
             var best = landNeighbors.OrderByDescending(n => GetStrategy(controller).ScoreManeuverDestination(game, army, n, controller)).FirstOrDefault();
 
             if (best != null)
             {
+                if (best == army.TerritoryId)
+                {
+                    army.HasMoved = true;
+                    LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
+                    continue;
+                }
+
                 bool hasEnemy = game.Units.Any(u => u.TerritoryId == best && !friendlyNations.Contains(u.Nation));
                 var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best);
                 bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);

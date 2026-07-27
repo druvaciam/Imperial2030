@@ -1329,7 +1329,8 @@
         if (ns == null) return;
 
         // MANEUVER PHASE LOGIC
-        if (Game.ManeuverState != null && (Game.ManeuverState.Phase == ManeuverPhase.Fleets || Game.ManeuverState.Phase == ManeuverPhase.Armies))
+        bool isManeuverSlot = ns.RondelPosition == 3 || ns.RondelPosition == 7;
+        if (Game.ManeuverState != null && isManeuverSlot)
         {
             await HandleManeuverClick(territoryId, nation);
             return;

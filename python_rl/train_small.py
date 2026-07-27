@@ -17,11 +17,11 @@ if __name__ == "__main__":
     parser.add_argument("--reset", action="store_true", help="Start training from scratch, ignoring any existing saved model.")
     args = parser.parse_args()
 
-    MODEL_BASENAME = "imperial_ppo_bot"
+    MODEL_BASENAME = "imperial_ppo_bot_small"
     MODEL_PATH = f"{MODEL_BASENAME}.zip"
-    VEC_NORM_PATH = "vec_normalize.pkl"
-    BEST_VEC_NORM_PATH = "vec_normalize_best.pkl"
-    BEST_REWARD_PATH = "best_reward.txt"
+    VEC_NORM_PATH = "vec_normalize_small.pkl"
+    BEST_VEC_NORM_PATH = "vec_normalize_best_small.pkl"
+    BEST_REWARD_PATH = "best_reward_small.txt"
 
     if not args.reset and os.path.exists(MODEL_PATH) and os.path.exists(VEC_NORM_PATH):
         print("Found existing model, resuming training...")

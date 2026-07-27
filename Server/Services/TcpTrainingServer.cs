@@ -185,7 +185,7 @@ public class TcpTrainingServer : BackgroundService
             CurrentTurnNation = Nation.Russia
         };
 
-        var randomOpponents = new[] { "Random", "Default", "Greedy", "Aggressive", "Friendly" };
+        var randomOpponents = new[] { "Random", "Default" };// "Greedy", "Aggressive", "Friendly" };
         var rng = new Random();
         var players = new List<Player>();
         for (int i = 0; i < 6; i++)
@@ -393,12 +393,12 @@ public class TcpTrainingServer : BackgroundService
         using var scope = _serviceProvider.CreateScope();
         var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        var game = await _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == session.GameId);
+        var game = await _context.Games.Include(g => g.Players).Include(g => g.NationStates).Include(g => g.Bonds).FirstOrDefaultAsync(g => g.Id == session.GameId);
         if (game == null) return null;
 
         var player = game.Players.First(p => p.Id == session.RLPlayerId);
 
-        float prevVP = CalculateVP(_context, game, session.RLPlayerId);
+        float prevVP = CalculateRelativeVP(_context, game, session.RLPlayerId);
 
         RLBotStrategy.TrainingActionOverride.Value = req.Action;
         _botService.SkipDelays = true;
@@ -408,18 +408,22 @@ public class TcpTrainingServer : BackgroundService
         await _context.SaveChangesAsync();
 
         bool done = await AdvanceUntilRLTurn(_context, game.Id, session.RLPlayerId);
-        game = await _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstAsync(g => g.Id == session.GameId);
+        game = await _context.Games.Include(g => g.Players).Include(g => g.NationStates).Include(g => g.Bonds).FirstAsync(g => g.Id == session.GameId);
 
-        float newVP = CalculateVP(_context, game, session.RLPlayerId);
+        float newVP = CalculateRelativeVP(_context, game, session.RLPlayerId);
         float reward = newVP - prevVP;
 
-        if (done || game.Status == GameStatus.Finished)
-        {
-            var allScores = game.Players.Select(p => new { p.Id, Score = CalculateVP(_context, game, p.Id, useDense: false) }).ToList();
-            float maxScore = allScores.Max(s => s.Score);
-            float rlScore = allScores.First(s => s.Id == session.RLPlayerId).Score;
+        var allScores = game.Players.Select(p => new { p.Id, Score = game.CalculateScore(p.Id) }).ToList();
+        float maxOfOthersScore = allScores.Where(s => s.Id != session.RLPlayerId).Max(s => s.Score);
+        float rlScore = allScores.First(s => s.Id == session.RLPlayerId).Score;
 
-            if (rlScore >= maxScore)
+        //_logger.LogInformation($"RL player scored {rlScore} and max of others score is {maxOfOthersScore}, intermediate score: {newVP}, prev {prevVP}, step reward: {reward}, gamestatus: {game.Status}, done: {done}");
+
+        if (game.Status == GameStatus.Finished)
+        {
+            _logger.LogInformation($"Finished! RL player scored {rlScore} and max of others score is {maxOfOthersScore}, intermediate score: {newVP}, reward: {reward}");
+
+            if (rlScore > maxOfOthersScore)
             {
                 reward += 1000; // WIN
             }
@@ -427,6 +431,8 @@ public class TcpTrainingServer : BackgroundService
             {
                 reward -= 1000; // LOSS
             }
+
+            _logger.LogInformation($"Final reward is {reward}, game players: {string.Join(", ", game.Players.Select(p => p.BotType))}");
 
             var stateResponse = GetStateVector(_context, game.Id, session.RLPlayerId);
 
@@ -487,12 +493,20 @@ public class TcpTrainingServer : BackgroundService
         return true;
     }
 
+    private float CalculateRelativeVP(ApplicationDbContext _context, Game game, Guid playerId)
+    {
+        var allScores = game.Players.Select(p => new { p.Id, Score = CalculateVP(_context, game, p.Id, useDense: true) }).ToList();
+        float myScore = allScores.First(s => s.Id == playerId).Score;
+        float maxOtherScore = allScores.Where(s => s.Id != playerId).Max(s => s.Score);
+        return myScore - maxOtherScore;
+    }
+
     private float CalculateVP(ApplicationDbContext _context, Game game, Guid playerId, bool useDense = true)
     {
         var player = game.Players.FirstOrDefault(p => p.Id == playerId);
         if (player == null) return 0;
 
-        float score = player.Cash;
+        float score = player.Cash * .9f;
 
         var bonds = _context.Bonds.Where(b => b.HolderId == playerId).ToList();
         foreach (var bond in bonds)
@@ -502,35 +516,49 @@ public class TcpTrainingServer : BackgroundService
             {
                 if (useDense)
                 {
-                    var allGameFactories = _context.TerritoryStates.Where(t => t.GameId == game.Id && t.HasFactory).ToList();
-                    var homeFactories = allGameFactories.Where(t =>
-                        TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == nation.Nation).ToList();
-
+                    var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == nation.Nation).Select(t => t.Id).ToList();
                     float factoryScore = 0;
-                    foreach (var f in homeFactories)
+
+                    foreach (var terrId in homeTerritories)
                     {
-                        bool isOccupied = _context.Units.Any(u => u.GameId == game.Id && u.TerritoryId == f.TerritoryId && u.Nation != nation.Nation);
-                        if (isOccupied)
-                            factoryScore += 0.05f;
+                        var ts = _context.TerritoryStates.FirstOrDefault(t => t.GameId == game.Id && t.TerritoryId == terrId);
+                        bool isOccupied = _context.Units.Any(u => u.GameId == game.Id && u.TerritoryId == terrId && u.Nation != nation.Nation && u.IsHostile);
+
+                        if (ts != null && ts.HasFactory)
+                        {
+                            if (isOccupied) factoryScore += 0.02f; // Suppressed factory
+                            else factoryScore += 0.2f; // Healthy factory
+                        }
                         else
-                            factoryScore += 0.2f;
+                        {
+                            if (isOccupied) factoryScore -= 0.1f; // Enemy blocking factory building
+                        }
                     }
 
                     int flagCount = _context.TerritoryStates.Count(t => t.GameId == game.Id && t.Controller == nation.Nation);
                     int unitCount = _context.Units.Count(u => u.GameId == game.Id && u.Nation == nation.Nation);
 
-                    float denseFactor = (nation.Power / 5.0f)
-                                      + factoryScore
-                                      + (flagCount * 0.04f)
-                                      + (unitCount * 0.02f)
-                                      + (nation.Treasury * 0.01f);
+                    float denseFactor = (nation.Power / 5.0f);
+
+                    if (nation.ControllerId == playerId)
+                    {
+                        float flagValue = 0.02f;
+                        int distanceToTax = (8 - (nation.RondelPosition ?? 0)) % 8;
+                        if (distanceToTax == 0) distanceToTax = 8; // If currently on Taxation, it's 8 steps away
+                        if (distanceToTax <= 3) flagValue = 0.04f; // More valuable when close to tax
+
+                        denseFactor += factoryScore
+                                     + (flagCount * flagValue)
+                                     + (unitCount * 0.01f)
+                                     + (nation.Treasury * 0.005f);
+                    }
 
                     score += bond.Interest * denseFactor;
                 }
                 else
                 {
-                    int factor = nation.Power / 5;
-                    score += bond.Interest * factor;
+                    score = game.CalculateScore(playerId);
+                    break;
                 }
             }
         }
@@ -540,7 +568,7 @@ public class TcpTrainingServer : BackgroundService
 
     private float[] GetStateVector(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId)
     {
-        var game = _context.Games.Include(g => g.NationStates).Include(g => g.Players).FirstOrDefault(g => g.Id == gameId);
+        var game = _context.Games.Include(g => g.NationStates).Include(g => g.Players).Include(g => g.Bonds).FirstOrDefault(g => g.Id == gameId);
         if (game == null) return new float[135];
 
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
@@ -601,7 +629,7 @@ public class TcpTrainingServer : BackgroundService
         var allPlayers = game.Players.Select(p => new
         {
             Player = p,
-            Score = CalculateVP(_context, game, p.Id, useDense: false)
+            Score = game.CalculateScore(p.Id)
         }).OrderByDescending(x => x.Score).ToList();
 
         for (int pIdx = 0; pIdx < 6; pIdx++)

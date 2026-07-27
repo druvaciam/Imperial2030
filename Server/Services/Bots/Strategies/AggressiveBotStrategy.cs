@@ -16,20 +16,13 @@ public class AggressiveBotStrategy : BotStrategyBase
         {
             1 => (ns.Treasury >= 5 && CanBuildFactory(game, ns.Nation)) ? 20 : 0,       // Factory
             2 or 6 => (units >= unitLimit || shouldSave) ? 0 : EstimateProductionYield(game, ns.Nation) * 10,  // Higher prod score
-            0 => EstimateTaxRevenue(game, ns.Nation) >= 6 ? 20 : (ns.Treasury < 5 ? 18 : 0), 
+            0 => EstimateTaxRevenue(game, ns.Nation) >= 6 ? 20 : (ns.Treasury < 5 ? 18 : 0),
             3 or 7 => HasExpandableTargets(game, ns.Nation, controller) ? 25 : 0, // Much higher Maneuver score
-            5 => (ns.Treasury >= 2 && (units >= unitLimit || shouldSave)) ? 0 : 12,           
+            5 => (ns.Treasury >= 2 && (units >= unitLimit || shouldSave)) ? 0 : 12,
             4 => 2,                                                    // Low Investor score
             _ => 0
         };
     }
-
-    public override Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)
-    {
-        return availableBonds.FirstOrDefault(b => controlledNations.Contains(b.Nation) && b.Cost <= actor.Cash);
-    }
-
-
 
     public override double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller)
     {
@@ -45,7 +38,7 @@ public class AggressiveBotStrategy : BotStrategyBase
         var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == destinationId);
         bool isMyHome = def != null && def.Nation == nation;
 
-        if (hasEnemy) 
+        if (hasEnemy)
         {
             if (isMyHome)
             {
@@ -57,10 +50,20 @@ public class AggressiveBotStrategy : BotStrategyBase
             }
         }
 
-        bool hasEnemyFactory = ts != null && ts.HasFactory && def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
-        if (hasEnemyFactory)
+        bool isEnemyFactory = ts != null && ts.HasFactory &&
+            (
+                (def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value)) ||
+                (ts.Controller.HasValue && !friendlyNations.Contains(ts.Controller.Value))
+            );
+
+        if (isEnemyFactory)
         {
             score += 200; // Aggressively block enemy factories
+        }
+
+        if (destinationId == unit.TerritoryId)
+        {
+            score += 15; // Small bias to stay put to avoid useless wander
         }
 
         bool isHomeProvince = def != null && def.Nation.HasValue;

@@ -20,7 +20,7 @@ class ImperialEnv(gym.Env):
         self.action_space = spaces.Discrete(10)
         
         # State: 135 floats
-        self.observation_space = spaces.Box(low=-1000, high=1000, shape=(135,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(135,), dtype=np.float32)
 
     def _connect_socket(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

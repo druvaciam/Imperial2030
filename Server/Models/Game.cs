@@ -88,4 +88,24 @@ public class Game
             }
         }
     }
+
+    public int CalculateScore(Guid playerId)
+    {
+        var player = this.Players.FirstOrDefault(p => p.Id == playerId);
+        if (player == null) return 0;
+
+        int score = player.Cash;
+        var playerBonds = this.Bonds.Where(b => b.HolderId == playerId).ToList();
+        
+        foreach (var bond in playerBonds)
+        {
+            var nation = this.NationStates.FirstOrDefault(n => n.Nation == bond.Nation);
+            if (nation != null)
+            {
+                int factor = nation.Power / 5;
+                score += bond.Interest * factor;
+            }
+        }
+        return score;
+    }
 }
