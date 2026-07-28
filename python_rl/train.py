@@ -5,6 +5,13 @@ from imperial_env import ImperialEnv
 
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
+def linear_schedule(initial_value, final_value=1e-5):
+    """Linear decay from initial_value to final_value over training."""
+    def func(progress_remaining):
+        # progress_remaining goes from 1.0 -> 0.0
+        return final_value + progress_remaining * (initial_value - final_value)
+    return func
+
 if __name__ == "__main__":
     env = Monitor(ImperialEnv())
     
@@ -29,9 +36,14 @@ if __name__ == "__main__":
         # We must disable training mode when not training, but here we ARE training
         vec_env.training = True
         custom_objects = {
-            "learning_rate": 1e-4,
+            "learning_rate": linear_schedule(1e-4, 1e-5),
             "n_steps": 4096,
-            "batch_size": 128
+            "batch_size": 256,
+            "clip_range": 0.2,
+            "ent_coef": 0.03,
+            "gamma": 0.995,
+            "n_epochs": 5,
+            "max_grad_norm": 0.5,
         }
         model = MaskablePPO.load(MODEL_PATH, env=vec_env, custom_objects=custom_objects, verbose=1)
     else:
@@ -40,8 +52,8 @@ if __name__ == "__main__":
         
         policy_kwargs = dict(
             net_arch=dict(
-                pi=[256, 256],
-                vf=[256, 256],
+                pi=[512, 512],
+                vf=[512, 512],
             )
         )
         
@@ -49,9 +61,14 @@ if __name__ == "__main__":
             "MlpPolicy", 
             vec_env, 
             policy_kwargs=policy_kwargs, 
-            learning_rate=1e-4,      # Lower learning rate to prevent thrashing (high KL div)
-            n_steps=4096,            # Larger rollout buffer
-            batch_size=128,          # Larger batch size for more stable gradients
+            learning_rate=linear_schedule(1e-4, 1e-5),
+            n_steps=4096,
+            batch_size=256,
+            clip_range=0.2,
+            ent_coef=0.03,           # Balanced exploration for 64-action masked space
+            gamma=0.995,
+            n_epochs=5,
+            max_grad_norm=0.5,
             verbose=1
         )
 
@@ -59,13 +76,17 @@ if __name__ == "__main__":
     from stable_baselines3.common.callbacks import BaseCallback
 
     class SaveOnStepCallback(BaseCallback):
-        def __init__(self, save_freq, save_path, verbose=1):
+        def __init__(self, save_freq, save_path, reset=False, verbose=1):
             super().__init__(verbose)
             self.save_freq = save_freq
             self.save_path = save_path
             self.best_mean_reward = -np.inf
             self.best_reward_file = os.path.join(save_path, BEST_REWARD_PATH)
-            if os.path.exists(self.best_reward_file):
+            
+            if reset and os.path.exists(self.best_reward_file):
+                os.remove(self.best_reward_file)
+                print("Resetting best reward tracking...")
+            elif os.path.exists(self.best_reward_file):
                 try:
                     with open(self.best_reward_file, "r") as f:
                         self.best_mean_reward = float(f.read().strip())
@@ -102,8 +123,8 @@ if __name__ == "__main__":
     print("Starting Training...")
     # Train for a larger number of timesteps.
     # It will automatically save every 5,000 steps to the current directory
-    callback = SaveOnStepCallback(save_freq=5000, save_path="./")
-    model.learn(total_timesteps=1000000, reset_num_timesteps=False, callback=callback)
+    callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
+    model.learn(total_timesteps=3000000, reset_num_timesteps=False, callback=callback)
 
     print("Saving Final Model and VecNormalize statistics...")
     model.save(MODEL_BASENAME)

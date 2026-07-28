@@ -82,19 +82,11 @@ public class RLBotStrategy : BotStrategyBase
             }
         }
 
-        int desiredSlot = _cachedAction switch
-        {
-            0 => 1,
-            1 => 2, // or 6
-            2 => 5,
-            3 => 3, // or 7
-            4 => 3, // or 7
-            5 => 0,
-            6 => 4,
-            _ => -1
-        };
+        int distance = _cachedAction + 1; // Actions 0-5 map to distance 1-6
+        int currentPos = ns.RondelPosition ?? 0;
+        int targetSlot = (currentPos + distance) % 8;
 
-        if (slot == desiredSlot || (desiredSlot == 2 && slot == 6) || (desiredSlot == 3 && slot == 7))
+        if (slot == targetSlot)
         {
             return 100; // Force this choice
         }
@@ -103,10 +95,21 @@ public class RLBotStrategy : BotStrategyBase
 
     private float[] GetStateVector(Game game, Player rlPlayer)
     {
-        float[] state = new float[135]; // Increased from 122 to 135
+        float[] state = new float[561];
         if (rlPlayer == null) return state;
 
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
+
+        var allPlayers = game.Players.Select(p => new
+        {
+            Player = p,
+            Score = game.CalculateScore(p.Id)
+        })
+        .OrderByDescending(x => x.Player.Id == rlPlayer.Id ? 1 : 0)
+        .ThenBy(x => x.Player.Id)
+        .ToList();
+        
+        var sortedOpponents = allPlayers.Where(x => x.Player.Id != rlPlayer.Id).ToList();
 
         int i = 0;
         foreach (var nation in imperial2030Nations)
@@ -116,11 +119,48 @@ public class RLBotStrategy : BotStrategyBase
             {
                 state[i++] = ns.Power;
                 state[i++] = ns.Treasury;
-                state[i++] = ns.ControllerId == rlPlayer.Id ? 1.0f : 0.0f;
                 state[i++] = ns.RondelPosition ?? -1.0f; // NEW: Rondel Position
 
-                state[i++] = game.TerritoryStates.Count(t => t.HasFactory && Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == nation && Imperial2030.Shared.Constants.TerritoryData.AllTerritories.First(x => x.Id == t.TerritoryId).CityType == CityType.Brown);
-                state[i++] = game.TerritoryStates.Count(t => t.HasFactory && Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == nation && Imperial2030.Shared.Constants.TerritoryData.AllTerritories.First(x => x.Id == t.TerritoryId).CityType == CityType.LightBlue);
+                var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
+                foreach (var cost in bondCosts)
+                {
+                    var bond = game.Bonds.FirstOrDefault(b => b.Nation == nation && b.Cost == cost);
+                    state[i++] = (bond == null || !bond.HolderId.HasValue) ? 1.0f : 0.0f; // Unowned
+                    state[i++] = (bond != null && bond.HolderId == rlPlayer.Id) ? 1.0f : 0.0f; // Me
+                    for (int oppIdx = 0; oppIdx < 5; oppIdx++) // 5 Opponents
+                    {
+                        if (oppIdx < sortedOpponents.Count)
+                        {
+                            var oppId = sortedOpponents[oppIdx].Player.Id;
+                            state[i++] = (bond != null && bond.HolderId == oppId) ? 1.0f : 0.0f;
+                        }
+                        else
+                        {
+                            state[i++] = 0.0f;
+                        }
+                    }
+                }
+
+                var homeTerritories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.Where(x => x.Nation == nation).OrderBy(x => x.Id).ToList();
+                for (int tIdx = 0; tIdx < 4; tIdx++)
+                {
+                    if (tIdx < homeTerritories.Count)
+                    {
+                        var tData = homeTerritories[tIdx];
+                        var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == tData.Id);
+                        bool hasFactory = ts != null && ts.HasFactory;
+                        bool isOccupied = game.Units.Any(u => u.TerritoryId == tData.Id && u.Nation != nation && u.IsHostile);
+
+                        state[i++] = (tData.CityType == CityType.Brown) ? 1.0f : 0.0f; // Is Brown (0 means Blue)
+                        state[i++] = hasFactory ? 1.0f : 0.0f; // Is Built
+                        state[i++] = isOccupied ? 1.0f : 0.0f; // Occupied
+                    }
+                    else
+                    {
+                        for (int j = 0; j < 3; j++) state[i++] = 0;
+                    }
+                }
+
                 state[i++] = game.TerritoryStates.Count(t => t.Controller == nation);
                 state[i++] = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
                 state[i++] = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
@@ -129,38 +169,24 @@ public class RLBotStrategy : BotStrategyBase
             {
                 state[i++] = 0;
                 state[i++] = 0;
-                state[i++] = 0;
                 state[i++] = -1.0f; // NEW: Rondel Position
-                state[i++] = 0;
-                state[i++] = 0;
+                for (int j = 0; j < 63; j++) state[i++] = 0; // Bond binary parameters
+                for (int j = 0; j < 12; j++) state[i++] = 0; // Territory states
                 state[i++] = 0;
                 state[i++] = 0;
                 state[i++] = 0;
             }
         }
 
-        // 6 floats for one-hot encoding of CurrentTurnNation
         foreach (var nation in imperial2030Nations)
         {
             state[i++] = game.CurrentTurnNation == nation ? 1.0f : 0.0f;
-        }
-
-        // 6 floats for bond interest held by the RL player
-        var myBonds = game.Bonds.Where(b => b.HolderId == rlPlayer.Id).ToList();
-        foreach (var nation in imperial2030Nations)
-        {
-            state[i++] = myBonds.Where(b => b.Nation == nation).Sum(b => b.Interest);
         }
 
         state[i++] = rlPlayer.Cash;
         state[i++] = game.IsInvestorTurn ? 1.0f : 0.0f;
 
         // Global Scoreboard (6 players * 9 floats = 54 floats)
-        var allPlayers = game.Players.Select(p =>
-        {
-            float score = game.CalculateScore(p.Id);
-            return new { Player = p, Score = score };
-        }).OrderByDescending(x => x.Score).ToList();
 
         for (int pIdx = 0; pIdx < 6; pIdx++)
         {
@@ -210,7 +236,7 @@ public class RLBotStrategy : BotStrategyBase
     {
         if (TrainingActionOverride.Value.HasValue)
         {
-            return TrainingActionOverride.Value.Value == 9; // 9 = Retreat, 8 = Fight
+            return TrainingActionOverride.Value.Value == 8; // 8 = Retreat, 7 = Fight
         }
         else if (IsTraining)
         {
@@ -225,7 +251,45 @@ public class RLBotStrategy : BotStrategyBase
 
         var mask = GetActionMask(game, controller.Id);
         int action = GetActionFromOnnx(game, controller, mask);
-        return action == 9;
+        return action == 8;
+    }
+
+    public override Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)
+    {
+        if (TrainingActionOverride.Value.HasValue)
+        {
+            _cachedAction = TrainingActionOverride.Value.Value;
+        }
+        else if (IsTraining)
+        {
+            throw new RlTrainingPauseException();
+        }
+        else
+        {
+            var state = GetStateVector(game, actor);
+            if (!IsSameState(state, _lastState))
+            {
+                _lastState = state;
+                var mask = GetActionMask(game, actor.Id);
+                _cachedAction = GetActionFromOnnx(game, actor, mask);
+            }
+        }
+
+        if (_cachedAction == 63) return null; // Pass
+        if (_cachedAction >= 9 && _cachedAction <= 62)
+        {
+            int bondIdx = _cachedAction - 9;
+            int nationIdx = bondIdx / 9;
+            int costIdx = bondIdx % 9;
+            var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
+            var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
+            
+            var targetNation = imperial2030Nations[nationIdx];
+            var targetCost = bondCosts[costIdx];
+            
+            return availableBonds.FirstOrDefault(b => b.Nation == targetNation && b.Cost == targetCost);
+        }
+        return null;
     }
 
     private int GetActionFromOnnx(Game game, Player controller, bool[] actionMask)
@@ -261,7 +325,7 @@ public class RLBotStrategy : BotStrategyBase
         int bestAction = -1;
         float maxLogit = float.MinValue;
 
-        for (int j = 0; j < 10; j++)
+        for (int j = 0; j < 64; j++)
         {
             if (actionMask[j])
             {
@@ -274,7 +338,7 @@ public class RLBotStrategy : BotStrategyBase
         }
 
         TotalActionCount++;
-        if (bestAction < 0 || bestAction > 9 || !actionMask[bestAction])
+        if (bestAction < 0 || bestAction > 63 || !actionMask[bestAction])
         {
             InvalidActionCount++;
             var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();
@@ -286,7 +350,7 @@ public class RLBotStrategy : BotStrategyBase
 
     private bool[] GetActionMask(Game game, Guid rlPlayerId)
     {
-        bool[] mask = new bool[10];
+        bool[] mask = new bool[64];
 
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
         if (rlPlayer == null) return mask;
@@ -298,31 +362,51 @@ public class RLBotStrategy : BotStrategyBase
 
             if (rlIsDefender)
             {
-                mask[8] = true; // Fight
-                mask[9] = true; // Retreat
+                mask[7] = true; // Fight
+                mask[8] = true; // Retreat
                 return mask;
             }
         }
 
         if (game.IsInvestorTurn)
         {
-            mask[7] = true;
+            mask[63] = true; // Pass option
+            
+            var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
+            var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
+            
+            for (int nIdx = 0; nIdx < 6; nIdx++)
+            {
+                for (int cIdx = 0; cIdx < 9; cIdx++)
+                {
+                    var n = imperial2030Nations[nIdx];
+                    var c = bondCosts[cIdx];
+                    var bond = game.Bonds.FirstOrDefault(b => b.Nation == n && b.Cost == c);
+                    
+                    if (bond != null && bond.HolderId == null && rlPlayer.Cash >= c)
+                    {
+                        mask[9 + nIdx * 9 + cIdx] = true;
+                    }
+                }
+            }
             return mask;
         }
 
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
         if (ns == null || ns.ControllerId != rlPlayerId) return mask;
 
-        mask[0] = IsSlotValid(ns, rlPlayer, 1) && ns.Treasury >= 5 && CanBuildFactory(game, ns.Nation);
-        mask[1] = IsSlotValid(ns, rlPlayer, 2) || IsSlotValid(ns, rlPlayer, 6);
-        mask[2] = IsSlotValid(ns, rlPlayer, 5) && ns.Treasury >= 1;
-        mask[3] = IsSlotValid(ns, rlPlayer, 3) || IsSlotValid(ns, rlPlayer, 7);
-        mask[4] = mask[3];
-        mask[5] = IsSlotValid(ns, rlPlayer, 0);
-        mask[6] = IsSlotValid(ns, rlPlayer, 4);
-        mask[7] = false;
+        int currentPos = ns.RondelPosition ?? 0;
+        
+        for (int dist = 1; dist <= 6; dist++)
+        {
+            int targetSlot = (currentPos + dist) % 8;
+            mask[dist - 1] = IsSlotValid(ns, rlPlayer, targetSlot);
+        }
+        
+        mask[6] = false; // Action 6 is unused for Rondel (moving 7 spaces is illegal in Imperial 2030)
 
-        if (!mask.Any(m => m)) mask[5] = true;
+        // Failsafe: if no actions are somehow valid, just force action 0 (move 1 space)
+        if (!mask.Take(6).Any(m => m)) mask[0] = true;
 
         return mask;
     }

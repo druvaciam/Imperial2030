@@ -412,6 +412,10 @@ public class TcpTrainingServer : BackgroundService
 
         float newVP = CalculateRelativeVP(_context, game, session.RLPlayerId);
         float reward = newVP - prevVP;
+        
+        // Continuous reward for leading the game (or penalty for trailing)
+        // This gives the agent a dense gradient to always try and increase its relative score, even if it's currently losing
+        reward += newVP * 0.05f;
 
         var allScores = game.Players.Select(p => new { p.Id, Score = game.CalculateScore(p.Id) }).ToList();
         float maxOfOthersScore = allScores.Where(s => s.Id != session.RLPlayerId).Max(s => s.Score);
@@ -423,13 +427,13 @@ public class TcpTrainingServer : BackgroundService
         {
             _logger.LogInformation($"Finished! RL player scored {rlScore} and max of others score is {maxOfOthersScore}, intermediate score: {newVP}, reward: {reward}");
 
+            // At the end of the game, reward perfectly aligns with the final VP difference
+            reward += (rlScore - maxOfOthersScore) * 1.0f;
+            
+            // Small flat bonus for winning
             if (rlScore > maxOfOthersScore)
             {
-                reward += 1000; // WIN
-            }
-            else
-            {
-                reward -= 1000; // LOSS
+                reward += 100f;
             }
 
             _logger.LogInformation($"Final reward is {reward}, game players: {string.Join(", ", game.Players.Select(p => p.BotType))}");
@@ -458,7 +462,7 @@ public class TcpTrainingServer : BackgroundService
             _context.Games.Remove(game);
             await _context.SaveChangesAsync();
 
-            return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[10] };
+            return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[64] };
         }
 
         return new StepResponse { State = GetStateVector(_context, game.Id, session.RLPlayerId), Reward = reward, Done = false, ActionMask = GetActionMask(_context, game.Id, session.RLPlayerId) };
@@ -572,14 +576,25 @@ public class TcpTrainingServer : BackgroundService
         if (game == null) return new float[135];
 
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
-        float[] state = new float[135];
+        float[] state = new float[561];
         if (rlPlayer == null) return state;
 
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
-        var bonds = _context.Bonds.Where(b => b.GameId == gameId && b.HolderId == rlPlayerId).ToList();
+        var bonds = game.Bonds.ToList();
 
         var allTerritories = _context.TerritoryStates.Where(t => t.GameId == gameId).ToList();
         var allUnits = _context.Units.Where(u => u.GameId == gameId).ToList();
+        
+        var allPlayers = game.Players.Select(p => new
+        {
+            Player = p,
+            Score = game.CalculateScore(p.Id)
+        })
+        .OrderByDescending(x => x.Player.Id == rlPlayerId ? 1 : 0)
+        .ThenBy(x => x.Player.Id)
+        .ToList();
+        
+        var sortedOpponents = allPlayers.Where(x => x.Player.Id != rlPlayerId).ToList();
 
         int i = 0;
         foreach (var nation in imperial2030Nations)
@@ -589,11 +604,48 @@ public class TcpTrainingServer : BackgroundService
             {
                 state[i++] = ns.Power;
                 state[i++] = ns.Treasury;
-                state[i++] = ns.ControllerId == rlPlayerId ? 1.0f : 0.0f;
                 state[i++] = ns.RondelPosition ?? -1.0f;
+                
+                var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
+                foreach (var cost in bondCosts)
+                {
+                    var bond = bonds.FirstOrDefault(b => b.Nation == nation && b.Cost == cost);
+                    state[i++] = (bond == null || !bond.HolderId.HasValue) ? 1.0f : 0.0f; // Unowned
+                    state[i++] = (bond != null && bond.HolderId == rlPlayerId) ? 1.0f : 0.0f; // Me
+                    for (int oppIdx = 0; oppIdx < 5; oppIdx++) // 5 Opponents
+                    {
+                        if (oppIdx < sortedOpponents.Count)
+                        {
+                            var oppId = sortedOpponents[oppIdx].Player.Id;
+                            state[i++] = (bond != null && bond.HolderId == oppId) ? 1.0f : 0.0f;
+                        }
+                        else
+                        {
+                            state[i++] = 0.0f;
+                        }
+                    }
+                }
 
-                state[i++] = allTerritories.Count(t => t.HasFactory && TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == nation && TerritoryData.AllTerritories.First(x => x.Id == t.TerritoryId).CityType == CityType.Brown);
-                state[i++] = allTerritories.Count(t => t.HasFactory && TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == nation && TerritoryData.AllTerritories.First(x => x.Id == t.TerritoryId).CityType == CityType.LightBlue);
+                var homeTerritories = TerritoryData.AllTerritories.Where(x => x.Nation == nation).OrderBy(x => x.Id).ToList();
+                for (int tIdx = 0; tIdx < 4; tIdx++)
+                {
+                    if (tIdx < homeTerritories.Count)
+                    {
+                        var tData = homeTerritories[tIdx];
+                        var ts = allTerritories.FirstOrDefault(t => t.TerritoryId == tData.Id);
+                        bool hasFactory = ts != null && ts.HasFactory;
+                        bool isOccupied = allUnits.Any(u => u.TerritoryId == tData.Id && u.Nation != nation && u.IsHostile);
+
+                        state[i++] = (tData.CityType == CityType.Brown) ? 1.0f : 0.0f; // Is Brown (0 means Blue)
+                        state[i++] = hasFactory ? 1.0f : 0.0f; // Is Built
+                        state[i++] = isOccupied ? 1.0f : 0.0f; // Occupied
+                    }
+                    else
+                    {
+                        for (int j = 0; j < 3; j++) state[i++] = 0;
+                    }
+                }
+
                 state[i++] = allTerritories.Count(t => t.Controller == nation);
                 state[i++] = allUnits.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
                 state[i++] = allUnits.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
@@ -602,10 +654,9 @@ public class TcpTrainingServer : BackgroundService
             {
                 state[i++] = 0;
                 state[i++] = 0;
-                state[i++] = 0;
                 state[i++] = -1.0f;
-                state[i++] = 0;
-                state[i++] = 0;
+                for (int j = 0; j < 63; j++) state[i++] = 0; // Bond binary parameters
+                for (int j = 0; j < 12; j++) state[i++] = 0; // Territory states
                 state[i++] = 0;
                 state[i++] = 0;
                 state[i++] = 0;
@@ -617,20 +668,10 @@ public class TcpTrainingServer : BackgroundService
             state[i++] = game.CurrentTurnNation == nation ? 1.0f : 0.0f;
         }
 
-        foreach (var nation in imperial2030Nations)
-        {
-            state[i++] = bonds.Where(b => b.Nation == nation).Sum(b => b.Interest);
-        }
-
         state[i++] = rlPlayer.Cash;
         state[i++] = game.IsInvestorTurn ? 1.0f : 0.0f;
 
         // Global Scoreboard (6 players * 9 floats = 54 floats)
-        var allPlayers = game.Players.Select(p => new
-        {
-            Player = p,
-            Score = game.CalculateScore(p.Id)
-        }).OrderByDescending(x => x.Score).ToList();
 
         for (int pIdx = 0; pIdx < 6; pIdx++)
         {
@@ -679,7 +720,7 @@ public class TcpTrainingServer : BackgroundService
 
     private bool[] GetActionMask(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId)
     {
-        var mask = new bool[10];
+        var mask = new bool[64];
         var game = _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
         if (game == null) return mask;
 
@@ -693,31 +734,51 @@ public class TcpTrainingServer : BackgroundService
 
             if (rlIsDefender)
             {
-                mask[8] = true; // Fight
-                mask[9] = true; // Retreat
+                mask[7] = true; // Fight
+                mask[8] = true; // Retreat
                 return mask;
             }
         }
 
         if (game.IsInvestorTurn)
         {
-            mask[7] = true;
+            var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
+            var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
+            
+            mask[63] = true; // Pass option
+            
+            for (int nIdx = 0; nIdx < 6; nIdx++)
+            {
+                for (int cIdx = 0; cIdx < 9; cIdx++)
+                {
+                    var n = imperial2030Nations[nIdx];
+                    var c = bondCosts[cIdx];
+                    var bond = game.Bonds.FirstOrDefault(b => b.Nation == n && b.Cost == c);
+                    
+                    if (bond != null && bond.HolderId == null && rlPlayer.Cash >= c)
+                    {
+                        mask[9 + nIdx * 9 + cIdx] = true;
+                    }
+                }
+            }
             return mask;
         }
 
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
         if (ns == null || ns.ControllerId != rlPlayerId) return mask;
 
-        mask[0] = IsSlotValid(ns, rlPlayer, 1);
-        mask[1] = IsSlotValid(ns, rlPlayer, 2) || IsSlotValid(ns, rlPlayer, 6);
-        mask[2] = IsSlotValid(ns, rlPlayer, 5);
-        mask[3] = IsSlotValid(ns, rlPlayer, 3) || IsSlotValid(ns, rlPlayer, 7);
-        mask[4] = mask[3];
-        mask[5] = IsSlotValid(ns, rlPlayer, 0);
-        mask[6] = IsSlotValid(ns, rlPlayer, 4);
-        mask[7] = false;
+        int currentPos = ns.RondelPosition ?? 0;
+        
+        for (int dist = 1; dist <= 6; dist++)
+        {
+            int targetSlot = (currentPos + dist) % 8;
+            mask[dist - 1] = IsSlotValid(ns, rlPlayer, targetSlot);
+        }
+        
+        mask[6] = false; // Action 6 is unused for Rondel (moving 7 spaces is illegal in Imperial 2030)
 
-        if (!mask.Any(m => m)) mask[5] = true;
+        // Failsafe: if no actions are somehow valid, just force action 0 (move 1 space)
+        if (!mask.Take(6).Any(m => m)) mask[0] = true;
 
         return mask;
     }
