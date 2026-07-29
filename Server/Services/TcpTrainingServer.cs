@@ -400,6 +400,13 @@ public class TcpTrainingServer : BackgroundService
 
         float prevVP = CalculateRelativeVP(_context, game, session.RLPlayerId);
 
+        // Snapshot pre-turn state to detect wasted actions
+        var preNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+        int? preTreasury = preNs?.Treasury;
+        int? preRondelPos = preNs?.RondelPosition;
+        bool wasRondelTurn = !game.IsInvestorTurn && !game.PendingBattleDefenders.Any()
+                             && preNs != null && preNs.ControllerId == session.RLPlayerId;
+
         RLBotStrategy.TrainingActionOverride.Value = req.Action;
         _botService.SkipDelays = true;
         await _botService.TryPlayBotTurnAsync(game.Id, singleTurnOnly: true);
@@ -416,6 +423,39 @@ public class TcpTrainingServer : BackgroundService
         // Continuous reward for leading the game (or penalty for trailing)
         // This gives the agent a dense gradient to always try and increase its relative score, even if it's currently losing
         reward += newVP * 0.05f;
+
+        // Penalty for wasted Rondel turns (e.g., picking Factory with no money)
+        // Rondel slots: 0=Taxation, 1=Factory, 2=Production, 3=Maneuver, 4=Investor, 5=Import, 6=Production, 7=Maneuver
+        if (wasRondelTurn && req.Action >= 0 && req.Action <= 5 && preRondelPos.HasValue)
+        {
+            int targetSlot = (preRondelPos.Value + req.Action + 1) % 8;
+            // Factory (slot 1) wasted: not enough treasury OR no valid cities to build in
+            if (targetSlot == 1 && preNs != null)
+            {
+                bool noMoney = preTreasury.HasValue && preTreasury.Value < 5;
+                bool allBuilt = false;
+                if (!noMoney)
+                {
+                    var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == preNs.Nation && t.CityType != CityType.None);
+                    allBuilt = homeCities.All(city =>
+                    {
+                        var ts = _context.TerritoryStates.FirstOrDefault(t => t.GameId == game.Id && t.TerritoryId == city.Id);
+                        if (ts != null && ts.HasFactory) return true; // Already built
+                        bool blocked = _context.Units.Any(u => u.GameId == game.Id && u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != preNs.Nation && u.IsHostile);
+                        return blocked; // Blocked by enemy
+                    });
+                }
+                if (noMoney || allBuilt)
+                {
+                    reward -= 3.0f;
+                }
+            }
+            // Import (slot 5) with treasury < 1 = wasted turn
+            if (targetSlot == 5 && preTreasury.HasValue && preTreasury.Value < 1)
+            {
+                reward -= 3.0f;
+            }
+        }
 
         var allScores = game.Players.Select(p => new { p.Id, Score = game.CalculateScore(p.Id) }).ToList();
         float maxOfOthersScore = allScores.Where(s => s.Id != session.RLPlayerId).Max(s => s.Score);
