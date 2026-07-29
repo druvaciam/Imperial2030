@@ -396,9 +396,19 @@ else
                 <div class="mt-auto pt-3 d-grid gap-2">
                 @if (IsHost && game.Status == GameStatus.Lobby)
                 {
-                             <button class="btn btn-outline-info" @onclick="AddBot" disabled="@(game.Players.Count >= game.MaxPlayers)">
-                                 🤖 Add Bot
-                             </button>
+                             <div class="input-group">
+                                 <select class="form-select bg-dark text-white border-secondary" @bind="selectedBotType">
+                                     <option value="">Random Bot</option>
+                                     <option value="Default">Default</option>
+                                     <option value="Aggressive">Aggressive</option>
+                                     <option value="Friendly">Friendly</option>
+                                     <option value="Greedy">Greedy</option>
+                                     <option value="RL">RL</option>
+                                 </select>
+                                 <button class="btn btn-outline-info" @onclick="AddBot" disabled="@(game.Players.Count >= game.MaxPlayers)">
+                                     🤖 Add Bot
+                                 </button>
+                             </div>
                              <button class="btn btn-success" @onclick="StartGame" disabled="@(game.Players.Count < 2)">Start Game</button>
                 }
                 @if (game.Status == GameStatus.Lobby)
@@ -988,9 +998,16 @@ else
         }
     }
 
+    private string selectedBotType = "";
+
     private async Task AddBot()
     {
-        var response = await Http.PostAsync($"api/games/{GameId}/add-bot", null);
+        string url = $"api/games/{GameId}/add-bot";
+        if (!string.IsNullOrEmpty(selectedBotType))
+        {
+            url += $"?botType={selectedBotType}";
+        }
+        var response = await Http.PostAsync(url, null);
         if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync();
