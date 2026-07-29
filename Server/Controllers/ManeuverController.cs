@@ -161,12 +161,35 @@ public class ManeuverController : ControllerBase
 
             if (foreignFleets.Any())
             {
-                // Enter Pending Battle Negotiation Phase
-                game.PendingBattleTerritoryId = request.DestinationId;
-                game.PendingBattleAggressorNation = nation;
-                game.PendingBattleDefenders = foreignFleets.ToList();
+                if (request.IsHostile && foreignFleets.Count == 1)
+                {
+                    // Auto-resolve hostile battle if there is only 1 valid target
+                    var targetNation = foreignFleets.First();
+                    var enemyFleet = game.Units.FirstOrDefault(u => 
+                        u.TerritoryId == request.DestinationId && 
+                        u.UnitType == UnitType.Fleet && 
+                        u.Nation == targetNation);
 
-                LogAction(game, $"fleet moved peacefully to {request.DestinationId}, awaiting response from {string.Join(", ", foreignFleets)}", "MoveFleet", nation);
+                    if (enemyFleet != null)
+                    {
+                        // Destroy Both
+                        _context.Units.Remove(unit);
+                        _context.Units.Remove(enemyFleet);
+                        game.Units.Remove(unit);
+                        game.Units.Remove(enemyFleet);
+                        LogAction(game, $"fleet attacked {targetNation} in {request.DestinationId}. Both destroyed", "Battle", nation);
+                    }
+                }
+                else
+                {
+                    // Enter Pending Battle Negotiation Phase
+                    game.PendingBattleTerritoryId = request.DestinationId;
+                    game.PendingBattleAggressorNation = nation;
+                    game.PendingBattleDefenders = foreignFleets.ToList();
+
+                    string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
+                    LogAction(game, $"fleet moved {peaceOrHostile} to {request.DestinationId}, awaiting response from {string.Join(", ", foreignFleets)}", "MoveFleet", nation);
+                }
             }
         }
         
@@ -398,21 +421,47 @@ public class ManeuverController : ControllerBase
         }
         else
         {
-            // Peace Move - Check for foreign armies in the destination
-            var foreignArmies = game.Units
-                .Where(u => u.TerritoryId == request.DestinationId && u.UnitType == UnitType.Army && u.Nation != nation)
+            var destDefForBattle = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
+            bool isForeignHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value != nation;
+
+            var foreignDefenders = game.Units
+                .Where(u => u.TerritoryId == request.DestinationId && u.Nation != nation)
+                .Where(u => u.UnitType == UnitType.Army || (isForeignHome && u.Nation == destDefForBattle.Nation.Value && request.IsHostile))
                 .Select(u => u.Nation)
                 .Distinct()
                 .ToList();
 
-            if (foreignArmies.Any())
+            if (foreignDefenders.Any())
             {
-                // Enter Pending Battle Negotiation Phase
-                game.PendingBattleTerritoryId = request.DestinationId;
-                game.PendingBattleAggressorNation = nation;
-                game.PendingBattleDefenders = foreignArmies.ToList();
+                if (request.IsHostile && foreignDefenders.Count == 1)
+                {
+                    // Auto-resolve hostile battle if there is only 1 valid target
+                    var targetNation = foreignDefenders.First();
+                    var enemyUnit = game.Units.FirstOrDefault(u => 
+                        u.TerritoryId == request.DestinationId && 
+                        u.Nation == targetNation &&
+                        (u.UnitType == UnitType.Army || (isForeignHome && u.Nation == destDefForBattle.Nation.Value)));
 
-                LogAction(game, $"army moved peacefully to {request.DestinationId}, awaiting response from {string.Join(", ", foreignArmies)}", "MoveArmy", nation);
+                    if (enemyUnit != null)
+                    {
+                        // Destroy Both
+                        _context.Units.Remove(unit);
+                        _context.Units.Remove(enemyUnit);
+                        game.Units.Remove(unit);
+                        game.Units.Remove(enemyUnit);
+                        LogAction(game, $"army attacked {targetNation} in {request.DestinationId}. Both destroyed", "Battle", nation);
+                    }
+                }
+                else
+                {
+                    // Enter Pending Battle Negotiation Phase (if peaceful or multiple targets)
+                    game.PendingBattleTerritoryId = request.DestinationId;
+                    game.PendingBattleAggressorNation = nation;
+                    game.PendingBattleDefenders = foreignDefenders.ToList();
+
+                    string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
+                    LogAction(game, $"army moved {peaceOrHostile} to {request.DestinationId}, awaiting response from {string.Join(", ", foreignDefenders)}", "MoveArmy", nation);
+                }
             }
         }
         

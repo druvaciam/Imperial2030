@@ -85,7 +85,7 @@
                         <button type="button" class="btn-close" @onclick="CancelStationaryBattle"></button>
                     </div>
                     <div class="modal-body">
-                        <p>Select a fleet to attack:</p>
+                        <p>Select an enemy to attack:</p>
                         <div class="d-grid gap-2">
                              @foreach (var nation in BattleOptions)
                              {
@@ -1076,9 +1076,9 @@
         // Must be Fleet or Army
         if (unit.UnitType != UnitType.Fleet && unit.UnitType != UnitType.Army) return false;
         
-        // Check for enemies of same type
+        // Check for enemies (any type) in the same territory
         var enemies = Game.Units
-            .Where(u => u.TerritoryId == unit.TerritoryId && u.Nation != unit.Nation && u.UnitType == unit.UnitType)
+            .Where(u => u.TerritoryId == unit.TerritoryId && u.Nation != unit.Nation)
             .Any();
             
         return enemies;
@@ -1116,7 +1116,7 @@
         }
     }
 
-    private void OpenStationaryBattleModal()
+    private async Task OpenStationaryBattleModal()
     {
         if (selectedUnitId == null || Game == null) return;
         var unit = Game.Units.FirstOrDefault(u => u.Id == selectedUnitId.Value);
@@ -1124,10 +1124,16 @@
 
         PendingBattleUnit = unit;
         BattleOptions = Game.Units
-            .Where(u => u.TerritoryId == unit.TerritoryId && u.Nation != unit.Nation && u.UnitType == unit.UnitType)
+            .Where(u => u.TerritoryId == unit.TerritoryId && u.Nation != unit.Nation)
             .Select(u => u.Nation)
             .Distinct()
             .ToList();
+            
+        if (BattleOptions.Count == 1)
+        {
+            await ExecuteStationaryBattle(BattleOptions.First());
+            return;
+        }
             
         ShowStationaryBattleModal = true;
     }

@@ -419,7 +419,7 @@ public class BotService
 
                 if (hasEnemy && isHostileMove)
                 {
-                    var enemyFleet = game.Units.FirstOrDefault(u => u.TerritoryId == target && u.UnitType == UnitType.Fleet && !friendlyNations.Contains(u.Nation));
+                    var enemyFleet = game.Units.FirstOrDefault(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
                     if (enemyFleet != null)
                     {
                         var enemyNation = enemyFleet.Nation;
@@ -516,14 +516,16 @@ public class BotService
 
                 if (hasEnemy && isHostileMove)
                 {
-                    var enemyArmy = game.Units.FirstOrDefault(u => u.TerritoryId == best && u.UnitType == UnitType.Army && !friendlyNations.Contains(u.Nation));
-                    if (enemyArmy != null)
+                    var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == best && !friendlyNations.Contains(u.Nation) &&
+                        (u.UnitType == UnitType.Army || (isForeignHome && def != null && u.Nation == def.Nation.Value)));
+                        
+                    if (enemyUnit != null)
                     {
-                        var enemyNation = enemyArmy.Nation;
+                        var enemyNation = enemyUnit.Nation;
                         ctx.Units.Remove(army);
-                        ctx.Units.Remove(enemyArmy);
+                        ctx.Units.Remove(enemyUnit);
                         game.Units.Remove(army);
-                        game.Units.Remove(enemyArmy);
+                        game.Units.Remove(enemyUnit);
                         LogAction(ctx, game, $"army attacked {enemyNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
                         continue;
                     }
@@ -715,8 +717,8 @@ public class BotService
                 LogAction(ctx, game, $"{defNation} chose to FIGHT", "BattleResponse", defNation, defController.BotName ?? "Bot");
 
                 // Actual fight logic would remove units, etc. For simplicity, we just destroy 1 unit of each if they fight.
-                var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation && u.UnitType == UnitType.Army);
-                var friendlyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == defNation && u.UnitType == UnitType.Army);
+                var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation);
+                var friendlyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == defNation);
                 if (enemyUnit != null && friendlyUnit != null)
                 {
                     ctx.Units.Remove(enemyUnit);

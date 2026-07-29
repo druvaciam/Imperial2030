@@ -580,5 +580,78 @@ namespace Imperial2030.Tests
                 Assert.True(updatedFleet1.HasConvoyed);
             }
         }
+        [Fact]
+        public async Task MoveArmy_Hostile_IntoHomeProvince_WithOnlyFleet_ShouldTriggerBattle()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var gameId = Guid.NewGuid();
+                var userId = "user1";
+                var playerId = Guid.NewGuid();
+                var game = new Game
+                {
+                    Id = gameId,
+                    Status = GameStatus.InProgress,
+                    CurrentTurnNation = Nation.Russia,
+                    CurrentManeuverPhase = ManeuverPhase.Armies,
+                    NationStates = new List<NationState>
+                     {
+                         new NationState { Nation = Nation.Russia, ControllerId = playerId, GameId = gameId, Power = 0 },
+                         new NationState { Nation = Nation.Europe, ControllerId = Guid.NewGuid(), GameId = gameId, Power = 0 }
+                     },
+                    Players = new List<Player>
+                     {
+                         new Player { Id = playerId, UserId = userId, GameId = gameId }
+                     },
+                    Units = new List<Unit>(),
+                    TerritoryStates = new List<TerritoryState>()
+                };
+
+                // Setup Moscow to London move via North Atlantic convoy
+                // Russia Army in Moscow
+                var army = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = "Moscow", HasMoved = false };
+                game.Units.Add(army);
+
+                // Russia Fleet in North Atlantic for convoy
+                var russiaFleet = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Fleet, TerritoryId = "NorthAtlantic", HasConvoyed = false };
+                game.Units.Add(russiaFleet);
+
+                // Europe Fleet in London
+                var europeFleet = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Europe, UnitType = UnitType.Fleet, TerritoryId = "London" };
+                game.Units.Add(europeFleet);
+
+                await context.Games.AddAsync(game);
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+
+                var request = new MoveUnitRequest
+                {
+                    UnitId = army.Id,
+                    DestinationId = "London",
+                    IsHostile = true
+                };
+
+                var result = await controller.MoveArmy(gameId, request);
+
+                if (result is Microsoft.AspNetCore.Mvc.BadRequestObjectResult badReq)
+                {
+                    throw new Exception($"BadRequest: {badReq.Value}");
+                }
+
+                Assert.IsType<OkResult>(result);
+
+                var updatedGame = await context.Games.Include(g => g.Units).FirstAsync(g => g.Id == gameId);
+
+                // It should AUTO-RESOLVE the battle since there is only 1 target and it's hostile
+                Assert.Empty(updatedGame.PendingBattleDefenders);
+                Assert.Null(updatedGame.PendingBattleTerritoryId);
+                
+                // Both units should be destroyed
+                Assert.DoesNotContain(updatedGame.Units, u => u.Id == army.Id);
+                Assert.DoesNotContain(updatedGame.Units, u => u.Id == europeFleet.Id);
+            }
+        }
     }
 }
