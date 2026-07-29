@@ -411,7 +411,7 @@ public class GamesController : ControllerBase
     private static readonly string[] BotNames = { "Bot Alpha", "Bot Bravo", "Bot Charlie", "Bot Delta", "Bot Echo" };
 
     [HttpPost("{gameId}/add-bot")]
-    public async Task<IActionResult> AddBot(Guid gameId)
+    public async Task<IActionResult> AddBot(Guid gameId, [FromQuery] string? botType = null)
     {
         if (User.IsInRole("Guest")) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -430,6 +430,7 @@ public class GamesController : ControllerBase
 
         var botTypes = new[] { "Default", "Aggressive", "Friendly", "Greedy", "RL" };
         var randomBotType = botTypes[Random.Shared.Next(botTypes.Length)];
+        var selectedBotType = string.IsNullOrEmpty(botType) || !botTypes.Contains(botType) ? randomBotType : botType;
 
         var bot = new Player
         {
@@ -437,8 +438,8 @@ public class GamesController : ControllerBase
             GameId = gameId,
             IsHost = false,
             IsBot = true,
-            BotName = botName + $" ({randomBotType})",
-            BotType = randomBotType
+            BotName = botName + $" ({selectedBotType})",
+            BotType = selectedBotType
         };
 
         _context.Players.Add(bot);

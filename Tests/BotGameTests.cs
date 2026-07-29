@@ -615,7 +615,9 @@ namespace Imperial2030.Tests
                 _output.WriteLine($"Invalid Action Rate: {Math.Round((double)Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.InvalidActionCount / Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.TotalActionCount * 100, 2)}%");
             }
 
-            _output.WriteLine($"RL Bot Win Rate: {rlWins}/{totalGames} ({(float)rlWins / totalGames * 100}%)");
+            float winRate = (float)rlWins / totalGames * 100;
+            _output.WriteLine($"RL Bot Win Rate: {rlWins}/{totalGames} ({winRate}%)");
+            Assert.True(winRate >= 20);
         }
     }
 }
