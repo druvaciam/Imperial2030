@@ -37,6 +37,8 @@ public class GamesController : ControllerBase
     [AllowAnonymous]
     public async Task<ActionResult<IEnumerable<GameDto>>> GetGames()
     {
+        var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
         return await _context.Games
             .Include(g => g.Players)
             .Include(g => g.NationStates)
@@ -51,7 +53,7 @@ public class GamesController : ControllerBase
                 MaxPlayers = g.MaxPlayers,
                 IsPrivate = g.IsPrivate,
                 VariantBonusOnlyForTaxIncreases = g.VariantBonusOnlyForTaxIncreases,
-                JoinCode = g.Players.Any(p => p.UserId == User.FindFirstValue(ClaimTypes.NameIdentifier) && p.IsHost) ? g.JoinCode : null,
+                JoinCode = g.Players.Any(p => p.UserId == currentUserId && p.IsHost) ? g.JoinCode : null,
                 UserIds = g.Players.Select(p => p.UserId).ToList(),
                 HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault(),
                 MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0
