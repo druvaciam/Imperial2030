@@ -104,12 +104,12 @@ if __name__ == "__main__":
                 # Save the latest model (for resuming training)
                 self.model.save(os.path.join(self.save_path, MODEL_BASENAME))
                 self.training_env.save(os.path.join(self.save_path, VEC_NORM_PATH))
+                mean_reward = np.mean([ep_info["r"] for ep_info in self.model.ep_info_buffer])
                 if self.verbose > 0:
-                    print(f"Saved latest checkpoint at step {self.num_timesteps}")
+                    print(f"Saved latest checkpoint at step {self.num_timesteps}, mean reward {mean_reward:.2f}")
 
                 # Check if we have a new best model
                 if len(self.model.ep_info_buffer) > 0:
-                    mean_reward = np.mean([ep_info["r"] for ep_info in self.model.ep_info_buffer])
                     if mean_reward > self.best_mean_reward:
                         self.best_mean_reward = mean_reward
                         if self.verbose > 0:
