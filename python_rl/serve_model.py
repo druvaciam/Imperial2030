@@ -42,8 +42,7 @@ def predict():
     action_mask = np.array(data.get("actionMask", [True]*10), dtype=np.bool_)
     
     if vec_env is not None:
-        # VecNormalize expects shape (n_envs, n_features)
-        state = vec_env.normalize_obs(state.reshape(1, -1))[0]
+        pass # We no longer normalize observation using VecNormalize since it's manually normalized in C#
 
     if model is not None:
         action, _states = model.predict(state, action_masks=action_mask, deterministic=True)

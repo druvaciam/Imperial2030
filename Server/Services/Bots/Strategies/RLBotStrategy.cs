@@ -20,9 +20,6 @@ public class RLBotStrategy : BotStrategyBase
     public static int TotalActionCount = 0;
 
     private static InferenceSession? _onnxSession;
-    private static float[]? _normMean;
-    private static float[]? _normVar;
-    private static float _normEpsilon;
 
     static RLBotStrategy()
     {
@@ -30,17 +27,10 @@ public class RLBotStrategy : BotStrategyBase
         {
             string basePath = AppContext.BaseDirectory;
             string onnxPath = Path.Combine(basePath, "imperial_ppo_bot.onnx");
-            string jsonPath = Path.Combine(basePath, "vec_normalize.json");
 
-            if (File.Exists(onnxPath) && File.Exists(jsonPath))
+            if (File.Exists(onnxPath))
             {
                 _onnxSession = new InferenceSession(onnxPath);
-                var json = File.ReadAllText(jsonPath);
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                _normMean = root.GetProperty("mean").EnumerateArray().Select(x => (float)x.GetDouble()).ToArray();
-                _normVar = root.GetProperty("var").EnumerateArray().Select(x => (float)x.GetDouble()).ToArray();
-                _normEpsilon = (float)root.GetProperty("epsilon").GetDouble();
             }
         }
         catch (Exception ex)
@@ -117,9 +107,9 @@ public class RLBotStrategy : BotStrategyBase
             var ns = game.NationStates.FirstOrDefault(n => n.Nation == nation);
             if (ns != null)
             {
-                state[i++] = ns.Power;
-                state[i++] = ns.Treasury;
-                state[i++] = ns.RondelPosition ?? -1.0f; // NEW: Rondel Position
+                state[i++] = ns.Power / 25.0f;
+                state[i++] = ns.Treasury / 30.0f;
+                state[i++] = ns.RondelPosition.HasValue ? ns.RondelPosition.Value / 7.0f : -1.0f;
 
                 var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
                 foreach (var cost in bondCosts)
@@ -161,9 +151,9 @@ public class RLBotStrategy : BotStrategyBase
                     }
                 }
 
-                state[i++] = game.TerritoryStates.Count(t => t.Controller == nation);
-                state[i++] = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
-                state[i++] = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
+                state[i++] = game.TerritoryStates.Count(t => t.Controller == nation) / 15.0f;
+                state[i++] = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army) / 10.0f;
+                state[i++] = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet) / 10.0f;
             }
             else
             {
@@ -183,7 +173,7 @@ public class RLBotStrategy : BotStrategyBase
             state[i++] = game.CurrentTurnNation == nation ? 1.0f : 0.0f;
         }
 
-        state[i++] = rlPlayer.Cash;
+        state[i++] = rlPlayer.Cash / 50.0f;
         state[i++] = game.IsInvestorTurn ? 1.0f : 0.0f;
 
         // Global Scoreboard (6 players * 9 floats = 54 floats)
@@ -194,8 +184,8 @@ public class RLBotStrategy : BotStrategyBase
             {
                 var pData = allPlayers[pIdx];
                 state[i++] = pData.Player.Id == rlPlayer.Id ? 1.0f : 0.0f;
-                state[i++] = pData.Score;
-                state[i++] = pData.Player.Cash;
+                state[i++] = pData.Score / 100.0f;
+                state[i++] = pData.Player.Cash / 50.0f;
                 foreach (var nation in imperial2030Nations)
                 {
                     var ns = game.NationStates.FirstOrDefault(n => n.Nation == nation);
@@ -296,18 +286,12 @@ public class RLBotStrategy : BotStrategyBase
     {
         var state = GetStateVector(game, controller);
 
-        if (_onnxSession == null || _normMean == null || _normVar == null)
+        if (_onnxSession == null)
         {
             // Fallback to random if model isn't loaded
             var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();
             if (validIndices.Count == 0) return 0;
             return validIndices[Random.Shared.Next(validIndices.Count)];
-        }
-
-        // Normalize state
-        for (int j = 0; j < state.Length; j++)
-        {
-            state[j] = (state[j] - _normMean[j]) / (float)Math.Sqrt(_normVar[j] + _normEpsilon);
         }
 
         // Create Tensor

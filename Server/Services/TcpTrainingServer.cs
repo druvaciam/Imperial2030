@@ -642,9 +642,9 @@ public class TcpTrainingServer : BackgroundService
             var ns = game.NationStates.FirstOrDefault(n => n.Nation == nation);
             if (ns != null)
             {
-                state[i++] = ns.Power;
-                state[i++] = ns.Treasury;
-                state[i++] = ns.RondelPosition ?? -1.0f;
+                state[i++] = ns.Power / 25.0f;
+                state[i++] = ns.Treasury / 30.0f;
+                state[i++] = ns.RondelPosition.HasValue ? ns.RondelPosition.Value / 7.0f : -1.0f;
                 
                 var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
                 foreach (var cost in bondCosts)
@@ -686,9 +686,9 @@ public class TcpTrainingServer : BackgroundService
                     }
                 }
 
-                state[i++] = allTerritories.Count(t => t.Controller == nation);
-                state[i++] = allUnits.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
-                state[i++] = allUnits.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
+                state[i++] = allTerritories.Count(t => t.Controller == nation) / 15.0f;
+                state[i++] = allUnits.Count(u => u.Nation == nation && u.UnitType == UnitType.Army) / 10.0f;
+                state[i++] = allUnits.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet) / 10.0f;
             }
             else
             {
@@ -708,7 +708,7 @@ public class TcpTrainingServer : BackgroundService
             state[i++] = game.CurrentTurnNation == nation ? 1.0f : 0.0f;
         }
 
-        state[i++] = rlPlayer.Cash;
+        state[i++] = rlPlayer.Cash / 50.0f;
         state[i++] = game.IsInvestorTurn ? 1.0f : 0.0f;
 
         // Global Scoreboard (6 players * 9 floats = 54 floats)
@@ -719,8 +719,8 @@ public class TcpTrainingServer : BackgroundService
             {
                 var pData = allPlayers[pIdx];
                 state[i++] = pData.Player.Id == rlPlayerId ? 1.0f : 0.0f;
-                state[i++] = pData.Score;
-                state[i++] = pData.Player.Cash;
+                state[i++] = pData.Score / 100.0f;
+                state[i++] = pData.Player.Cash / 50.0f;
                 foreach (var nation in imperial2030Nations)
                 {
                     var ns = game.NationStates.FirstOrDefault(n => n.Nation == nation);

@@ -51,24 +51,4 @@ torch.onnx.export(
 )
 print("ONNX export complete.")
 
-# Now extract the VecNormalize statistics
-if os.path.exists(vec_env_path):
-    print(f"Loading {vec_env_path}...")
-    class MockEnv(ImperialEnv):
-        def _connect_socket(self):
-            pass # Prevent TCP connection attempt during export
-            
-    dummy_env = DummyVecEnv([lambda: MockEnv()])
-    vec_env = VecNormalize.load(vec_env_path, dummy_env)
-    
-    mean = vec_env.obs_rms.mean.tolist()
-    var = vec_env.obs_rms.var.tolist()
-    epsilon = vec_env.epsilon
-    
-    json_path = "vec_normalize.json"
-    print(f"Exporting normalization stats to {json_path}...")
-    with open(json_path, "w") as f:
-        json.dump({"mean": mean, "var": var, "epsilon": epsilon}, f, indent=4)
-    print("Stats export complete.")
-else:
-    print(f"Warning: {vec_env_path} not found.")
+

@@ -48,7 +48,8 @@ if __name__ == "__main__":
         model = MaskablePPO.load(MODEL_PATH, env=vec_env, custom_objects=custom_objects, verbose=1)
     else:
         print("No existing model found. Initializing new MaskablePPO Model...")
-        vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+        # CRITICAL: norm_obs=False because state is now manually normalized in C#
+        vec_env = VecNormalize(vec_env, norm_obs=False, norm_reward=True, clip_obs=10.0)
         
         policy_kwargs = dict(
             net_arch=dict(

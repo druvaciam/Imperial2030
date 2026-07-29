@@ -32,14 +32,12 @@ Because the C# server requires native execution for low latency and zero depende
    This will generate three files:
    - `imperial_ppo_bot.onnx`: The ONNX neural network graph structure.
    - `imperial_ppo_bot.onnx.data`: The external neural network weights (generated because the model is large/uses specific opsets).
-   - `vec_normalize.json`: The extracted mean and variance arrays used to normalize the C# state inputs.
 
 2. **Copy the Artifacts to the C# Server**:
    Copy the generated files from `python_rl` into the `Server` directory:
    ```bash
    cp python_rl/imperial_ppo_bot.onnx Server/
    cp python_rl/imperial_ppo_bot.onnx.data Server/
-   cp python_rl/vec_normalize.json Server/
    ```
 
 3. **Verify the C# Project**:
@@ -52,12 +50,9 @@ Because the C# server requires native execution for low latency and zero depende
      <Content Include="imperial_ppo_bot.onnx.data">
        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
      </Content>
-     <Content Update="vec_normalize.json">
-       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-     </Content>
    </ItemGroup>
    ```
 
 ## 3. Native C# Execution
 
-Once the files are present, the `RLBotStrategy.cs` class will automatically load the ONNX session using `Microsoft.ML.OnnxRuntime`. When the RL bot is selected in a game, it will format the game state into a `(1, 135)` tensor, apply the JSON normalization constants natively in C#, evaluate the ONNX graph, and apply an action mask to prevent invalid heuristic choices.
+Once the files are present, the `RLBotStrategy.cs` class will automatically load the ONNX session using `Microsoft.ML.OnnxRuntime`. When the RL bot is selected in a game, it will format the game state into a manually-normalized `(1, 561)` tensor, evaluate the ONNX graph, and apply an action mask to prevent invalid choices.
