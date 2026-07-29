@@ -9,13 +9,29 @@ public abstract class BotStrategyBase : IBotStrategy
     public abstract string Name { get; }
 
     public abstract double ScoreRondelSlot(int slot, Game game, NationState ns, Player controller, int factories, int units);
-    public virtual Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds) => null;
-    
+
+    public virtual Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)
+    {
+        var affordableBonds = availableBonds.Where(b => b.Cost <= actor.Cash).ToList();
+
+        // 1. Try to strengthen control of own nations first
+        var ownBond = affordableBonds.FirstOrDefault(b => controlledNations.Contains(b.Nation));
+        if (ownBond != null) return ownBond;
+
+        // 2. Buy bonds in the strongest nations first, then by highest yield (cost)
+        return affordableBonds
+            .OrderByDescending(b => game.NationStates.First(n => n.Nation == b.Nation).Power)
+            .ThenByDescending(b => b.Cost)
+            .FirstOrDefault();
+    }
+
     public virtual string? ChooseCityForFactory(Game game, Nation nation, List<Territory> validCities)
     {
-        return validCities.FirstOrDefault()?.Id;
+        if (validCities.Count == 0) return null;
+        var rng = new Random();
+        return validCities[rng.Next(validCities.Count)].Id;
     }
-    
+
     public virtual List<(UnitType Type, string TerritoryId)> ChooseImports(Game game, NationState ns, int maxImport, List<Territory> homeTerritories)
     {
         var result = new List<(UnitType Type, string TerritoryId)>();
@@ -24,7 +40,7 @@ public abstract class BotStrategyBase : IBotStrategy
         int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
         int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
 
-        var validTerritories = homeTerritories.Where(t => 
+        var validTerritories = homeTerritories.Where(t =>
             !game.Units.Any(u => u.TerritoryId == t.Id && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile)
         ).ToList();
 
@@ -51,20 +67,83 @@ public abstract class BotStrategyBase : IBotStrategy
                 {
                     typeToBuild = UnitType.Fleet;
                 }
-                
+
                 result.Add((typeToBuild, t.Id));
                 if (typeToBuild == UnitType.Army) currentArmies++;
                 if (typeToBuild == UnitType.Fleet) currentFleets++;
                 imported++;
                 built = true;
             }
-            
+
             if (!built) break;
         }
 
         return result;
     }
-    public abstract double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller);
+    public virtual double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller)
+    {
+        var nation = unit.Nation;
+        var friendlyNations = game.NationStates
+            .Where(ns => ns.ControllerId == controller.Id)
+            .Select(ns => ns.Nation)
+            .ToList();
+
+        int score = Random.Shared.Next(0, 10);
+        bool hasEnemy = game.Units.Any(u => u.TerritoryId == destinationId && !friendlyNations.Contains(u.Nation));
+        var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == destinationId);
+        var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == destinationId);
+        bool isMyHome = def != null && def.Nation == nation;
+
+        if (hasEnemy)
+        {
+            if (isMyHome)
+            {
+                score += 200; // High priority to free own home territory
+                if (ts != null && ts.HasFactory)
+                {
+                    score += 300; // Even higher priority to free factories
+                }
+            }
+            else
+            {
+                score += 10; // Normal enemy
+            }
+        }
+
+        bool isEnemyFactory = ts != null && ts.HasFactory &&
+            (
+                (def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value)) ||
+                (ts.Controller.HasValue && !friendlyNations.Contains(ts.Controller.Value))
+            );
+
+        if (isEnemyFactory)
+        {
+            var targetNation = def?.Nation ?? ts?.Controller;
+            if (targetNation.HasValue)
+            {
+                int investment = game.Bonds.Where(b => b.HolderId == controller.Id && b.Nation == targetNation.Value).Sum(b => b.Cost);
+                if (investment <= 2 && Random.Shared.Next(0, 10) < 5) // 50% chance to block if investment is low
+                {
+                    score += 150;
+                }
+            }
+        }
+
+        if (destinationId == unit.TerritoryId)
+        {
+            score += 15; // Small bias to stay put to avoid useless wander
+        }
+
+        bool isHomeProvince = def != null && def.Nation.HasValue;
+        bool uncontrolled = !isHomeProvince && (ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value));
+        if (uncontrolled && !hasEnemy) score += 100;
+
+        bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
+        if (notFriendlyHome) score += 10;
+        else if (!hasEnemy) score -= 50; // Penalize moving within friendly home territories if there is no enemy
+
+        return score;
+    }
     public abstract bool RetreatFromBattle(Game game, PendingBattle battle);
 
     // Shared helpers
@@ -125,7 +204,7 @@ public abstract class BotStrategyBase : IBotStrategy
         {
             if (MapConnectivity.Adjacency.TryGetValue(tid, out var neighbors))
             {
-                if (neighbors.Any(n => 
+                if (neighbors.Any(n =>
                 {
                     var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == n);
                     var hasEnemy = game.Units.Any(u => u.TerritoryId == n && !friendlyNations.Contains(u.Nation));
@@ -137,13 +216,13 @@ public abstract class BotStrategyBase : IBotStrategy
                 }
             }
         }
-        
+
         var myFleetTerritories = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Fleet).Select(u => u.TerritoryId).Distinct();
         foreach (var tid in myFleetTerritories)
         {
             if (MapConnectivity.Adjacency.TryGetValue(tid, out var neighbors))
             {
-                if (neighbors.Any(n => 
+                if (neighbors.Any(n =>
                 {
                     var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == n);
                     return def != null && def.Type == TerritoryType.Sea && !game.Units.Any(u => u.TerritoryId == n && u.UnitType == UnitType.Fleet && friendlyNations.Contains(u.Nation));

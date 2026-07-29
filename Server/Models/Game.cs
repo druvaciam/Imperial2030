@@ -29,7 +29,13 @@ public class Game
     public Guid? InvestorCardHolderId { get; set; }
     public bool IsInvestorTurn { get; set; } = false;
     public Guid? ActingPlayerId { get; set; } // If set, this player must take action (e.g. Investor) instead of CurrentTurnNation controller
-    public List<Guid> PendingInvestorIds { get; set; } = new List<Guid>(); // Queue for Swiss Bank and Investor card holders
+    public string PendingInvestorIdsJson { get; set; } = "[]";
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public List<Guid> PendingInvestorIds 
+    { 
+        get => string.IsNullOrEmpty(PendingInvestorIdsJson) ? new List<Guid>() : System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(PendingInvestorIdsJson) ?? new List<Guid>(); 
+        set => PendingInvestorIdsJson = System.Text.Json.JsonSerializer.Serialize(value); 
+    }
 
     public ManeuverPhase CurrentManeuverPhase { get; set; } = ManeuverPhase.None;
 
@@ -81,5 +87,25 @@ public class Game
                 break;
             }
         }
+    }
+
+    public int CalculateScore(Guid playerId)
+    {
+        var player = this.Players.FirstOrDefault(p => p.Id == playerId);
+        if (player == null) return 0;
+
+        int score = player.Cash;
+        var playerBonds = this.Bonds.Where(b => b.HolderId == playerId).ToList();
+        
+        foreach (var bond in playerBonds)
+        {
+            var nation = this.NationStates.FirstOrDefault(n => n.Nation == bond.Nation);
+            if (nation != null)
+            {
+                int factor = nation.Power / 5;
+                score += bond.Interest * factor;
+            }
+        }
+        return score;
     }
 }

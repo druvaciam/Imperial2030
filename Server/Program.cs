@@ -19,13 +19,26 @@ builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Im
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.AggressiveBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.FriendlyBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.GreedyBotStrategy>();
+builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.RandomBotStrategy>();
+builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.BotService>();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
+var isTrainingMode = args.Contains("--training");
+
+if (isTrainingMode)
+{
+    builder.Services.AddHostedService<Imperial2030.Server.Services.TcpTrainingServer>();
+}
+
 builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext>(options =>
 {
-    if (string.IsNullOrEmpty(connectionString))
+    if (isTrainingMode)
+    {
+        options.UseInMemoryDatabase("TrainingDB");
+    }
+    else if (string.IsNullOrEmpty(connectionString))
     {
         // Fallback to SQLite if no SQL Server connection string is provided
         var dbPath = System.IO.Path.Combine(builder.Environment.ContentRootPath, "imperial2030.db");

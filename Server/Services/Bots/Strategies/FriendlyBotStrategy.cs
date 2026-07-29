@@ -16,20 +16,13 @@ public class FriendlyBotStrategy : BotStrategyBase
         {
             1 => (ns.Treasury >= 5 && CanBuildFactory(game, ns.Nation)) ? 25 : 0,       // Factory
             2 or 6 => (units >= unitLimit || shouldSave) ? 0 : EstimateProductionYield(game, ns.Nation) * 8,
-            0 => EstimateTaxRevenue(game, ns.Nation) >= 6 ? 22 : (ns.Treasury < 5 ? 18 : 0), 
+            0 => EstimateTaxRevenue(game, ns.Nation) >= 6 ? 22 : (ns.Treasury < 5 ? 18 : 0),
             3 or 7 => HasExpandableTargets(game, ns.Nation, controller) ? 12 : 0, // Lower maneuver priority
-            5 => (ns.Treasury >= 2 && (units >= unitLimit || shouldSave)) ? 0 : 10,           
+            5 => (ns.Treasury >= 2 && (units >= unitLimit || shouldSave)) ? 0 : 10,
             4 => 5,                                                    // Higher investor score
             _ => 0
         };
     }
-
-    public override Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)
-    {
-        return availableBonds.FirstOrDefault(b => controlledNations.Contains(b.Nation) && b.Cost <= actor.Cash);
-    }
-
-
 
     public override double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller)
     {
@@ -45,7 +38,7 @@ public class FriendlyBotStrategy : BotStrategyBase
         var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == destinationId);
         bool isMyHome = def != null && def.Nation == nation;
 
-        if (hasEnemy) 
+        if (hasEnemy)
         {
             if (isMyHome)
             {
@@ -57,8 +50,13 @@ public class FriendlyBotStrategy : BotStrategyBase
             }
         }
 
-        bool uncontrolled = ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value);
-        if (uncontrolled && !hasEnemy) score += 150; // HIGH preference for empty territories
+        bool isHomeProvince = def != null && def.Nation.HasValue;
+        bool uncontrolled = !isHomeProvince && (ts == null || ts.Controller == null || !friendlyNations.Contains(ts.Controller.Value));
+        if (uncontrolled && !hasEnemy) score += 100;
+
+        bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
+        if (notFriendlyHome) score += 10;
+        else if (!hasEnemy) score -= 50; // Penalize moving within friendly home territories if there is no enemy
 
         return score;
     }

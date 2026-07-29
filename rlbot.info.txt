@@ -1,0 +1,58 @@
+# Imperial 2030 RL Bot Pipeline
+
+The Imperial 2030 Reinforcement Learning (RL) bot utilizes Stable Baselines 3 (PPO) in Python to learn gameplay strategies by interacting with the C# game engine over a TCP socket. After training, the model is exported to ONNX format to be run natively in C# via ONNX Runtime without any Python dependencies.
+
+## 1. Training Pipeline
+
+The training pipeline consists of two components:
+- **C# TCP Training Server**: A lightweight background service (`TcpTrainingServer.cs`) running in the ASP.NET Core backend. It listens on port 5005 for TCP connections. It manages isolated game instances, executes actions, and returns game state/rewards back to the client.
+- **Python Gym Environment**: A custom Gymnasium environment (`imperial_env.py`) that connects to the C# TCP server. It converts PyTorch actions into TCP requests, and parses the TCP responses back into observations and rewards.
+
+### How to Train the Model
+1. **Start the C# Server**: Ensure the C# backend is running. This automatically starts the `TcpTrainingServer` on port 5005.
+   ```bash
+   dotnet run --project Server/Imperial2030.Server.csproj
+   ```
+2. **Start Python Training**: In a separate terminal, navigate to the `python_rl` directory and run the training script.
+   ```bash
+   cd python_rl
+   python train.py
+   ```
+   *Note: `train.py` will periodically save checkpoints (`imperial_ppo_bot.zip`) and normalization statistics (`vec_normalize.pkl`). The best model is saved as `imperial_ppo_bot_best.zip`.*
+
+## 2. Converting the Model for C# (ONNX Export)
+
+Because the C# server requires native execution for low latency and zero dependencies, we convert the PyTorch model to ONNX.
+
+1. **Run the Export Script**: In the `python_rl` directory, execute the export script. This script loads the trained `.zip` model and `.pkl` statistics, and traces the PyTorch neural network into an ONNX graph.
+   ```bash
+   cd python_rl
+   python export_onnx.py
+   ```
+   This will generate three files:
+   - `imperial_ppo_bot.onnx`: The ONNX neural network graph structure.
+   - `imperial_ppo_bot.onnx.data`: The external neural network weights (generated because the model is large/uses specific opsets).
+
+2. **Copy the Artifacts to the C# Server**:
+   Copy the generated files from `python_rl` into the `Server` directory:
+   ```bash
+   cp python_rl/imperial_ppo_bot.onnx Server/
+   cp python_rl/imperial_ppo_bot.onnx.data Server/
+   ```
+
+3. **Verify the C# Project**:
+   Ensure that these files are configured to be copied to the output directory in `Imperial2030.Server.csproj`:
+   ```xml
+   <ItemGroup>
+     <Content Include="imperial_ppo_bot.onnx">
+       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+     </Content>
+     <Content Include="imperial_ppo_bot.onnx.data">
+       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+     </Content>
+   </ItemGroup>
+   ```
+
+## 3. Native C# Execution
+
+Once the files are present, the `RLBotStrategy.cs` class will automatically load the ONNX session using `Microsoft.ML.OnnxRuntime`. When the RL bot is selected in a game, it will format the game state into a manually-normalized `(1, 561)` tensor, evaluate the ONNX graph, and apply an action mask to prevent invalid choices.
