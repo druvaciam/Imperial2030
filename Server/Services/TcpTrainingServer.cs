@@ -447,13 +447,13 @@ public class TcpTrainingServer : BackgroundService
                 }
                 if (noMoney || allBuilt)
                 {
-                    reward -= 3.0f;
+                    reward -= 15.0f;
                 }
             }
             // Import (slot 5) with treasury < 1 = wasted turn
             if (targetSlot == 5 && preTreasury.HasValue && preTreasury.Value < 1)
             {
-                reward -= 3.0f;
+                reward -= 15.0f;
             }
             // Maneuver (slot 3 or 7) with 0 units = wasted turn
             if ((targetSlot == 3 || targetSlot == 7) && preNs != null)
@@ -461,7 +461,7 @@ public class TcpTrainingServer : BackgroundService
                 bool hasUnits = _context.Units.Any(u => u.GameId == game.Id && u.Nation == preNs.Nation);
                 if (!hasUnits)
                 {
-                    reward -= 3.0f;
+                    reward -= 15.0f;
                 }
             }
         }
