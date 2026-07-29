@@ -455,6 +455,15 @@ public class TcpTrainingServer : BackgroundService
             {
                 reward -= 3.0f;
             }
+            // Maneuver (slot 3 or 7) with 0 units = wasted turn
+            if ((targetSlot == 3 || targetSlot == 7) && preNs != null)
+            {
+                bool hasUnits = _context.Units.Any(u => u.GameId == game.Id && u.Nation == preNs.Nation);
+                if (!hasUnits)
+                {
+                    reward -= 3.0f;
+                }
+            }
         }
 
         var allScores = game.Players.Select(p => new { p.Id, Score = game.CalculateScore(p.Id) }).ToList();
