@@ -113,7 +113,7 @@ else
                     }
                     </div>
                     <ul class="list-group list-group-flush bg-transparent">
-                    @foreach (var player in game.Players)
+                    @foreach (var player in game.Players.OrderBy(p => p.Id))
                     {
                                 <li class="list-group-item bg-transparent text-white d-flex justify-content-between align-items-center @(IsPlayerActive(player) ? "active-player-highlight" : "px-0")">
                                     <span class="d-flex align-items-center gap-2">

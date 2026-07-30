@@ -28,4 +28,6 @@ public interface IBotStrategy
     double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller);
     
     bool RetreatFromBattle(Game game, PendingBattle battle);
+    
+    bool DetermineHostility(bool hasEnemy, bool isForeignHome);
 }

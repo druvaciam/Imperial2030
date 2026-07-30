@@ -132,6 +132,17 @@ public abstract class BotStrategyBase : IBotStrategy
         if (destinationId == unit.TerritoryId)
         {
             score += 15; // Small bias to stay put to avoid useless wander
+
+            // Strongly prefer maintaining a blockade on enemy home territory,
+            // but keep it slightly below the +100 bonus for acquiring a tax flag
+            if (unit.IsHostile)
+            {
+                var currentDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == unit.TerritoryId);
+                if (currentDef != null && currentDef.Nation.HasValue && !friendlyNations.Contains(currentDef.Nation.Value))
+                {
+                    score += 80;
+                }
+            }
         }
 
         bool isHomeProvince = def != null && def.Nation.HasValue;
@@ -145,6 +156,12 @@ public abstract class BotStrategyBase : IBotStrategy
         return score;
     }
     public abstract bool RetreatFromBattle(Game game, PendingBattle battle);
+
+    public virtual bool DetermineHostility(bool hasEnemy, bool isForeignHome)
+    {
+        if (!hasEnemy && !isForeignHome) return false;
+        return Random.Shared.Next(0, 100) < 80; // Default 80% hostile
+    }
 
     // Shared helpers
     protected int EstimateProductionYield(Game game, Nation nation)
