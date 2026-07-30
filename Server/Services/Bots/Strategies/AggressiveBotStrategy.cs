@@ -8,6 +8,12 @@ public class AggressiveBotStrategy : BotStrategyBase
 {
     public override string Name => "Aggressive";
 
+    public override bool DetermineHostility(bool hasEnemy, bool isForeignHome)
+    {
+        if (!hasEnemy && !isForeignHome) return false;
+        return true; // 100% hostile
+    }
+
     public override double ScoreRondelSlot(int slot, Game game, NationState ns, Player controller, int factories, int units)
     {
         int unitLimit = factories + 3;

@@ -8,6 +8,12 @@ public class FriendlyBotStrategy : BotStrategyBase
 {
     public override string Name => "Friendly";
 
+    public override bool DetermineHostility(bool hasEnemy, bool isForeignHome)
+    {
+        if (!hasEnemy && !isForeignHome) return false;
+        return Random.Shared.Next(0, 100) < 10; // 10% hostile
+    }
+
     public override double ScoreRondelSlot(int slot, Game game, NationState ns, Player controller, int factories, int units)
     {
         int unitLimit = factories + 3;

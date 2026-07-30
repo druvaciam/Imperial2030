@@ -113,78 +113,96 @@ public class BotService
         var nation = nationState.Nation;
         var gameId = game.Id;
 
-        // Step 1: Choose rondel slot
-        int targetSlot = ChooseRondelSlot(game, nationState, controller);
+        int targetSlot;
 
-        // Calculate cost
-        int cost = 0;
-        if (nationState.RondelPosition != null)
+        if (!nationState.HasMovedThisTurn)
         {
-            int distance = (targetSlot - nationState.RondelPosition.Value + 8) % 8;
-            if (distance > 3)
+            // Step 1: Choose rondel slot
+            targetSlot = ChooseRondelSlot(game, nationState, controller);
+
+            // Calculate cost
+            int cost = 0;
+            if (nationState.RondelPosition != null)
             {
-                int powerFactor = nationState.Power / 5;
-                cost = (distance - 3) * (1 + powerFactor);
-            }
-        }
-
-        int? oldPos = nationState.RondelPosition;
-        controller.Cash -= cost;
-        nationState.RondelPosition = targetSlot;
-        nationState.HasMovedThisTurn = true;
-        nationState.HasProducedThisTurn = false;
-        nationState.HasBuiltThisTurn = false;
-        nationState.HasImportedThisTurn = false;
-
-        foreach (var u in game.Units.Where(u => u.Nation == nation))
-        {
-            u.HasMoved = false;
-            u.HasConvoyed = false;
-        }
-
-        // Check investor pass-through
-        bool triggeredInvestor = false;
-        if (oldPos != null)
-        {
-            int dist = (targetSlot - oldPos.Value + 8) % 8;
-            for (int i = 1; i <= dist; i++)
-            {
-                int step = (oldPos.Value + i) % 8;
-                if (step == 4)
+                int distance = (targetSlot - nationState.RondelPosition.Value + 8) % 8;
+                if (distance > 3)
                 {
-                    triggeredInvestor = true;
-                    break;
+                    int powerFactor = nationState.Power / 5;
+                    cost = (distance - 3) * (1 + powerFactor);
                 }
             }
-        }
-        else if (targetSlot == 4)
-        {
-            triggeredInvestor = true;
-        }
 
-        LogAction(ctx, game, $"moved to {GetSlotName(targetSlot)} (Cost: {cost}M)", "Move", nation, controller.BotName ?? "Bot");
+            int? oldPos = nationState.RondelPosition;
+            controller.Cash -= cost;
+            nationState.RondelPosition = targetSlot;
+            nationState.HasMovedThisTurn = true;
+            nationState.HasProducedThisTurn = false;
+            nationState.HasBuiltThisTurn = false;
+            nationState.HasImportedThisTurn = false;
 
-        if (triggeredInvestor)
-        {
-            bool landedOn = (targetSlot == 4);
-            Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, landedOn);
+            foreach (var u in game.Units.Where(u => u.Nation == nation))
+            {
+                u.HasMoved = false;
+                u.HasConvoyed = false;
+            }
+
+            // Check investor pass-through
+            bool triggeredInvestor = false;
+            if (oldPos != null)
+            {
+                int dist = (targetSlot - oldPos.Value + 8) % 8;
+                for (int i = 1; i <= dist; i++)
+                {
+                    int step = (oldPos.Value + i) % 8;
+                    if (step == 4)
+                    {
+                        triggeredInvestor = true;
+                        break;
+                    }
+                }
+            }
+            else if (targetSlot == 4)
+            {
+                triggeredInvestor = true;
+            }
+
+            LogAction(ctx, game, $"moved to {GetSlotName(targetSlot)} (Cost: {cost}M)", "Move", nation, controller.BotName ?? "Bot");
+
+            if (triggeredInvestor)
+            {
+                bool landedOn = (targetSlot == 4);
+                Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, landedOn);
+            }
+
+            // Init maneuver phase
+            if (targetSlot == 3 || targetSlot == 7)
+                game.CurrentManeuverPhase = ManeuverPhase.Fleets;
+            else
+                game.CurrentManeuverPhase = ManeuverPhase.None;
+
+            await ctx.SaveChangesAsync();
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+            
+            if (game.IsInvestorTurn)
+            {
+                // Pause Bot turn until Investor Phase resolves
+                return;
+            }
+            
+            if (!SkipDelays) await Task.Delay(2200);
+
+            // Reload game state since we might have waited
+            game = await LoadGame(ctx, gameId);
+            if (game == null) return;
+            nationState = game.NationStates.First(ns => ns.Nation == nation);
+            controller = game.Players.First(p => p.Id == nationState.ControllerId);
         }
-
-        // Init maneuver phase
-        if (targetSlot == 3 || targetSlot == 7)
-            game.CurrentManeuverPhase = ManeuverPhase.Fleets;
         else
-            game.CurrentManeuverPhase = ManeuverPhase.None;
-
-        await ctx.SaveChangesAsync();
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-        if (!SkipDelays) await Task.Delay(2200);
+        {
+            targetSlot = nationState.RondelPosition.Value;
+        }
 
         // Step 2: Execute slot action
-        game = await LoadGame(ctx, gameId);
-        if (game == null) return;
-        nationState = game.NationStates.First(ns => ns.Nation == nation);
-        controller = game.Players.First(p => p.Id == nationState.ControllerId);
 
         switch (targetSlot)
         {
@@ -376,17 +394,49 @@ public class BotService
         {
             if (!MapConnectivity.Adjacency.TryGetValue(fleet.TerritoryId, out var neighbors)) continue;
             var seaNeighbors = neighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)).ToList();
+            seaNeighbors.Add(fleet.TerritoryId); // Allow staying put
+
             var target = seaNeighbors.OrderByDescending(n => GetStrategy(controller).ScoreManeuverDestination(game, fleet, n, controller)).FirstOrDefault();
 
             if (target != null)
             {
+                if (target == fleet.TerritoryId)
+                {
+                    fleet.HasMoved = true;
+                    var defT = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
+                    if (defT != null && defT.Nation.HasValue)
+                    {
+                        bool isFriendlyHome = friendlyNations.Contains(defT.Nation.Value);
+                        if (isFriendlyHome && fleet.IsHostile)
+                        {
+                            fleet.IsHostile = false;
+                            LogAction(ctx, game, $"fleet in {target} converted to friendly", "MoveFleet", nation, controller.BotName ?? "Bot");
+                        }
+                        else if (!isFriendlyHome && !fleet.IsHostile)
+                        {
+                            bool isEnemyPresent = game.Units.Any(u => u.TerritoryId == target && u.Id != fleet.Id && !friendlyNations.Contains(u.Nation));
+                            if (GetStrategy(controller).DetermineHostility(isEnemyPresent, true))
+                            {
+                                fleet.IsHostile = true;
+                                LogAction(ctx, game, $"fleet in {target} converted to hostile", "MoveFleet", nation, controller.BotName ?? "Bot");
+                            }
+                        }
+                        else
+                        {
+                            LogAction(ctx, game, $"fleet stayed in {target}", "MoveFleet", nation, controller.BotName ?? "Bot");
+                        }
+                    }
+                    else
+                    {
+                        LogAction(ctx, game, $"fleet stayed in {target}", "MoveFleet", nation, controller.BotName ?? "Bot");
+                    }
+                    continue;
+                }
                 bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
                 var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
                 bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
 
-                bool isHostileMove = false;
-                if (hasEnemy) isHostileMove = true;
-                else if (isForeignHome) isHostileMove = true;
+                bool isHostileMove = GetStrategy(controller).DetermineHostility(hasEnemy, isForeignHome);
 
                 if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != nation)
                 {
@@ -465,7 +515,33 @@ public class BotService
                 if (best == army.TerritoryId)
                 {
                     army.HasMoved = true;
-                    LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
+                    var defT = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best);
+                    if (defT != null && defT.Nation.HasValue)
+                    {
+                        bool isFriendlyHome = friendlyNations.Contains(defT.Nation.Value);
+                        if (isFriendlyHome && army.IsHostile)
+                        {
+                            army.IsHostile = false;
+                            LogAction(ctx, game, $"army in {best} converted to friendly", "MoveArmy", nation, controller.BotName ?? "Bot");
+                        }
+                        else if (!isFriendlyHome && !army.IsHostile)
+                        {
+                            bool isEnemyPresent = game.Units.Any(u => u.TerritoryId == best && u.Id != army.Id && !friendlyNations.Contains(u.Nation));
+                            if (GetStrategy(controller).DetermineHostility(isEnemyPresent, true))
+                            {
+                                army.IsHostile = true;
+                                LogAction(ctx, game, $"army in {best} converted to hostile", "MoveArmy", nation, controller.BotName ?? "Bot");
+                            }
+                        }
+                        else
+                        {
+                            LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
+                        }
+                    }
+                    else
+                    {
+                        LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
+                    }
                     continue;
                 }
 
@@ -473,9 +549,7 @@ public class BotService
                 var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best);
                 bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
 
-                bool isHostileMove = false;
-                if (hasEnemy) isHostileMove = true;
-                else if (isForeignHome) isHostileMove = true;
+                bool isHostileMove = GetStrategy(controller).DetermineHostility(hasEnemy, isForeignHome);
 
                 if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != nation)
                 {

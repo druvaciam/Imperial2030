@@ -16,6 +16,12 @@ public class RLBotStrategy : BotStrategyBase
     public static AsyncLocal<int?> TrainingActionOverride = new AsyncLocal<int?>();
     public static bool IsTraining = false;
 
+    public override bool DetermineHostility(bool hasEnemy, bool isForeignHome)
+    {
+        if (!hasEnemy && !isForeignHome) return false;
+        return true; // RL bot should always blockade/attack if possible, like it did before
+    }
+
     public static int InvalidActionCount = 0;
     public static int TotalActionCount = 0;
 
