@@ -9,9 +9,9 @@ The training pipeline consists of two components:
 - **Python Gym Environment**: A custom Gymnasium environment (`imperial_env.py`) that connects to the C# TCP server. It converts PyTorch actions into TCP requests, and parses the TCP responses back into observations and rewards.
 
 ### How to Train the Model
-1. **Start the C# Server**: Ensure the C# backend is running. This automatically starts the `TcpTrainingServer` on port 5005.
+1. **Start the C# Server**: Ensure the C# backend is running in Release mode with the training flag. This automatically starts the `TcpTrainingServer` on port 5005.
    ```bash
-   dotnet run --project Server/Imperial2030.Server.csproj
+   dotnet run --project Server/Imperial2030.Server.csproj -c Release -- --training
    ```
 2. **Start Python Training**: In a separate terminal, navigate to the `python_rl` directory and run the training script.
    ```bash

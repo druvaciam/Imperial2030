@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Imperial2030.Shared.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -136,11 +137,26 @@ using (var scope = app.Services.CreateScope())
     try
     {
         await Imperial2030.Server.Data.DbSeeder.SeedAsync(services);
+
+        var dbContext = services.GetRequiredService<Imperial2030.Server.Data.ApplicationDbContext>();
+        var twoWeeksAgo = DateTime.UtcNow.AddDays(-14);
+        var statuses = new[] { GameStatus.Lobby, GameStatus.InProgress };
+        var oldGames = await dbContext.Games
+            .Where(g => statuses.Contains(g.Status) && g.CreatedAt < twoWeeksAgo)
+            .ToListAsync();
+        
+        if (oldGames.Any())
+        {
+            dbContext.Games.RemoveRange(oldGames);
+            await dbContext.SaveChangesAsync();
+            var logger = services.GetRequiredService<ILogger<Program>>();
+            logger.LogInformation($"Cleaned up {oldGames.Count} old in-progress/lobby games created before {twoWeeksAgo}.");
+        }
     }
     catch (Exception ex)
     {
         var logger = services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred creating the DB.");
+        logger.LogError(ex, "An error occurred creating the DB or cleaning up old games.");
     }
 }
 

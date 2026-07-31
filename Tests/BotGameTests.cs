@@ -589,7 +589,7 @@ namespace Imperial2030.Tests
 
             float winRate = (float)rlWins / totalGames * 100;
             _output.WriteLine($"RL Bot Win Rate: {rlWins}/{totalGames} ({winRate}%)");
-            Assert.True(winRate >= 20);
+            Assert.True(winRate >= 25);
         }
     }
 }
