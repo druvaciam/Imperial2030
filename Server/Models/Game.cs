@@ -108,4 +108,41 @@ public class Game
         }
         return score;
     }
+
+    public List<Player> GetRankedPlayers()
+    {
+        var rankedNations = this.NationStates
+            .OrderByDescending(ns => ns.Power)
+            .Select(ns => ns.Nation)
+            .ToList();
+
+        var playerScores = this.Players.ToDictionary(p => p.Id, p => CalculateScore(p.Id));
+        var playerCredits = this.Players.ToDictionary(p => p.Id, p =>
+        {
+            var credits = new Dictionary<Nation, int>();
+            foreach (var nation in rankedNations)
+            {
+                credits[nation] = this.Bonds.Where(b => b.HolderId == p.Id && b.Nation == nation).Sum(b => b.Cost);
+            }
+            return credits;
+        });
+
+        var ranked = this.Players.ToList();
+        ranked.Sort((p1, p2) =>
+        {
+            int scoreDiff = playerScores[p2.Id].CompareTo(playerScores[p1.Id]);
+            if (scoreDiff != 0) return scoreDiff;
+
+            // Tie-breaker: credit sum in nations ranked by power points
+            foreach (var nation in rankedNations)
+            {
+                int creditDiff = playerCredits[p2.Id][nation].CompareTo(playerCredits[p1.Id][nation]);
+                if (creditDiff != 0) return creditDiff;
+            }
+
+            return 0; // Absolute tie
+        });
+
+        return ranked;
+    }
 }

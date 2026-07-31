@@ -1,9 +1,11 @@
+import numpy as np
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
 from imperial_env import ImperialEnv
 
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 
 def linear_schedule(initial_value, final_value=1e-5):
     """Linear decay from initial_value to final_value over training."""
@@ -11,6 +13,24 @@ def linear_schedule(initial_value, final_value=1e-5):
         # progress_remaining goes from 1.0 -> 0.0
         return final_value + progress_remaining * (initial_value - final_value)
     return func
+
+class EntCoefScheduleCallback(BaseCallback):
+    """
+    Custom callback to linearly decay the entropy coefficient during training.
+    """
+    def __init__(self, initial_ent_coef, final_ent_coef, total_timesteps, verbose=0):
+        super().__init__(verbose)
+        self.initial_ent_coef = initial_ent_coef
+        self.final_ent_coef = final_ent_coef
+        self.total_timesteps = total_timesteps
+
+    def _on_step(self) -> bool:
+        progress = self.num_timesteps / self.total_timesteps
+        progress = min(1.0, max(0.0, progress))
+        new_ent_coef = self.initial_ent_coef - progress * (self.initial_ent_coef - self.final_ent_coef)
+        self.model.ent_coef = new_ent_coef
+        self.logger.record("train/current_ent_coef", new_ent_coef)
+        return True
 
 if __name__ == "__main__":
     env = Monitor(ImperialEnv())
@@ -73,9 +93,6 @@ if __name__ == "__main__":
             verbose=1
         )
 
-    import numpy as np
-    from stable_baselines3.common.callbacks import BaseCallback
-
     class SaveOnStepCallback(BaseCallback):
         def __init__(self, save_freq, save_path, reset=False, verbose=1):
             super().__init__(verbose)
@@ -124,8 +141,14 @@ if __name__ == "__main__":
     print("Starting Training...")
     # Train for a larger number of timesteps.
     # It will automatically save every 5,000 steps to the current directory
-    callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
-    model.learn(total_timesteps=3000000, reset_num_timesteps=False, callback=callback)
+    TOTAL_TIMESTEPS = 2000000
+    
+    save_callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
+    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=0.03, final_ent_coef=0.001, total_timesteps=TOTAL_TIMESTEPS)
+    
+    callback = CallbackList([save_callback, ent_coef_callback])
+    
+    model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=False, callback=callback)
 
     print("Saving Final Model and VecNormalize statistics...")
     model.save(MODEL_BASENAME)

@@ -342,10 +342,28 @@ public class TcpTrainingServer : BackgroundService
         if (allPlayers.Any())
         {
             var sorted = allPlayers.OrderBy(p => p.Id).ToList();
-            var gameToInit = await _context.Games.FirstOrDefaultAsync(g => g.Id == gameId);
+            var gameToInit = await _context.Games.Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == gameId);
             if (gameToInit != null)
             {
-                gameToInit.InvestorCardHolderId = sorted[0].Id;
+                var russiaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.Russia);
+                var chinaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.China);
+
+                if (russiaNs != null && russiaNs.ControllerId.HasValue)
+                {
+                    var index = sorted.FindIndex(p => p.Id == russiaNs.ControllerId.Value);
+                    var nextIndex = (index + 1) % sorted.Count;
+                    gameToInit.InvestorCardHolderId = sorted[nextIndex].Id;
+                }
+                else if (chinaNs != null && chinaNs.ControllerId.HasValue)
+                {
+                    var index = sorted.FindIndex(p => p.Id == chinaNs.ControllerId.Value);
+                    var nextIndex = (index + 1) % sorted.Count;
+                    gameToInit.InvestorCardHolderId = sorted[nextIndex].Id;
+                }
+                else
+                {
+                    gameToInit.InvestorCardHolderId = sorted[0].Id;
+                }
                 _context.Entry(gameToInit).State = EntityState.Modified;
             }
         }
@@ -419,7 +437,7 @@ public class TcpTrainingServer : BackgroundService
 
         float newVP = CalculateRelativeVP(_context, game, session.RLPlayerId);
         float reward = newVP - prevVP;
-        
+
         // Continuous reward for leading the game (or penalty for trailing)
         // This gives the agent a dense gradient to always try and increase its relative score, even if it's currently losing
         reward += newVP * 0.05f;
@@ -433,11 +451,11 @@ public class TcpTrainingServer : BackgroundService
             if (targetSlot == 1 && preNs != null)
             {
                 bool noMoney = preTreasury.HasValue && preTreasury.Value < 5;
-                bool allBuilt = false;
+                bool allBuiltOrBlocked = false;
                 if (!noMoney)
                 {
                     var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == preNs.Nation && t.CityType != CityType.None);
-                    allBuilt = homeCities.All(city =>
+                    allBuiltOrBlocked = homeCities.All(city =>
                     {
                         var ts = _context.TerritoryStates.FirstOrDefault(t => t.GameId == game.Id && t.TerritoryId == city.Id);
                         if (ts != null && ts.HasFactory) return true; // Already built
@@ -445,15 +463,16 @@ public class TcpTrainingServer : BackgroundService
                         return blocked; // Blocked by enemy
                     });
                 }
-                if (noMoney || allBuilt)
+                if (noMoney || allBuiltOrBlocked)
                 {
-                    reward -= 15.0f;
+                    _logger.LogWarning($"[RL PENALTY] Wasted Factory action by {preNs.Nation}. NoMoney: {noMoney}, AllBuiltOrBlocked: {allBuiltOrBlocked}");
+                    reward -= 5.0f;
                 }
             }
-            // Import (slot 5) with treasury < 1 = wasted turn
             if (targetSlot == 5 && preTreasury.HasValue && preTreasury.Value < 1)
             {
-                reward -= 15.0f;
+                _logger.LogWarning($"[RL PENALTY] Wasted Import action by {preNs?.Nation}. Treasury < 1.");
+                reward -= 5.0f;
             }
             // Maneuver (slot 3 or 7) with 0 units = wasted turn
             if ((targetSlot == 3 || targetSlot == 7) && preNs != null)
@@ -461,7 +480,8 @@ public class TcpTrainingServer : BackgroundService
                 bool hasUnits = _context.Units.Any(u => u.GameId == game.Id && u.Nation == preNs.Nation);
                 if (!hasUnits)
                 {
-                    reward -= 15.0f;
+                    _logger.LogWarning($"[RL PENALTY] Wasted Maneuver action by {preNs.Nation}. No units to move.");
+                    reward -= 5.0f;
                 }
             }
         }
@@ -478,7 +498,7 @@ public class TcpTrainingServer : BackgroundService
 
             // At the end of the game, reward perfectly aligns with the final VP difference
             reward += (rlScore - maxOfOthersScore) * 1.0f;
-            
+
             // Small flat bonus for winning
             if (rlScore > maxOfOthersScore)
             {
@@ -625,7 +645,7 @@ public class TcpTrainingServer : BackgroundService
         if (game == null) return new float[135];
 
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
-        float[] state = new float[561];
+        float[] state = new float[591];
         if (rlPlayer == null) return state;
 
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
@@ -633,7 +653,7 @@ public class TcpTrainingServer : BackgroundService
 
         var allTerritories = _context.TerritoryStates.Where(t => t.GameId == gameId).ToList();
         var allUnits = _context.Units.Where(u => u.GameId == gameId).ToList();
-        
+
         var allPlayers = game.Players.Select(p => new
         {
             Player = p,
@@ -642,7 +662,7 @@ public class TcpTrainingServer : BackgroundService
         .OrderByDescending(x => x.Player.Id == rlPlayerId ? 1 : 0)
         .ThenBy(x => x.Player.Id)
         .ToList();
-        
+
         var sortedOpponents = allPlayers.Where(x => x.Player.Id != rlPlayerId).ToList();
 
         int i = 0;
@@ -654,7 +674,7 @@ public class TcpTrainingServer : BackgroundService
                 state[i++] = ns.Power / 25.0f;
                 state[i++] = ns.Treasury / 30.0f;
                 state[i++] = ns.RondelPosition.HasValue ? ns.RondelPosition.Value / 7.0f : -1.0f;
-                
+
                 var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
                 foreach (var cost in bondCosts)
                 {
@@ -698,6 +718,20 @@ public class TcpTrainingServer : BackgroundService
                 state[i++] = allTerritories.Count(t => t.Controller == nation) / 15.0f;
                 state[i++] = allUnits.Count(u => u.Nation == nation && u.UnitType == UnitType.Army) / 10.0f;
                 state[i++] = allUnits.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet) / 10.0f;
+
+                // Add 4 boolean flags for action validity
+                bool noMoney = ns.Treasury < 5;
+                bool allBuiltOrBlocked = homeTerritories.All(city =>
+                {
+                    var ts = allTerritories.FirstOrDefault(t => t.TerritoryId == city.Id);
+                    if (ts != null && ts.HasFactory) return true; // Already built
+                    bool blocked = allUnits.Any(u => u.TerritoryId == city.Id && u.Nation != ns.Nation && u.IsHostile);
+                    return blocked; // Blocked by enemy
+                });
+                state[i++] = (!noMoney && !allBuiltOrBlocked) ? 1.0f : 0.0f; // Can build factory
+                state[i++] = (allUnits.Any(u => u.Nation == nation)) ? 1.0f : 0.0f; // Has units for maneuver
+                state[i++] = (ns.Treasury >= 1) ? 1.0f : 0.0f; // Has at least 1m (can import 1)
+                state[i++] = (ns.Treasury >= 3) ? 1.0f : 0.0f; // Has at least 3m (can import 3)
             }
             else
             {
@@ -709,6 +743,7 @@ public class TcpTrainingServer : BackgroundService
                 state[i++] = 0;
                 state[i++] = 0;
                 state[i++] = 0;
+                for (int j = 0; j < 4; j++) state[i++] = 0; // The 4 boolean flags
             }
         }
 
@@ -720,8 +755,7 @@ public class TcpTrainingServer : BackgroundService
         state[i++] = rlPlayer.Cash / 50.0f;
         state[i++] = game.IsInvestorTurn ? 1.0f : 0.0f;
 
-        // Global Scoreboard (6 players * 9 floats = 54 floats)
-
+        // Global Scoreboard
         for (int pIdx = 0; pIdx < 6; pIdx++)
         {
             if (pIdx < allPlayers.Count)
@@ -735,6 +769,7 @@ public class TcpTrainingServer : BackgroundService
                     var ns = game.NationStates.FirstOrDefault(n => n.Nation == nation);
                     state[i++] = (ns != null && ns.ControllerId == pData.Player.Id) ? 1.0f : 0.0f;
                 }
+                state[i++] = pData.Player.Id == game.InvestorCardHolderId ? 1.0f : 0.0f;
             }
             else
             {
@@ -743,6 +778,7 @@ public class TcpTrainingServer : BackgroundService
                 state[i++] = 0f;
                 state[i++] = 0f;
                 for (int nIdx = 0; nIdx < 6; nIdx++) state[i++] = 0f;
+                state[i++] = 0f;
             }
         }
 
@@ -793,9 +829,9 @@ public class TcpTrainingServer : BackgroundService
         {
             var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
             var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
-            
+
             mask[63] = true; // Pass option
-            
+
             for (int nIdx = 0; nIdx < 6; nIdx++)
             {
                 for (int cIdx = 0; cIdx < 9; cIdx++)
@@ -803,7 +839,7 @@ public class TcpTrainingServer : BackgroundService
                     var n = imperial2030Nations[nIdx];
                     var c = bondCosts[cIdx];
                     var bond = game.Bonds.FirstOrDefault(b => b.Nation == n && b.Cost == c);
-                    
+
                     if (bond != null && bond.HolderId == null && rlPlayer.Cash >= c)
                     {
                         mask[9 + nIdx * 9 + cIdx] = true;
@@ -817,13 +853,13 @@ public class TcpTrainingServer : BackgroundService
         if (ns == null || ns.ControllerId != rlPlayerId) return mask;
 
         int currentPos = ns.RondelPosition ?? 0;
-        
+
         for (int dist = 1; dist <= 6; dist++)
         {
             int targetSlot = (currentPos + dist) % 8;
             mask[dist - 1] = IsSlotValid(ns, rlPlayer, targetSlot);
         }
-        
+
         mask[6] = false; // Action 6 is unused for Rondel (moving 7 spaces is illegal in Imperial 2030)
 
         // Failsafe: if no actions are somehow valid, just force action 0 (move 1 space)

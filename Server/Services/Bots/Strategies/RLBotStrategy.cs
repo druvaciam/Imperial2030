@@ -91,7 +91,7 @@ public class RLBotStrategy : BotStrategyBase
 
     private float[] GetStateVector(Game game, Player rlPlayer)
     {
-        float[] state = new float[561];
+        float[] state = new float[591];
         if (rlPlayer == null) return state;
 
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
@@ -104,7 +104,7 @@ public class RLBotStrategy : BotStrategyBase
         .OrderByDescending(x => x.Player.Id == rlPlayer.Id ? 1 : 0)
         .ThenBy(x => x.Player.Id)
         .ToList();
-        
+
         var sortedOpponents = allPlayers.Where(x => x.Player.Id != rlPlayer.Id).ToList();
 
         int i = 0;
@@ -160,6 +160,20 @@ public class RLBotStrategy : BotStrategyBase
                 state[i++] = game.TerritoryStates.Count(t => t.Controller == nation) / 15.0f;
                 state[i++] = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army) / 10.0f;
                 state[i++] = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet) / 10.0f;
+
+                // Add 4 boolean flags for action validity
+                bool noMoney = ns.Treasury < 5;
+                bool allBuiltOrBlocked = homeTerritories.All(city =>
+                {
+                    var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
+                    if (ts != null && ts.HasFactory) return true; // Already built
+                    bool blocked = game.Units.Any(u => u.TerritoryId == city.Id && u.Nation != ns.Nation && u.IsHostile);
+                    return blocked; // Blocked by enemy
+                });
+                state[i++] = (!noMoney && !allBuiltOrBlocked) ? 1.0f : 0.0f; // Can build factory
+                state[i++] = (game.Units.Any(u => u.Nation == nation)) ? 1.0f : 0.0f; // Has units for maneuver
+                state[i++] = (ns.Treasury >= 1) ? 1.0f : 0.0f; // Has at least 1m (can import 1)
+                state[i++] = (ns.Treasury >= 3) ? 1.0f : 0.0f; // Has at least 3m (can import 3)
             }
             else
             {
@@ -171,6 +185,7 @@ public class RLBotStrategy : BotStrategyBase
                 state[i++] = 0;
                 state[i++] = 0;
                 state[i++] = 0;
+                for (int j = 0; j < 4; j++) state[i++] = 0; // The 4 boolean flags
             }
         }
 
@@ -197,13 +212,14 @@ public class RLBotStrategy : BotStrategyBase
                     var ns = game.NationStates.FirstOrDefault(n => n.Nation == nation);
                     state[i++] = (ns != null && ns.ControllerId == pData.Player.Id) ? 1.0f : 0.0f;
                 }
+                state[i++] = pData.Player.Id == game.InvestorCardHolderId ? 1.0f : 0.0f;
             }
             else
             {
                 state[i++] = 0f;
                 state[i++] = 0f;
                 state[i++] = 0f;
-                for (int nIdx = 0; nIdx < 6; nIdx++) state[i++] = 0f;
+                for (int nIdx = 0; nIdx < 7; nIdx++) state[i++] = 0f;
             }
         }
 
@@ -279,10 +295,10 @@ public class RLBotStrategy : BotStrategyBase
             int costIdx = bondIdx % 9;
             var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
             var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
-            
+
             var targetNation = imperial2030Nations[nationIdx];
             var targetCost = bondCosts[costIdx];
-            
+
             return availableBonds.FirstOrDefault(b => b.Nation == targetNation && b.Cost == targetCost);
         }
         return null;
@@ -361,10 +377,10 @@ public class RLBotStrategy : BotStrategyBase
         if (game.IsInvestorTurn)
         {
             mask[63] = true; // Pass option
-            
+
             var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
             var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
-            
+
             for (int nIdx = 0; nIdx < 6; nIdx++)
             {
                 for (int cIdx = 0; cIdx < 9; cIdx++)
@@ -372,7 +388,7 @@ public class RLBotStrategy : BotStrategyBase
                     var n = imperial2030Nations[nIdx];
                     var c = bondCosts[cIdx];
                     var bond = game.Bonds.FirstOrDefault(b => b.Nation == n && b.Cost == c);
-                    
+
                     if (bond != null && bond.HolderId == null && rlPlayer.Cash >= c)
                     {
                         mask[9 + nIdx * 9 + cIdx] = true;
@@ -386,13 +402,13 @@ public class RLBotStrategy : BotStrategyBase
         if (ns == null || ns.ControllerId != rlPlayerId) return mask;
 
         int currentPos = ns.RondelPosition ?? 0;
-        
+
         for (int dist = 1; dist <= 6; dist++)
         {
             int targetSlot = (currentPos + dist) % 8;
             mask[dist - 1] = IsSlotValid(ns, rlPlayer, targetSlot);
         }
-        
+
         mask[6] = false; // Action 6 is unused for Rondel (moving 7 spaces is illegal in Imperial 2030)
 
         // Failsafe: if no actions are somehow valid, just force action 0 (move 1 space)
