@@ -27,6 +27,8 @@ public class RLBotStrategy : BotStrategyBase
 
     private static InferenceSession? _onnxSession;
 
+    public static readonly int StateSize = 600;
+
     static RLBotStrategy()
     {
         try
@@ -91,7 +93,7 @@ public class RLBotStrategy : BotStrategyBase
 
     private float[] GetStateVector(Game game, Player rlPlayer)
     {
-        float[] state = new float[591];
+        float[] state = new float[StateSize];
         if (rlPlayer == null) return state;
 
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
@@ -239,6 +241,65 @@ public class RLBotStrategy : BotStrategyBase
         {
             state[i++] = 0f;
             for (int nIdx = 0; nIdx < 12; nIdx++) state[i++] = 0f;
+        }
+
+        // New: 6 explicit penalty flags for Rondel actions 0-5
+        // These directly tell the neural network if an action will cause a penalty.
+        var actingNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+        for (int act = 0; act < 6; act++)
+        {
+            if (game.IsInvestorTurn || game.PendingBattleDefenders.Any() || actingNs == null || actingNs.ControllerId != rlPlayer.Id)
+            {
+                state[i++] = 0f; // Not a rondel turn
+                continue;
+            }
+
+            int targetSlot = (actingNs.RondelPosition.GetValueOrDefault() + act + 1) % 8;
+            bool isPenalized = false;
+
+            if (targetSlot == 1) // Factory
+            {
+                bool noMoney = actingNs.Treasury < 5;
+                bool allBuiltOrBlocked = false;
+                if (!noMoney)
+                {
+                    var homeCities = TerritoryData.AllTerritories
+                        .Where(t => t.Nation == actingNs.Nation && t.CityType != Imperial2030.Shared.Models.CityType.None);
+                    allBuiltOrBlocked = homeCities.All(city =>
+                    {
+                        var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
+                        if (ts != null && ts.HasFactory) return true;
+                        return game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == Imperial2030.Shared.Models.UnitType.Army && u.Nation != actingNs.Nation && u.IsHostile);
+                    });
+                }
+                if (noMoney || allBuiltOrBlocked) isPenalized = true;
+            }
+            else if (targetSlot == 5) // Import
+            {
+                if (actingNs.Treasury < 1) isPenalized = true;
+            }
+            else if (targetSlot == 3 || targetSlot == 7) // Maneuver
+            {
+                bool hasUnits = game.Units.Any(u => u.Nation == actingNs.Nation);
+                if (!hasUnits) isPenalized = true;
+            }
+
+            state[i++] = isPenalized ? 1.0f : 0.0f;
+        }
+
+        // New: 3 explicit taxation outcome flags
+        if (actingNs != null)
+        {
+            var taxPreview = Imperial2030.Server.Helpers.TaxationHelper.PreviewTaxation(game, actingNs);
+            state[i++] = taxPreview.ExpectedBonus / 5.0f; // Scale assuming max bonus is ~5M
+            state[i++] = taxPreview.ExpectedTreasuryGain / 23.0f; // Scale assuming max tax is ~23M
+            state[i++] = taxPreview.ExpectedPowerGain / 5.0f; // Scale assuming max power jump is ~5
+        }
+        else
+        {
+            state[i++] = 0f;
+            state[i++] = 0f;
+            state[i++] = 0f;
         }
 
         return state;

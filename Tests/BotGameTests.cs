@@ -340,6 +340,72 @@ namespace Imperial2030.Tests
         }
 
         [Fact]
+        public async Task TestBotTurnEndsWhenArmyStuck()
+        {
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            var mockClientProxy = new Mock<IClientProxy>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var mockServiceProvider = new Mock<IServiceProvider>();
+                var scopeContext = GetDbContext(dbName);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                return scope.Object;
+            });
+
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
+
+            var gameId = Guid.NewGuid();
+            var botId = Guid.NewGuid();
+            var nextPlayerId = Guid.NewGuid();
+
+            var game = new Game
+            {
+                Id = gameId,
+                Status = GameStatus.InProgress,
+                CurrentTurnNation = Nation.Russia,
+                IsInvestorTurn = false
+            };
+            context.Games.Add(game);
+
+            context.Players.Add(new Player { Id = botId, GameId = gameId, IsBot = true, BotName = "Bot Russia" });
+            context.Players.Add(new Player { Id = nextPlayerId, GameId = gameId, IsBot = true, BotName = "Bot China" });
+
+            context.NationStates.Add(new NationState { Nation = Nation.Russia, GameId = gameId, ControllerId = botId, RondelPosition = 3, HasMovedThisTurn = true }); // Slot 3 is Maneuver
+            context.NationStates.Add(new NationState { Nation = Nation.China, GameId = gameId, ControllerId = nextPlayerId, RondelPosition = 2 });
+
+            // Add an army on New Zealand (which is disconnected from everything else if there are no fleets)
+            context.Units.Add(new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, TerritoryId = "NewZealand", UnitType = UnitType.Army, HasMoved = false });
+
+            await context.SaveChangesAsync();
+
+            // Act
+            await botService.TryPlayBotTurnAsync(gameId, singleTurnOnly: true);
+
+            var db = GetDbContext(dbName);
+            var updatedGame = await db.Games.FirstAsync(g => g.Id == gameId);
+            var updatedArmy = await db.Units.FirstAsync(u => u.Nation == Nation.Russia);
+
+            var actions = await db.GameActions.Where(a => a.GameId == gameId).ToListAsync();
+            foreach (var action in actions)
+            {
+                _output.WriteLine($"ACTION: {action.ActionType} - {action.Message}");
+            }
+
+            // Assert
+            Assert.Equal(Nation.China, updatedGame.CurrentTurnNation); // The turn advanced to China
+        }
+
+        [Fact]
         public async Task TestBotPassesInvestmentToPendingSwissBank()
         {
             string dbName = Guid.NewGuid().ToString();
@@ -589,7 +655,7 @@ namespace Imperial2030.Tests
 
             float winRate = (float)rlWins / totalGames * 100;
             _output.WriteLine($"RL Bot Win Rate: {rlWins}/{totalGames} ({winRate}%)");
-            Assert.True(winRate >= 20);
+            Assert.True(winRate >= 25);
         }
     }
 }
