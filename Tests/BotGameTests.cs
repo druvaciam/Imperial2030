@@ -266,27 +266,8 @@ namespace Imperial2030.Tests
                 var finalGame = context.Games.AsNoTracking().FirstOrDefault(g => g.Id == gameId);
                 if (finalGame?.Status == GameStatus.Finished)
                 {
-                    // Calculate scores
-                    var bonds = context.Bonds.Where(b => b.GameId == gameId && b.HolderId != null).ToList();
-                    var nations = context.NationStates.Where(n => n.GameId == gameId).ToList();
-
-                    var scores = new Dictionary<Guid, int>();
-                    foreach (var p in players)
-                    {
-                        // Refresh player cash
-                        var finalPlayer = context.Players.AsNoTracking().First(x => x.Id == p.Id);
-                        int score = finalPlayer.Cash;
-                        var playerBonds = bonds.Where(b => b.HolderId == p.Id).ToList();
-                        foreach (var b in playerBonds)
-                        {
-                            var nation = nations.First(n => n.Nation == b.Nation);
-                            int multiplier = nation.Power / 5;
-                            score += b.Interest * multiplier;
-                        }
-                        scores[p.Id] = score;
-                    }
-
-                    var winnerId = scores.OrderByDescending(kvp => kvp.Value).First().Key;
+                    var rankedPlayers = finalGame.GetRankedPlayers();
+                    var winnerId = rankedPlayers.First().Id;
                     if (observedSwissBanks.Contains(winnerId))
                     {
                         using var metricScope = mockScopeFactory.Object.CreateScope();
@@ -592,17 +573,8 @@ namespace Imperial2030.Tests
                 var finalGame = context.Games.AsNoTracking().Include(g => g.Players).ThenInclude(p => p.Bonds).Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
                 if (finalGame != null && finalGame.Status == GameStatus.Finished)
                 {
-                    var winner = finalGame.Players.OrderByDescending(p =>
-                    {
-                        int score = p.Cash;
-                        foreach (var b in p.Bonds)
-                        {
-                            var ns = finalGame.NationStates.FirstOrDefault(n => n.Nation == b.Nation);
-                            if (ns != null)
-                                score += b.Interest * (ns.Power / 5);
-                        }
-                        return score;
-                    }).First();
+                    var rankedPlayers = finalGame.GetRankedPlayers();
+                    var winner = rankedPlayers.First();
                     if (winner.BotType == "RL") rlWins++;
                     _output.WriteLine($"Game {g} finished in {turns} turns. Winner: {winner.BotName}");
                 }

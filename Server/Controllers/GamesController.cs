@@ -711,10 +711,28 @@ public class GamesController : ControllerBase
             if (players.Any())
             {
                 var sorted = players.OrderBy(p => p.Id).ToList();
-                var gameToInit = await _context.Games.FirstOrDefaultAsync(g => g.Id == gameId);
+                var gameToInit = await _context.Games.Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == gameId);
                 if (gameToInit != null)
                 {
-                    gameToInit.InvestorCardHolderId = sorted[0].Id; // Give to First Player
+                    var russiaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.Russia);
+                    var chinaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.China);
+                    
+                    if (russiaNs != null && russiaNs.ControllerId.HasValue)
+                    {
+                        var index = sorted.FindIndex(p => p.Id == russiaNs.ControllerId.Value);
+                        var nextIndex = (index + 1) % sorted.Count;
+                        gameToInit.InvestorCardHolderId = sorted[nextIndex].Id;
+                    }
+                    else if (chinaNs != null && chinaNs.ControllerId.HasValue)
+                    {
+                        var index = sorted.FindIndex(p => p.Id == chinaNs.ControllerId.Value);
+                        var nextIndex = (index + 1) % sorted.Count;
+                        gameToInit.InvestorCardHolderId = sorted[nextIndex].Id;
+                    }
+                    else
+                    {
+                        gameToInit.InvestorCardHolderId = sorted[0].Id;
+                    }
                     _context.Entry(gameToInit).State = EntityState.Modified;
                 }
             }

@@ -457,10 +457,7 @@ else
                                             </thead>
                                             <tbody>
                                         @{
-                                            var g = game!;
-                                            var rankedPlayers = g.Players.Select(p => new { Player = p, Score = GetPlayerScore(p) })
-                                                                            .OrderByDescending(x => x.Score)
-                                                                            .ToList();
+                                            var rankedPlayers = GetRankedPlayers().Select(p => new { Player = p, Score = GetPlayerScore(p) }).ToList();
                                             int rank = 1;
                                         }
                                         @foreach (var item in rankedPlayers)
@@ -1075,6 +1072,43 @@ else
             }
         }
         return score;
+    }
+
+    private List<PlayerDto> GetRankedPlayers()
+    {
+        if (game == null || game.Players == null) return new List<PlayerDto>();
+        
+        var rankedNations = game.NationStates != null 
+            ? game.NationStates.OrderByDescending(ns => ns.Power).Select(ns => ns.Nation).ToList()
+            : new List<Imperial2030.Shared.Models.Nation>();
+
+        var playerScores = game.Players.ToDictionary(p => p.Id, p => GetPlayerScore(p));
+        var playerCredits = game.Players.ToDictionary(p => p.Id, p =>
+        {
+            var credits = new Dictionary<Imperial2030.Shared.Models.Nation, int>();
+            foreach (var nation in rankedNations)
+            {
+                credits[nation] = p.Bonds?.Where(b => b.Nation == nation).Sum(b => b.Cost) ?? 0;
+            }
+            return credits;
+        });
+
+        var ranked = game.Players.ToList();
+        ranked.Sort((p1, p2) =>
+        {
+            int scoreDiff = playerScores[p2.Id].CompareTo(playerScores[p1.Id]);
+            if (scoreDiff != 0) return scoreDiff;
+
+            foreach (var nation in rankedNations)
+            {
+                int creditDiff = playerCredits[p2.Id][nation].CompareTo(playerCredits[p1.Id][nation]);
+                if (creditDiff != 0) return creditDiff;
+            }
+
+            return 0;
+        });
+
+        return ranked;
     }
 
     private bool IsMyTurn()
