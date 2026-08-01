@@ -47,7 +47,7 @@ public class RLBotStrategy : BotStrategyBase
         }
     }
 
-    private float[] _lastState = null;
+    private float[]? _lastState = null;
     private int _cachedAction = -1;
 
     private bool IsSameState(float[] s1, float[] s2)
@@ -64,7 +64,7 @@ public class RLBotStrategy : BotStrategyBase
         {
             _cachedAction = TrainingActionOverride.Value.Value;
         }
-        else if (IsTraining)
+        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_"))
         {
             // If we are training but have no override, we need to pause the C# game loop and wait for Python.
             throw new RlTrainingPauseException();
@@ -311,7 +311,7 @@ public class RLBotStrategy : BotStrategyBase
         {
             return TrainingActionOverride.Value.Value == 8; // 8 = Retreat, 7 = Fight
         }
-        else if (IsTraining)
+        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_"))
         {
             throw new RlTrainingPauseException();
         }
@@ -333,7 +333,7 @@ public class RLBotStrategy : BotStrategyBase
         {
             _cachedAction = TrainingActionOverride.Value.Value;
         }
-        else if (IsTraining)
+        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_"))
         {
             throw new RlTrainingPauseException();
         }

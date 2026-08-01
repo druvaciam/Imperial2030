@@ -37,7 +37,7 @@ namespace Imperial2030.Tests
                 .Options;
             return new ApplicationDbContext(options);
         }
-        // ... (GetController remains same) ...
+
         private ManeuverController GetController(ApplicationDbContext context, string userId)
         {
             var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
@@ -135,9 +135,6 @@ namespace Imperial2030.Tests
                     TerritoryId = berlinId,
                     UnitIds = new List<Guid> { army1.Id, army2.Id, army3.Id }
                 };
-
-                _output.WriteLine($"[DEBUG] ControllerContext is null? {controller.ControllerContext == null}");
-                _output.WriteLine($"[DEBUG] ControllerContext is null? {controller.ControllerContext == null}");
 
                 // Act
                 var result = await controller.DestroyFactory(gameId, request);
@@ -647,11 +644,185 @@ namespace Imperial2030.Tests
                 // It should AUTO-RESOLVE the battle since there is only 1 target and it's hostile
                 Assert.Empty(updatedGame.PendingBattleDefenders);
                 Assert.Null(updatedGame.PendingBattleTerritoryId);
-                
+
                 // Both units should be destroyed
                 Assert.DoesNotContain(updatedGame.Units, u => u.Id == army.Id);
                 Assert.DoesNotContain(updatedGame.Units, u => u.Id == europeFleet.Id);
             }
+        }
+        [Fact]
+        public async Task BattleResponse_Peace_UnitsSurvive()
+        {
+            // Arrange
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context); // Setup user as controller of Russia
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.PendingBattleTerritoryId = "Ukraine";
+            game.PendingBattleAggressorNation = Nation.Europe;
+            game.PendingBattleDefenders = new List<Nation> { Nation.Russia };
+
+            var aggressorUnit = new Unit { Id = Guid.NewGuid(), Nation = Nation.Europe, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            var defenderUnit = new Unit { Id = Guid.NewGuid(), Nation = Nation.Russia, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            context.Units.AddRange(aggressorUnit, defenderUnit);
+            await context.SaveChangesAsync();
+
+            var controller = GetController(context, setup.UserId);
+            var request = new BattleResponseRequest { IsFight = false };
+
+            // Act
+            var result = await controller.BattleResponse(setup.GameId, request);
+
+            // Assert
+            Assert.IsType<OkResult>(result);
+
+            var updatedGame = await context.Games.Include(g => g.Units).FirstAsync(g => g.Id == setup.GameId);
+
+            // Battle cleared
+            Assert.Null(updatedGame.PendingBattleTerritoryId);
+            Assert.Null(updatedGame.PendingBattleAggressorNation);
+            Assert.Empty(updatedGame.PendingBattleDefenders);
+
+            // Both units survive
+            var unitsInTerritory = updatedGame.Units.Where(u => u.TerritoryId == "Ukraine").ToList();
+            Assert.Equal(2, unitsInTerritory.Count);
+            Assert.Contains(unitsInTerritory, u => u.Nation == Nation.Europe);
+            Assert.Contains(unitsInTerritory, u => u.Nation == Nation.Russia);
+
+            // Both units should be marked peaceful
+            Assert.All(unitsInTerritory, u => Assert.False(u.IsHostile));
+        }
+
+        [Fact]
+        public async Task BattleResponse_Fight_BothUnitsDestroyed()
+        {
+            // Arrange
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context); // Setup user as controller of Russia
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.PendingBattleTerritoryId = "Ukraine";
+            game.PendingBattleAggressorNation = Nation.Europe;
+            game.PendingBattleDefenders = new List<Nation> { Nation.Russia };
+
+            var aggressorUnit = new Unit { Id = Guid.NewGuid(), Nation = Nation.Europe, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            var defenderUnit = new Unit { Id = Guid.NewGuid(), Nation = Nation.Russia, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            context.Units.AddRange(aggressorUnit, defenderUnit);
+            await context.SaveChangesAsync();
+
+            var controller = GetController(context, setup.UserId);
+            var request = new BattleResponseRequest { IsFight = true };
+
+            // Act
+            var result = await controller.BattleResponse(setup.GameId, request);
+
+            // Assert
+            Assert.IsType<OkResult>(result);
+
+            var updatedGame = await context.Games.Include(g => g.Units).FirstAsync(g => g.Id == setup.GameId);
+
+            // Battle cleared
+            Assert.Null(updatedGame.PendingBattleTerritoryId);
+            Assert.Null(updatedGame.PendingBattleAggressorNation);
+            Assert.Empty(updatedGame.PendingBattleDefenders);
+
+            // Both units destroyed
+            var unitsInTerritory = updatedGame.Units.Where(u => u.TerritoryId == "Ukraine").ToList();
+            Assert.Empty(unitsInTerritory);
+        }
+        [Fact]
+        public async Task BattleResponse_MultiDefender_AllPeace_UnitsSurvive()
+        {
+            // Arrange
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context); // Setup user as controller of Russia
+
+            var player2Id = Guid.NewGuid();
+            var user2Id = "user-2";
+            context.Players.Add(new Player { Id = player2Id, GameId = setup.GameId, UserId = user2Id });
+            context.NationStates.Add(new NationState { Nation = Nation.India, ControllerId = player2Id, GameId = setup.GameId });
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.PendingBattleTerritoryId = "Ukraine";
+            game.PendingBattleAggressorNation = Nation.Europe;
+            game.PendingBattleDefenders = new List<Nation> { Nation.Russia, Nation.India };
+
+            var aggressorUnit = new Unit { Id = Guid.NewGuid(), Nation = Nation.Europe, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            var defender1 = new Unit { Id = Guid.NewGuid(), Nation = Nation.Russia, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            var defender2 = new Unit { Id = Guid.NewGuid(), Nation = Nation.India, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            context.Units.AddRange(aggressorUnit, defender1, defender2);
+            await context.SaveChangesAsync();
+
+            var controller1 = GetController(context, setup.UserId); // Controls Russia
+            var controller2 = GetController(context, user2Id); // Controls India
+
+            // Act 1: Russia chooses peace
+            var result1 = await controller1.BattleResponse(setup.GameId, new BattleResponseRequest { IsFight = false });
+            Assert.IsType<OkResult>(result1);
+
+            // Assert 1: Battle still pending for India
+            var game1 = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            Assert.Equal("Ukraine", game1.PendingBattleTerritoryId);
+            Assert.Contains(Nation.India, game1.PendingBattleDefenders);
+            Assert.DoesNotContain(Nation.Russia, game1.PendingBattleDefenders);
+
+            // Act 2: India chooses peace
+            var result2 = await controller2.BattleResponse(setup.GameId, new BattleResponseRequest { IsFight = false });
+            Assert.IsType<OkResult>(result2);
+
+            // Assert 2: Battle cleared, all survive
+            var finalGame = await context.Games.Include(g => g.Units).FirstAsync(g => g.Id == setup.GameId);
+            Assert.Null(finalGame.PendingBattleTerritoryId);
+            Assert.Empty(finalGame.PendingBattleDefenders);
+
+            var unitsInTerritory = finalGame.Units.Where(u => u.TerritoryId == "Ukraine").ToList();
+            Assert.Equal(3, unitsInTerritory.Count);
+            Assert.All(unitsInTerritory, u => Assert.False(u.IsHostile));
+        }
+
+        [Fact]
+        public async Task BattleResponse_MultiDefender_OneFight_UnitsDestroyed()
+        {
+            // Arrange
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context);
+
+            var player2Id = Guid.NewGuid();
+            var user2Id = "user-2";
+            context.Players.Add(new Player { Id = player2Id, GameId = setup.GameId, UserId = user2Id });
+            context.NationStates.Add(new NationState { Nation = Nation.India, ControllerId = player2Id, GameId = setup.GameId });
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.PendingBattleTerritoryId = "Ukraine";
+            game.PendingBattleAggressorNation = Nation.Europe;
+            game.PendingBattleDefenders = new List<Nation> { Nation.Russia, Nation.India };
+
+            var aggressorUnit = new Unit { Id = Guid.NewGuid(), Nation = Nation.Europe, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            var defender1 = new Unit { Id = Guid.NewGuid(), Nation = Nation.Russia, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            var defender2 = new Unit { Id = Guid.NewGuid(), Nation = Nation.India, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            context.Units.AddRange(aggressorUnit, defender1, defender2);
+            await context.SaveChangesAsync();
+
+            var controller1 = GetController(context, setup.UserId); // Controls Russia
+            var controller2 = GetController(context, user2Id); // Controls India
+
+            // Act 1: Russia chooses peace
+            await controller1.BattleResponse(setup.GameId, new BattleResponseRequest { IsFight = false });
+
+            // Act 2: India chooses fight!
+            await controller2.BattleResponse(setup.GameId, new BattleResponseRequest { IsFight = true });
+
+            // Assert: Battle cleared, Aggressor and India destroyed, Russia survives
+            var finalGame = await context.Games.Include(g => g.Units).FirstAsync(g => g.Id == setup.GameId);
+            Assert.Null(finalGame.PendingBattleTerritoryId);
+
+            var unitsInTerritory = finalGame.Units.Where(u => u.TerritoryId == "Ukraine").ToList();
+            Assert.Single(unitsInTerritory);
+            Assert.Equal(Nation.Russia, unitsInTerritory.First().Nation); // Russia chose peace and didn't fight
         }
     }
 }

@@ -54,11 +54,11 @@ public static class MapConnectivity
         
         // --- INDIA & MIDDLE EAST ---
         { "NewDelhi", new List<string> { "Kolkata", "Mumbai", "Urumqi", "Afghanistan" } },
-        { "Mumbai", new List<string> { "NewDelhi", "Kolkata", "Chennai", "Iran", "IndianOcean" } },
+        { "Mumbai", new List<string> { "NewDelhi", "Kolkata", "Chennai", "Iran", "IndianOcean", "Afghanistan" } },
         { "Chennai", new List<string> { "Mumbai", "Kolkata", "IndianOcean" } },
         { "Kolkata", new List<string> { "NewDelhi", "Mumbai", "Chennai", "Chongqing", "Indochina", "IndianOcean" } },
         { "Iran", new List<string> { "Turkey", "Afghanistan", "Mumbai", "IndianOcean", "NearEast", "Moscow" } },
-        { "Afghanistan", new List<string> { "Iran", "Kazakhstan", "Urumqi", "NewDelhi" } },
+        { "Afghanistan", new List<string> { "Iran", "Kazakhstan", "Urumqi", "NewDelhi", "Mumbai" } },
         { "Turkey", new List<string> { "Rome", "Moscow", "Iran", "NearEast", "MediterraneanSea" } },
         { "NearEast", new List<string> { "Turkey", "Iran", "MediterraneanSea", "IndianOcean", "North-Africa" } },
 

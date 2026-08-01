@@ -514,7 +514,7 @@ else
                         @onchange="@(e => { if (Guid.TryParse(e.Value?.ToString(), out var g)) selectedPlayerId = g; })">
                             @foreach (var p in game.Players)
                             {
-                                             <option value="@p.Id">@p.UserName</option>
+                                             <option value="@p.Id" selected="@(p.Id == selectedPlayerId)">@p.UserName</option>
                             }
                                 </select>
                     }
@@ -584,6 +584,56 @@ else
                             </ul>
                 }
                 </div>
+
+                <!-- All Bonds Panel -->
+                <div class="panel mt-2">
+                    <h5 class="mb-2 border-bottom border-secondary pb-1">Global Bonds</h5>
+                    @if (game != null)
+                    {
+                        @foreach (var ns in game.NationStates.OrderBy(n => n.Nation))
+                        {
+                            var nation = ns.Nation;
+                            var availableForNation = game.AvailableBonds.Where(b => b.Nation == nation);
+                            var heldForNation = game.Players.SelectMany(p => p.Bonds.Select(b => new { Bond = b, Player = p }))
+                                                            .Where(x => x.Bond.Nation == nation);
+
+                            var combinedBonds = heldForNation.Select(h => new { h.Bond.Cost, h.Bond.Interest, Owner = h.Player.UserName })
+                                                .Concat(availableForNation.Select(a => new { a.Cost, a.Interest, Owner = (string?)null }))
+                                                .OrderBy(b => b.Cost)
+                                                .ToList();
+
+                            <div class="mb-2">
+                                <h6 class="text-info mb-0">
+                                    @nation
+                                    @if (!string.IsNullOrEmpty(ns.ControllerName))
+                                    {
+                                        var controllerInvestment = heldForNation.Where(h => h.Player.UserName == ns.ControllerName).Sum(h => h.Bond.Cost);
+                                        <span class="text-muted fw-normal ms-1 small">(@ns.ControllerName, @controllerInvestment M)</span>
+                                    }
+                                </h6>
+                                <div class="small ps-2">
+                                    @foreach (var bond in combinedBonds)
+                                    {
+                                        if (bond.Owner != null)
+                                        {
+                                            <div class="d-flex justify-content-between text-white">
+                                                <span>@bond.Cost M (+@bond.Interest)</span>
+                                                <span class="text-warning">@bond.Owner</span>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="d-flex justify-content-between text-muted">
+                                                <span>@bond.Cost M (+@bond.Interest)</span>
+                                                <span>Bank</span>
+                                            </div>
+                                        }
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
             </div>
         </div>
 }
@@ -616,6 +666,22 @@ else
         display: flex; 
         flex-direction: column;
         flex-shrink: 0;
+    }
+
+    /* Custom Scrollbar */
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.4);
     }
 
     .sidebar-left, .sidebar-right {
@@ -1163,6 +1229,12 @@ else
             if (current == slotIndex) return; // Same slot, ignore
 
             int dist = (slotIndex - current + 8) % 8;
+            if (dist > 6)
+            {
+                _ = ShowToast("You cannot move more than 6 spaces on the rondel!", true);
+                return;
+            }
+
             if (dist > 3)
             {
                 int powerFactor = ns.Power / 5;

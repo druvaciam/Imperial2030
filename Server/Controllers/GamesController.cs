@@ -1101,8 +1101,7 @@ public class GamesController : ControllerBase
             int distance = (targetSlot - currentSlot.Value + 8) % 8;
 
             if (distance == 0) return BadRequest("Must move at least 1 step."); // Should be covered by above equality check but safe.
-                                                                                // distance is 1..7
-
+            if (distance > 6) return BadRequest("Cannot move more than 6 spaces on the rondel.");
             if (distance > 3)
             {
                 // Cost per additional step = 1 + Power Factor (Power / 5)
