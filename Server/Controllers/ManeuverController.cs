@@ -425,6 +425,7 @@ public class ManeuverController : ControllerBase
         {
             var destDefForBattle = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
             bool isForeignHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value != nation;
+            bool isMyHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value == nation;
 
             var foreignDefenders = game.Units
                 .Where(u => u.TerritoryId == request.DestinationId && u.Nation != nation)
@@ -432,6 +433,13 @@ public class ManeuverController : ControllerBase
                 .Select(u => u.Nation)
                 .Distinct()
                 .ToList();
+
+            if (isMyHome && foreignDefenders.Any())
+            {
+                // Foreign armies in your home territory are always hostile. You cannot peacefully coexist.
+                request.IsHostile = true;
+                unit.IsHostile = true;
+            }
 
             if (foreignDefenders.Any())
             {

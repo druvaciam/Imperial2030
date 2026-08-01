@@ -824,5 +824,68 @@ namespace Imperial2030.Tests
             Assert.Single(unitsInTerritory);
             Assert.Equal(Nation.Russia, unitsInTerritory.First().Nation); // Russia chose peace and didn't fight
         }
+
+        [Fact]
+        public async Task MoveArmy_PeacefulIntoOwnHome_WithForeignArmy_ForcesBattle()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                // Arrange
+                var gameId = Guid.NewGuid();
+                var userId = "user1";
+                var playerId = Guid.NewGuid();
+                var game = new Game
+                {
+                    Id = gameId,
+                    Name = "TestGame",
+                    Status = GameStatus.InProgress,
+                    CurrentTurnNation = Nation.Russia,
+                    CurrentManeuverPhase = ManeuverPhase.Armies
+                };
+                game.Players.Add(new Player { Id = playerId, UserId = userId, IsHost = true });
+                game.NationStates.Add(new NationState { GameId = gameId, Nation = Nation.Russia, ControllerId = playerId });
+                game.NationStates.Add(new NationState { GameId = gameId, Nation = Nation.China, ControllerId = Guid.NewGuid() }); // Needed for valid setup
+
+                var russianArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = "Moscow" };
+                var chineseArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.China, UnitType = UnitType.Army, TerritoryId = "Vladivostok", IsHostile = true };
+                
+                game.Units.Add(russianArmy);
+                game.Units.Add(chineseArmy);
+                context.Games.Add(game);
+                await context.SaveChangesAsync();
+
+                var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+                var mockClients = new Mock<IHubClients>();
+                var mockGroup = new Mock<IClientProxy>();
+                mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+                mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockGroup.Object);
+
+                var controller = new ManeuverController(context, mockHub.Object, null);
+                var user = new ClaimsPrincipal(new ClaimsIdentity(new Claim[] { new Claim(ClaimTypes.NameIdentifier, userId) }, "mock"));
+                controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = user } };
+
+                var request = new MoveUnitRequest
+                {
+                    UnitId = russianArmy.Id,
+                    DestinationId = "Vladivostok",
+                    IsHostile = false // Explicitly requested peaceful move!
+                };
+
+                // Act
+                var result = await controller.MoveArmy(gameId, request);
+
+                // Assert
+                Assert.IsType<OkResult>(result);
+
+                var updatedGame = await context.Games.Include(g => g.Units).FirstAsync(g => g.Id == gameId);
+
+                // Because it is Russia's home territory (Vladivostok) and an enemy is there, 
+                // the peaceful move MUST be forcefully converted to a hostile battle and both destroyed.
+                // It should NOT enter a PendingBattle phase awaiting a "peace" response.
+                Assert.Null(updatedGame.PendingBattleTerritoryId);
+                Assert.Empty(updatedGame.Units); // Both Russian and Chinese armies are destroyed
+            }
+        }
     }
 }
