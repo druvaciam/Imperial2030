@@ -879,7 +879,6 @@ public class TcpTrainingServer : BackgroundService
 
             if (rlIsDefender)
             {
-                _logger.LogInformation($"[RL ACTION MASK] Agent is defending a battle. Masking Fight and Retreat.");
                 mask[7] = true; // Fight
                 mask[8] = true; // Retreat
                 return mask;

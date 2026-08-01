@@ -49,7 +49,7 @@ public class ManeuverController : ControllerBase
         var nation = game.CurrentTurnNation;
         var nationState = game.NationStates.First(n => n.Nation == nation);
         var controller = game.Players.FirstOrDefault(p => p.Id == nationState.ControllerId);
-        
+
         if (controller == null || controller.UserId != userId) return Forbid();
 
         // Validate Unit
@@ -57,18 +57,18 @@ public class ManeuverController : ControllerBase
         if (unit == null) return NotFound("Unit not found.");
         if (unit.Nation != nation) return BadRequest("Not your unit.");
         if (unit.UnitType != UnitType.Fleet) return BadRequest("Not a fleet.");
-        
+
         if (unit.HasMoved) return BadRequest("Unit already moved.");
 
         // Validate Move Adjacency and Type
         if (!MapConnectivity.Adjacency.TryGetValue(unit.TerritoryId, out var neighbors))
             return BadRequest("Invalid current territory.");
-            
+
         if (!neighbors.Contains(request.DestinationId))
             return BadRequest("Destination is not adjacent.");
 
         // Canal Logic: Check if moving through Panama or Suez
-        var canal = MapConnectivity.CanalLinks.FirstOrDefault(c => 
+        var canal = MapConnectivity.CanalLinks.FirstOrDefault(c =>
             (c.Region1 == unit.TerritoryId && c.Region2 == request.DestinationId) ||
             (c.Region1 == request.DestinationId && c.Region2 == unit.TerritoryId));
 
@@ -112,7 +112,8 @@ public class ManeuverController : ControllerBase
                 if (tState != null && tState.HasFactory)
                 {
                     var defenderNation = destDef2.Nation.Value;
-                    var defenderFactoryCount = game.TerritoryStates.Count(s => {
+                    var defenderFactoryCount = game.TerritoryStates.Count(s =>
+                    {
                         if (!s.HasFactory) return false;
                         var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
                         if (t == null || t.Nation != defenderNation) return false;
@@ -136,8 +137,8 @@ public class ManeuverController : ControllerBase
         {
             var targetNation = request.BattleTargetNation.Value;
             // Find a fleet of target nation in destination
-            var enemyFleet = game.Units.FirstOrDefault(u => 
-                u.TerritoryId == request.DestinationId && 
+            var enemyFleet = game.Units.FirstOrDefault(u =>
+                u.TerritoryId == request.DestinationId &&
                 u.Nation == targetNation);
 
             if (enemyFleet != null)
@@ -165,9 +166,9 @@ public class ManeuverController : ControllerBase
                 {
                     // Auto-resolve hostile battle if there is only 1 valid target
                     var targetNation = foreignFleets.First();
-                    var enemyFleet = game.Units.FirstOrDefault(u => 
-                        u.TerritoryId == request.DestinationId && 
-                        u.UnitType == UnitType.Fleet && 
+                    var enemyFleet = game.Units.FirstOrDefault(u =>
+                        u.TerritoryId == request.DestinationId &&
+                        u.UnitType == UnitType.Fleet &&
                         u.Nation == targetNation);
 
                     if (enemyFleet != null)
@@ -192,7 +193,7 @@ public class ManeuverController : ControllerBase
                 }
             }
         }
-        
+
         if (!game.PendingBattleDefenders.Any())
         {
             // Only log standard move and TryAutoAdvance if there's no pending battle blocking the phase.
@@ -201,7 +202,7 @@ public class ManeuverController : ControllerBase
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
         }
-
+        await UpdateTerritoryControl(game);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
@@ -232,27 +233,27 @@ public class ManeuverController : ControllerBase
 
         if (game == null) return NotFound();
         if (game.PendingBattleDefenders.Any()) return BadRequest("Cannot initiate battles while another battle is pending.");
-        
+
         // Validate Turn/Control
         var nation = game.CurrentTurnNation;
         var nationState = game.NationStates.First(n => n.Nation == nation);
         var controller = game.Players.FirstOrDefault(p => p.Id == nationState.ControllerId);
-        
+
         if (controller == null || controller.UserId != userId) return Forbid();
 
         var unit = game.Units.FirstOrDefault(u => u.Id == request.UnitId);
         if (unit == null) return NotFound("Unit not found.");
         if (unit.Nation != nation) return BadRequest("Not your unit.");
 
-        
-        if (unit.HasMoved) return BadRequest("Unit already moved this turn."); 
-        
+
+        if (unit.HasMoved) return BadRequest("Unit already moved this turn.");
+
         if (!request.BattleTargetNation.HasValue) return BadRequest("Target nation required.");
         var targetNation = request.BattleTargetNation.Value;
 
         // Find enemy in same territory
-        var enemyUnit = game.Units.FirstOrDefault(u => 
-            u.TerritoryId == unit.TerritoryId && 
+        var enemyUnit = game.Units.FirstOrDefault(u =>
+            u.TerritoryId == unit.TerritoryId &&
             u.Nation == targetNation); // Armies fight Armies, Fleets fight Fleets
 
         if (enemyUnit == null) return BadRequest($"No {targetNation} {unit.UnitType} in {unit.TerritoryId}.");
@@ -262,12 +263,12 @@ public class ManeuverController : ControllerBase
         _context.Units.Remove(enemyUnit);
         game.Units.Remove(unit);
         game.Units.Remove(enemyUnit);
-        
+
         LogAction(game, $"{unit.UnitType.ToString().ToLower()} attacked {targetNation} in {unit.TerritoryId}. Both destroyed", "Battle", nation);
-        
+
         await UpdateTerritoryControl(game);
         await TryAutoAdvanceManeuver(game, nation);
-        
+
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
@@ -380,16 +381,17 @@ public class ManeuverController : ControllerBase
                 if (tState != null && tState.HasFactory)
                 {
                     var defenderNation = destDef2.Nation.Value;
-                    var defenderFactoryCount = game.TerritoryStates.Count(s => {
+                    var defenderFactoryCount = game.TerritoryStates.Count(s =>
+                    {
                         if (!s.HasFactory) return false;
                         var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
                         if (t == null || t.Nation != defenderNation) return false;
                         bool isOccupied = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
                         return !isOccupied;
                     });
-                    
+
                     bool isTargetOccupied = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == request.DestinationId && u.Nation != defenderNation && u.IsHostile);
-                    
+
                     if (defenderFactoryCount <= 1 && !isTargetOccupied)
                     {
                         return BadRequest("Cannot enter the last unoccupied factory of a nation hostilely. Must enter peacefully.");
@@ -405,9 +407,9 @@ public class ManeuverController : ControllerBase
         if (request.BattleTargetNation.HasValue)
         {
             var targetNation = request.BattleTargetNation.Value;
-            var enemyUnit = game.Units.FirstOrDefault(u => 
-                u.TerritoryId == request.DestinationId && 
-                u.Nation == targetNation); 
+            var enemyUnit = game.Units.FirstOrDefault(u =>
+                u.TerritoryId == request.DestinationId &&
+                u.Nation == targetNation);
 
             if (enemyUnit != null)
             {
@@ -437,8 +439,8 @@ public class ManeuverController : ControllerBase
                 {
                     // Auto-resolve hostile battle if there is only 1 valid target
                     var targetNation = foreignDefenders.First();
-                    var enemyUnit = game.Units.FirstOrDefault(u => 
-                        u.TerritoryId == request.DestinationId && 
+                    var enemyUnit = game.Units.FirstOrDefault(u =>
+                        u.TerritoryId == request.DestinationId &&
                         u.Nation == targetNation &&
                         (u.UnitType == UnitType.Army || (isForeignHome && u.Nation == destDefForBattle.Nation.Value)));
 
@@ -464,14 +466,14 @@ public class ManeuverController : ControllerBase
                 }
             }
         }
-        
+
         if (!game.PendingBattleDefenders.Any())
         {
             LogAction(game, $"army moved to {request.DestinationId} from {sourceTerritory} (Hostile: {unit.IsHostile})", "MoveArmy", nation);
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
         }
-
+        await UpdateTerritoryControl(game);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
@@ -482,7 +484,7 @@ public class ManeuverController : ControllerBase
 
         return Ok();
     }
-    
+
     [HttpPost("{gameId}/toggle-hostility/{unitId}")]
     public async Task<IActionResult> ToggleHostility(Guid gameId, Guid unitId)
     {
@@ -506,14 +508,14 @@ public class ManeuverController : ControllerBase
         var nation = game.CurrentTurnNation;
         var nationState = game.NationStates.First(n => n.Nation == nation);
         if (nationState.ControllerId == null) return BadRequest("No controller for this nation.");
-        
+
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
         if (unit.Nation != nation) return BadRequest("You can only toggle hostility of your own units.");
 
         unit.IsHostile = !unit.IsHostile;
-        
+
         LogAction(game, $"toggled army in {unit.TerritoryId} to {(unit.IsHostile ? "Hostile" : "Friendly")}", "ToggleHostility", nation);
 
         await _context.SaveChangesAsync();
@@ -521,7 +523,7 @@ public class ManeuverController : ControllerBase
 
         return Ok();
     }
-    
+
     [HttpPost("{gameId}/destroy-factory")]
     public async Task<IActionResult> DestroyFactory(Guid gameId, [FromBody] DestroyFactoryRequest request)
     {
@@ -543,13 +545,13 @@ public class ManeuverController : ControllerBase
         var nation = game.CurrentTurnNation;
         var nationState = game.NationStates.First(n => n.Nation == nation);
         var controller = game.Players.FirstOrDefault(p => p.Id == nationState.ControllerId);
-        
+
         if (controller == null || controller.UserId != userId) return Forbid();
 
         // 2. Validate Territory & Factory
         var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.TerritoryId);
         if (territoryDef == null) return BadRequest("Invalid territory.");
-        
+
         var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == request.TerritoryId);
         if (tState == null || !tState.HasFactory) return BadRequest("No factory here.");
 
@@ -566,7 +568,7 @@ public class ManeuverController : ControllerBase
 
         // 6. Check 3 Armies provided
         if (request.UnitIds == null || request.UnitIds.Count != 3) return BadRequest("Must provide exactly 3 armies.");
-        
+
         var attackingUnits = new List<Unit>();
         foreach (var uid in request.UnitIds)
         {
@@ -585,11 +587,11 @@ public class ManeuverController : ControllerBase
         var defenderFactoryCount = 0;
         foreach (var ts in game.TerritoryStates.Where(s => s.HasFactory))
         {
-             var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-             if (def != null && def.Nation == defenderNation)
-             {
-                 defenderFactoryCount++;
-             }
+            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
+            if (def != null && def.Nation == defenderNation)
+            {
+                defenderFactoryCount++;
+            }
         }
 
         if (defenderFactoryCount <= 1) return BadRequest("Cannot destroy the last factory of a nation.");
@@ -618,7 +620,7 @@ public class ManeuverController : ControllerBase
     [HttpPost("{gameId}/next-phase")]
     public async Task<IActionResult> NextPhase(Guid gameId)
     {
-        try 
+        try
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
             var game = await _context.Games
@@ -631,14 +633,14 @@ public class ManeuverController : ControllerBase
 
             if (game == null) return NotFound();
             if (game.PendingBattleDefenders.Any()) return BadRequest("Cannot advance phase while a battle is pending.");
-            
+
             // Validate Control
             var nation = game.CurrentTurnNation;
             var nationState = game.NationStates.First(n => n.Nation == nation);
             var controller = game.Players.FirstOrDefault(p => p.Id == nationState.ControllerId);
-            
+
             if (controller == null || controller.UserId != userId) return Forbid();
-            
+
             // Resolve Battles First (Before Flags or Phase Change)
             // Fix: Do NOT auto-resolve battles for Fleets. Fleet battles are handled by MoveFleet/Battle endpoint.
             // Coexisting fleets should survive to next phase.
@@ -661,26 +663,26 @@ public class ManeuverController : ControllerBase
                     break;
                 case ManeuverPhase.Armies:
                     await UpdateTerritoryControl(game);
-                    game.CurrentManeuverPhase = ManeuverPhase.None; 
+                    game.CurrentManeuverPhase = ManeuverPhase.None;
                     break;
                 default:
                     return BadRequest("Invalid phase transition.");
             }
-        
-        LogAction(game, $"ended {oldPhase} maneuver phase", "NextPhase", nation);
 
-        await _context.SaveChangesAsync();
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-        
-        return Ok();
+            LogAction(game, $"ended {oldPhase} maneuver phase", "NextPhase", nation);
+
+            await _context.SaveChangesAsync();
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR] NextPhase Failed: {ex.Message}");
+            Console.WriteLine(ex.StackTrace);
+            return StatusCode(500, ex.Message);
+        }
     }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[ERROR] NextPhase Failed: {ex.Message}");
-        Console.WriteLine(ex.StackTrace);
-        return StatusCode(500, ex.Message);
-    }
-}
 
     [HttpPost("{gameId}/battle-response")]
     public async Task<IActionResult> BattleResponse(Guid gameId, [FromBody] BattleResponseRequest request)
@@ -741,7 +743,7 @@ public class ManeuverController : ControllerBase
             game.PendingBattleTerritoryId = null;
             game.PendingBattleAggressorNation = null;
             game.PendingBattleDefenders.Clear();
-            
+
             await UpdateTerritoryControl(game);
             // Advance Maneuver if applicable
             await TryAutoAdvanceManeuver(game, aggressorNation);
@@ -757,7 +759,7 @@ public class ManeuverController : ControllerBase
                 // Everyone agreed to peace
                 LogAction(game, $"All parties agreed to PEACE in {game.PendingBattleTerritoryId}.", "BattleResponse");
                 var aggressorNation = game.PendingBattleAggressorNation.Value;
-                
+
                 // Mark all units in the territory as peaceful
                 var peacefulUnits = game.Units.Where(u => u.TerritoryId == game.PendingBattleTerritoryId).ToList();
                 foreach (var pu in peacefulUnits)
@@ -773,7 +775,7 @@ public class ManeuverController : ControllerBase
                 await TryAutoAdvanceManeuver(game, aggressorNation);
             }
         }
-
+        await UpdateTerritoryControl(game);
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
@@ -817,7 +819,7 @@ public class ManeuverController : ControllerBase
     {
         // Automatic Flag Placement Logic
         var territoriesWithUnits = game.Units.Select(u => u.TerritoryId).Distinct().ToList();
-        
+
         foreach (var tId in territoriesWithUnits)
         {
             var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tId).ToList();
@@ -827,11 +829,22 @@ public class ManeuverController : ControllerBase
             if (unitsInTerritory.All(u => u.Nation == firstNation))
             {
                 var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tId);
-                
+
                 if (territoryDef != null)
                 {
                     // Use in-memory collection instead of N+1 database queries
-                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == tId);
+                    var states = game.TerritoryStates.Where(ts => ts.TerritoryId == tId).ToList();
+                    var tState = states.FirstOrDefault();
+
+                    if (states.Count > 1)
+                    {
+                        // Clean up duplicates caused by concurrent API calls
+                        for (int i = 1; i < states.Count; i++)
+                        {
+                            game.TerritoryStates.Remove(states[i]);
+                            _context.TerritoryStates.Remove(states[i]);
+                        }
+                    }
 
                     if (tState == null)
                     {
@@ -850,11 +863,11 @@ public class ManeuverController : ControllerBase
                     {
                         var oldController = tState.Controller;
                         tState.Controller = firstNation;
-                        
-                        string msg = oldController.HasValue 
+
+                        string msg = oldController.HasValue
                             ? $"took control of {territoryDef.Name} from {oldController.Value}"
                             : $"took control of {territoryDef.Name}";
-                            
+
                         LogAction(game, msg, "FlagPlacement", firstNation);
                     }
                 }
@@ -876,7 +889,7 @@ public class ManeuverController : ControllerBase
         foreach (var tId in potentialBattlegrounds)
         {
             var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tId).ToList();
-            
+
             var activeUnits = unitsInTerritory.Where(u => u.Nation == activeNation).ToList();
             var hostileUnits = unitsInTerritory.Where(u => u.Nation != activeNation && u.IsHostile).ToList();
 
@@ -895,7 +908,7 @@ public class ManeuverController : ControllerBase
                 context.Units.Remove(enemyUnit);
                 hostileUnits.Remove(enemyUnit);
                 game.Units.Remove(enemyUnit);
-                
+
                 Console.WriteLine($"[Battle] Resolved 1:1 in {tId}");
             }
         }

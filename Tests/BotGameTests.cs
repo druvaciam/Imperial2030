@@ -657,5 +657,154 @@ namespace Imperial2030.Tests
             _output.WriteLine($"RL Bot Win Rate: {rlWins}/{totalGames} ({winRate}%)");
             Assert.True(winRate >= 25);
         }
+
+        [Fact]
+        public async Task TestDynamicTerritoryControlUpdate()
+        {
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            var mockClientProxy = new Mock<IClientProxy>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var mockServiceProvider = new Mock<IServiceProvider>();
+                var scopeContext = GetDbContext(dbName);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                return scope.Object;
+            });
+
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
+
+            var maneuverController = new ManeuverController(context, mockHub.Object, botService);
+
+            var userId = "test-user-id";
+            var httpContext = new DefaultHttpContext();
+            var claims = new List<Claim> { new Claim(ClaimTypes.NameIdentifier, userId) };
+            var identity = new ClaimsIdentity(claims, "TestAuthType");
+            httpContext.User = new ClaimsPrincipal(identity);
+            maneuverController.ControllerContext = new ControllerContext(new ActionContext(httpContext, new Microsoft.AspNetCore.Routing.RouteData(), new Microsoft.AspNetCore.Mvc.Controllers.ControllerActionDescriptor()));
+
+            var gameId = Guid.NewGuid();
+            var player = new Player { Id = Guid.NewGuid(), UserId = userId, IsHost = true };
+            var game = new Game
+            {
+                Id = gameId,
+                Name = "Test Game",
+                Status = GameStatus.InProgress,
+                CurrentTurnNation = Nation.China,
+                CurrentManeuverPhase = ManeuverPhase.Armies,
+                Players = new List<Player> { player },
+                NationStates = new List<NationState>
+                {
+                    new NationState { Nation = Nation.China, ControllerId = player.Id },
+                    new NationState { Nation = Nation.Europe, ControllerId = player.Id }
+                }
+            };
+            context.Games.Add(game);
+
+            var chinaArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.China, UnitType = UnitType.Army, TerritoryId = "NearEast" };
+            var euArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Europe, UnitType = UnitType.Army, TerritoryId = "NearEast" };
+            context.Units.Add(chinaArmy);
+            context.Units.Add(euArmy);
+
+            // Set initial territory state (China flag)
+            var ts = new TerritoryState { GameId = gameId, TerritoryId = "NearEast", Controller = Nation.China };
+            context.TerritoryStates.Add(ts);
+
+            await context.SaveChangesAsync();
+
+            // Act: Move China Army OUT of Near East
+            var req = new MoveUnitRequest { UnitId = chinaArmy.Id, DestinationId = "Turkey" };
+            var result = await maneuverController.MoveArmy(gameId, req);
+
+            Assert.IsType<OkResult>(result);
+
+            // Assert: Near East flag should immediately become Europe
+            var updatedTs = await context.TerritoryStates.FirstOrDefaultAsync(t => t.TerritoryId == "NearEast");
+            Assert.NotNull(updatedTs);
+            Assert.Equal(Nation.Europe, updatedTs.Controller);
+        }
+
+        [Fact]
+        public async Task TestTerritoryControlUpdateWhenMovingIntoEmptyFlaggedTerritory()
+        {
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            var mockClientProxy = new Mock<IClientProxy>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var mockServiceProvider = new Mock<IServiceProvider>();
+                var scopeContext = GetDbContext(dbName);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                return scope.Object;
+            });
+
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
+
+            var maneuverController = new ManeuverController(context, mockHub.Object, botService);
+
+            var userId = "test-user-id";
+            var httpContext = new DefaultHttpContext();
+            var claims = new List<Claim> { new Claim(ClaimTypes.NameIdentifier, userId) };
+            var identity = new ClaimsIdentity(claims, "TestAuthType");
+            httpContext.User = new ClaimsPrincipal(identity);
+            maneuverController.ControllerContext = new ControllerContext(new ActionContext(httpContext, new Microsoft.AspNetCore.Routing.RouteData(), new Microsoft.AspNetCore.Mvc.Controllers.ControllerActionDescriptor()));
+
+            var gameId = Guid.NewGuid();
+            var player = new Player { Id = Guid.NewGuid(), UserId = userId, IsHost = true };
+            var game = new Game
+            {
+                Id = gameId,
+                Name = "Test Game",
+                Status = GameStatus.InProgress,
+                CurrentTurnNation = Nation.Europe, // Europe's turn
+                CurrentManeuverPhase = ManeuverPhase.Armies,
+                Players = new List<Player> { player },
+                NationStates = new List<NationState>
+                {
+                    new NationState { Nation = Nation.China, ControllerId = player.Id },
+                    new NationState { Nation = Nation.Europe, ControllerId = player.Id }
+                }
+            };
+            context.Games.Add(game);
+
+            // EU Army is in Turkey, and will move to NearEast
+            var euArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Europe, UnitType = UnitType.Army, TerritoryId = "Turkey" };
+            context.Units.Add(euArmy);
+
+            // Set initial territory state for NearEast (China flag, NO armies)
+            var ts = new TerritoryState { GameId = gameId, TerritoryId = "NearEast", Controller = Nation.China };
+            context.TerritoryStates.Add(ts);
+
+            await context.SaveChangesAsync();
+
+            // Act: Move EU Army from Turkey INTO Near East
+            var req = new MoveUnitRequest { UnitId = euArmy.Id, DestinationId = "NearEast", IsHostile = false };
+            var result = await maneuverController.MoveArmy(gameId, req);
+
+            Assert.IsType<OkResult>(result);
+
+            // Assert: Near East flag should immediately become Europe
+            var updatedTs = await context.TerritoryStates.FirstOrDefaultAsync(t => t.TerritoryId == "NearEast");
+            Assert.NotNull(updatedTs);
+            Assert.Equal(Nation.Europe, updatedTs.Controller);
+        }
     }
 }

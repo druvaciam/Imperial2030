@@ -65,17 +65,31 @@ public class BotService
                     var actor = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId);
                     if (actor != null && actor.IsBot)
                     {
-                        await BotInvestorAction(ctx, game, actor);
-                        await ctx.SaveChangesAsync();
-                        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                        if (!SkipDelays) await Task.Delay(2500);
-                        botActed = true;
+                        try
+                        {
+                            await BotInvestorAction(ctx, game, actor);
+                            await ctx.SaveChangesAsync();
+                            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                            if (!SkipDelays) await Task.Delay(2500);
+                            botActed = true;
+                        }
+                        catch (Bots.Strategies.RlTrainingPauseException)
+                        {
+                            break;
+                        }
                     }
                 }
                 else if (game.PendingBattleDefenders.Any())
                 {
-                    await HandleBotBattleResponse(ctx, game);
-                    botActed = true;
+                    try
+                    {
+                        await HandleBotBattleResponse(ctx, game);
+                        botActed = true;
+                    }
+                    catch (Bots.Strategies.RlTrainingPauseException)
+                    {
+                        break; // Pause loop so RL Python env can fetch state
+                    }
                 }
                 else
                 {
@@ -90,7 +104,7 @@ public class BotService
                                 await ExecuteBotTurn(ctx, game, nationState, controller);
                                 botActed = true;
                             }
-                            catch (Imperial2030.Server.Services.Bots.Strategies.RlTrainingPauseException)
+                            catch (Bots.Strategies.RlTrainingPauseException)
                             {
                                 // Pause the game loop so the Training Controller can fetch the next action from Python
                                 break;
@@ -182,13 +196,13 @@ public class BotService
 
             await ctx.SaveChangesAsync();
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-            
+
             if (game.IsInvestorTurn)
             {
                 // Pause Bot turn until Investor Phase resolves
                 return;
             }
-            
+
             if (!SkipDelays) await Task.Delay(2200);
 
             // Reload game state since we might have waited
@@ -269,7 +283,7 @@ public class BotService
             }
 
             if (moveCost > controller.Cash) continue;
-            
+
             // Prevent useless Import if treasury is 0
             if (slot == 4 && ns.Treasury == 0) continue;
 
@@ -467,18 +481,48 @@ public class BotService
                 fleet.HasMoved = true;
                 fleet.IsHostile = isHostileMove;
 
-                if (hasEnemy && isHostileMove)
+                if (hasEnemy)
                 {
-                    var enemyFleet = game.Units.FirstOrDefault(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
-                    if (enemyFleet != null)
+                    var foreignDefenders = game.Units
+                        .Where(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation))
+                        .Where(u => u.UnitType == UnitType.Fleet || (isForeignHome && def != null && u.Nation == def.Nation.Value && isHostileMove))
+                        .Select(u => u.Nation)
+                        .Distinct()
+                        .ToList();
+
+                    if (foreignDefenders.Any())
                     {
-                        var enemyNation = enemyFleet.Nation;
-                        ctx.Units.Remove(fleet);
-                        ctx.Units.Remove(enemyFleet);
-                        game.Units.Remove(fleet);
-                        game.Units.Remove(enemyFleet);
-                        LogAction(ctx, game, $"fleet attacked {enemyNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
-                        continue;
+                        if (isHostileMove && foreignDefenders.Count == 1)
+                        {
+                            var targetNation = foreignDefenders.First();
+                            var enemyFleet = game.Units.FirstOrDefault(u => u.TerritoryId == target && u.Nation == targetNation &&
+                                (u.UnitType == UnitType.Fleet || (isForeignHome && def != null && u.Nation == def.Nation.Value)));
+
+                            if (enemyFleet != null)
+                            {
+                                ctx.Units.Remove(fleet);
+                                ctx.Units.Remove(enemyFleet);
+                                game.Units.Remove(fleet);
+                                game.Units.Remove(enemyFleet);
+                                LogAction(ctx, game, $"fleet attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            // Trigger Negotiation Phase
+                            game.PendingBattleTerritoryId = target;
+                            game.PendingBattleAggressorNation = nation;
+                            game.PendingBattleDefenders = foreignDefenders.ToList();
+
+                            string peaceOrHostile = isHostileMove ? "hostilely" : "peacefully";
+                            LogAction(ctx, game, $"fleet moved {peaceOrHostile} to {targetName} from {originName}, awaiting response from {string.Join(", ", foreignDefenders)}", "MoveFleet", nation, controller.BotName ?? "Bot");
+                            // Update territory control before pausing
+                            await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
+
+                            // Exit BotManeuverFleets and pause the turn to await responses
+                            return; 
+                        }
                     }
                 }
 
@@ -588,20 +632,48 @@ public class BotService
                     }
                 }
 
-                if (hasEnemy && isHostileMove)
+                if (hasEnemy)
                 {
-                    var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == best && !friendlyNations.Contains(u.Nation) &&
-                        (u.UnitType == UnitType.Army || (isForeignHome && def != null && u.Nation == def.Nation.Value)));
-                        
-                    if (enemyUnit != null)
+                    var foreignDefenders = game.Units
+                        .Where(u => u.TerritoryId == best && !friendlyNations.Contains(u.Nation))
+                        .Where(u => u.UnitType == UnitType.Army || (isForeignHome && def != null && u.Nation == def.Nation.Value && isHostileMove))
+                        .Select(u => u.Nation)
+                        .Distinct()
+                        .ToList();
+
+                    if (foreignDefenders.Any())
                     {
-                        var enemyNation = enemyUnit.Nation;
-                        ctx.Units.Remove(army);
-                        ctx.Units.Remove(enemyUnit);
-                        game.Units.Remove(army);
-                        game.Units.Remove(enemyUnit);
-                        LogAction(ctx, game, $"army attacked {enemyNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
-                        continue;
+                        if (isHostileMove && foreignDefenders.Count == 1)
+                        {
+                            var targetNation = foreignDefenders.First();
+                            var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == best && u.Nation == targetNation &&
+                                (u.UnitType == UnitType.Army || (isForeignHome && def != null && u.Nation == def.Nation.Value)));
+
+                            if (enemyUnit != null)
+                            {
+                                ctx.Units.Remove(army);
+                                ctx.Units.Remove(enemyUnit);
+                                game.Units.Remove(army);
+                                game.Units.Remove(enemyUnit);
+                                LogAction(ctx, game, $"army attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            // Trigger Negotiation Phase
+                            game.PendingBattleTerritoryId = best;
+                            game.PendingBattleAggressorNation = nation;
+                            game.PendingBattleDefenders = foreignDefenders.ToList();
+
+                            string peaceOrHostile = isHostileMove ? "hostilely" : "peacefully";
+                            LogAction(ctx, game, $"army moved {peaceOrHostile} to {targetName} from {originName}, awaiting response from {string.Join(", ", foreignDefenders)}", "MoveArmy", nation, controller.BotName ?? "Bot");
+                            // Update territory control before pausing
+                            await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
+
+                            // Exit BotManeuver and pause the turn to await responses
+                            return; 
+                        }
                     }
                 }
 
@@ -630,7 +702,18 @@ public class BotService
 
                 if (territoryDef != null)
                 {
-                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == tId);
+                    var states = game.TerritoryStates.Where(ts => ts.TerritoryId == tId).ToList();
+                    var tState = states.FirstOrDefault();
+
+                    if (states.Count > 1)
+                    {
+                        // Clean up duplicates caused by concurrent API calls
+                        for (int i = 1; i < states.Count; i++)
+                        {
+                            game.TerritoryStates.Remove(states[i]);
+                            ctx.TerritoryStates.Remove(states[i]);
+                        }
+                    }
 
                     if (tState == null)
                     {
@@ -803,6 +886,8 @@ public class BotService
                 }
             }
         }
+
+        await BotUpdateTerritoryControl(ctx, game, "System");
 
         if (!game.PendingBattleDefenders.Any())
         {
