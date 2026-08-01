@@ -34,14 +34,14 @@ public static class MapConnectivity
 
         // --- EUROPE ---
         { "London", new List<string> { "NorthAtlantic" } },
-        { "Paris", new List<string> { "Berlin", "Rome", "MediterraneanSea", "NorthAtlantic" } }, 
-        { "Rome", new List<string> { "Paris", "Berlin", "MediterraneanSea", "Turkey" } }, 
-        { "Berlin", new List<string> { "Paris", "Rome", "Ukraine", "NorthAtlantic", "Murmansk" } }, 
-        { "Ukraine", new List<string> { "Moscow", "Berlin" } },
+        { "Paris", new List<string> { "Berlin", "Rome", "MediterraneanSea", "NorthAtlantic" } },
+        { "Rome", new List<string> { "Paris", "Berlin", "MediterraneanSea", "Turkey", "Ukraine" } },
+        { "Berlin", new List<string> { "Paris", "Rome", "Ukraine", "NorthAtlantic", "Murmansk" } },
+        { "Ukraine", new List<string> { "Moscow", "Berlin", "Murmansk", "Rome" } },
         
         // --- RUSSIA & ASIA ---
         { "Moscow", new List<string> { "Ukraine", "Novosibirsk", "Murmansk", "Kazakhstan", "Turkey", "Iran" } },
-        { "Murmansk", new List<string> { "Moscow", "Novosibirsk", "NorthAtlantic", "Berlin" } },
+        { "Murmansk", new List<string> { "Moscow", "Novosibirsk", "NorthAtlantic", "Berlin", "Ukraine" } },
         { "Novosibirsk", new List<string> { "Moscow", "Murmansk", "Vladivostok", "Kazakhstan", "Mongolia" } },
         { "Vladivostok", new List<string> { "Novosibirsk", "Mongolia", "Beijing", "SeaOfJapan", "Korea" } },
         { "Mongolia", new List<string> { "Novosibirsk", "Vladivostok", "Beijing", "Urumqi", "Kazakhstan" } },
@@ -92,18 +92,20 @@ public static class MapConnectivity
         if (!isFleet)
         {
             // Army: Only Land neighbors
-            return neighbors.Where(n => {
-                 var t = TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == n);
-                 return t != null && t.Type == Shared.Models.TerritoryType.Land;
+            return neighbors.Where(n =>
+            {
+                var t = TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == n);
+                return t != null && t.Type == Shared.Models.TerritoryType.Land;
             });
         }
         else
         {
             // Fleet: Can ONLY move to Sea regions
             // (Whether starting from Land/Port or Sea, destination must be Sea)
-            return neighbors.Where(n => {
-                 var t = TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == n);
-                 return t != null && t.Type == Shared.Models.TerritoryType.Sea;
+            return neighbors.Where(n =>
+            {
+                var t = TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == n);
+                return t != null && t.Type == Shared.Models.TerritoryType.Sea;
             });
         }
     }
