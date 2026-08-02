@@ -27,7 +27,38 @@ public class RLBotStrategy : BotStrategyBase
 
     private static InferenceSession? _onnxSession;
 
-    public static readonly int StateSize = 600;
+    public static readonly int StateSize = 3164;
+
+    // Fixed ordered territory lists for map encoding
+    public static readonly string[] HomeProvinceIds = new[]
+    {
+        "Moscow", "Vladivostok", "Murmansk", "Novosibirsk",
+        "Beijing", "Shanghai", "Chongqing", "Urumqi",
+        "NewDelhi", "Mumbai", "Kolkata", "Chennai",
+        "Brasilia", "RioDeJaneiro", "Manaus", "Fortaleza",
+        "NewYork", "SanFrancisco", "NewOrleans", "Chicago",
+        "Berlin", "London", "Paris", "Rome"
+    };
+
+    public static readonly string[] NeutralLandIds = new[]
+    {
+        "Ukraine", "Korea", "Mongolia", "Kazakhstan",
+        "Japan", "Turkey", "Guinea", "Quebec", "Mexico",
+        "Colombia", "Afghanistan", "Alaska", "Canada", "Peru",
+        "Argentina", "Iran", "North-Africa", "Nigeria", "Congo",
+        "South-Africa", "East-Africa", "NearEast", "Indochina",
+        "Indonesia", "Philippines", "Australia", "NewZealand"
+    };
+
+    public static readonly string[] SeaZoneIds = new[]
+    {
+        "MediterraneanSea", "NorthAtlantic", "GulfOfGuinea",
+        "NorthPacific", "SouthPacific", "SouthAtlantic",
+        "CaribbeanSea", "SeaOfJapan", "ChinaSea",
+        "TasmanSea", "IndianOcean"
+    };
+
+    public static readonly string[] AllManeuverTerritories = HomeProvinceIds.Concat(NeutralLandIds).Concat(SeaZoneIds).ToArray();
 
     static RLBotStrategy()
     {
@@ -91,7 +122,7 @@ public class RLBotStrategy : BotStrategyBase
         return -100; // Don't pick this
     }
 
-    private float[] GetStateVector(Game game, Player rlPlayer)
+    private float[] GetStateVector(Game game, Player rlPlayer, string? maneuverSelectedTerritoryId = null)
     {
         float[] state = new float[StateSize];
         if (rlPlayer == null) return state;
@@ -152,10 +183,11 @@ public class RLBotStrategy : BotStrategyBase
                         state[i++] = (tData.CityType == CityType.Brown) ? 1.0f : 0.0f; // Is Brown (0 means Blue)
                         state[i++] = hasFactory ? 1.0f : 0.0f; // Is Built
                         state[i++] = isOccupied ? 1.0f : 0.0f; // Occupied
+                        state[i++] = (ns.ControllerId == rlPlayer.Id) ? 1.0f : 0.0f; // Owned by Me
                     }
                     else
                     {
-                        for (int j = 0; j < 3; j++) state[i++] = 0;
+                        for (int j = 0; j < 4; j++) state[i++] = 0;
                     }
                 }
 
@@ -183,7 +215,7 @@ public class RLBotStrategy : BotStrategyBase
                 state[i++] = 0;
                 state[i++] = -1.0f; // NEW: Rondel Position
                 for (int j = 0; j < 63; j++) state[i++] = 0; // Bond binary parameters
-                for (int j = 0; j < 12; j++) state[i++] = 0; // Territory states
+                for (int j = 0; j < 16; j++) state[i++] = 0; // Territory states
                 state[i++] = 0;
                 state[i++] = 0;
                 state[i++] = 0;
@@ -302,7 +334,95 @@ public class RLBotStrategy : BotStrategyBase
             state[i++] = 0f;
         }
 
+        // === MAP ENCODING (2330 floats) ===
+        EncodeMapState(game, imperial2030Nations, ref i, state);
+
+        // === MANEUVER CONTEXT (66 floats) ===
+        // 1. Maneuver Selected Territory (63 floats: 62 territories + 1 None)
+        for (int idx = 0; idx < AllManeuverTerritories.Length; idx++)
+        {
+            state[i++] = (maneuverSelectedTerritoryId == AllManeuverTerritories[idx]) ? 1.0f : 0.0f;
+        }
+        state[i++] = maneuverSelectedTerritoryId == null ? 1.0f : 0.0f;
+
+        // 2. Current Maneuver Phase (3 floats: None, Fleets, Armies)
+        state[i++] = game.CurrentManeuverPhase == ManeuverPhase.None ? 1.0f : 0.0f;
+        state[i++] = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? 1.0f : 0.0f;
+        state[i++] = game.CurrentManeuverPhase == ManeuverPhase.Armies ? 1.0f : 0.0f;
+
         return state;
+    }
+
+    private static void EncodeUnitCount(int count, float[] state, ref int i)
+    {
+        // 4-bit thermometer: [1,0,0,0]=1, [0,1,0,0]=2, [0,0,1,0]=3, [0,0,0,1]=4+
+        state[i++] = count == 1 ? 1f : 0f;
+        state[i++] = count == 2 ? 1f : 0f;
+        state[i++] = count == 3 ? 1f : 0f;
+        state[i++] = count >= 4 ? 1f : 0f;
+    }
+
+    private static void EncodeFlagControl(Nation? controller, Nation[] nations, float[] state, ref int i)
+    {
+        // 7-float one-hot: 6 nations + 1 Uncontrolled
+        foreach (var n in nations)
+            state[i++] = (controller.HasValue && controller.Value == n) ? 1f : 0f;
+        state[i++] = !controller.HasValue ? 1f : 0f; // Uncontrolled
+    }
+
+    private void EncodeMapState(Game game, Nation[] nations, ref int i, float[] state)
+    {
+        // 1. Home Provinces (24 × 54 = 1296 floats)
+        foreach (var tId in HomeProvinceIds)
+        {
+            // Armies per nation (6 × 5 = 30)
+            foreach (var n in nations)
+            {
+                var armies = game.Units.Where(u => u.TerritoryId == tId && u.Nation == n && u.UnitType == UnitType.Army).ToList();
+                int armyCount = armies.Count;
+                EncodeUnitCount(armyCount, state, ref i);
+                
+                // Add 1 float for IsHostile presence
+                bool hasHostile = armies.Any(a => a.IsHostile);
+                state[i++] = hasHostile ? 1.0f : 0.0f;
+            }
+            // Fleets per nation (6 × 4 = 24) — resting in shipyards
+            foreach (var n in nations)
+            {
+                int fleetCount = game.Units.Count(u => u.TerritoryId == tId && u.Nation == n && u.UnitType == UnitType.Fleet);
+                EncodeUnitCount(fleetCount, state, ref i);
+            }
+        }
+
+        // 2. Neutral Land Territories (27/28 × 31 = 837/868 floats)
+        foreach (var tId in NeutralLandIds)
+        {
+            // Armies per nation (6 × 4 = 24)
+            foreach (var n in nations)
+            {
+                int armyCount = game.Units.Count(u => u.TerritoryId == tId && u.Nation == n && u.UnitType == UnitType.Army);
+                EncodeUnitCount(armyCount, state, ref i);
+            }
+            // Flag control (7)
+            var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == tId);
+            Nation? controller = ts?.Controller;
+            EncodeFlagControl(controller, nations, state, ref i);
+        }
+
+        // 3. Sea Zones (11 × 31 = 341 floats)
+        foreach (var tId in SeaZoneIds)
+        {
+            // Fleets per nation (6 × 4 = 24)
+            foreach (var n in nations)
+            {
+                int fleetCount = game.Units.Count(u => u.TerritoryId == tId && u.Nation == n && u.UnitType == UnitType.Fleet);
+                EncodeUnitCount(fleetCount, state, ref i);
+            }
+            // Flag control (7)
+            var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == tId);
+            Nation? controller = ts?.Controller;
+            EncodeFlagControl(controller, nations, state, ref i);
+        }
     }
 
     public override bool RetreatFromBattle(Game game, PendingBattle battle)

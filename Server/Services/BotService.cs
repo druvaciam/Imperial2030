@@ -3,6 +3,7 @@ using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 using Imperial2030.Server.Services.Bots;
+using Imperial2030.Server.Services.Bots.Strategies;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
@@ -22,13 +23,14 @@ public class BotService
         _botStrategies = botStrategies;
     }
 
-    private Bots.IBotStrategy GetStrategy(Player player)
+    public Bots.IBotStrategy GetStrategy(Player player)
     {
         var type = player.BotType ?? "Default";
         return _botStrategies.FirstOrDefault(s => s.Name.Equals(type, StringComparison.OrdinalIgnoreCase))
                ?? _botStrategies.FirstOrDefault(s => s.Name == "Default")
                ?? new Bots.Strategies.DefaultBotStrategy(); // Fallback if not registered
     }
+
     public void TriggerBotTurn(Guid gameId, int delayMs = 2500)
     {
         _ = Task.Run(async () =>
@@ -233,8 +235,8 @@ public class BotService
         await ctx.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
-        // If not taxation (which auto-advances), end turn
-        if (targetSlot != 0 && game.Status == GameStatus.InProgress)
+        // If not taxation (which auto-advances) and not in maneuver, end turn
+        if (targetSlot != 0 && game.Status == GameStatus.InProgress && game.CurrentManeuverPhase == ManeuverPhase.None)
         {
             if (!SkipDelays) await Task.Delay(2000);
             game = await LoadGame(ctx, gameId);
@@ -398,6 +400,13 @@ public class BotService
 
     private async Task BotManeuver(ApplicationDbContext ctx, Game game, NationState ns, Player controller)
     {
+        var strategy = GetStrategy(controller);
+        if (strategy is RLBotStrategy && RLBotStrategy.TrainingActionOverride.Value.HasValue)
+        {
+            // During training, TcpTrainingServer handles maneuver directly step-by-step
+            return;
+        }
+
         var nation = ns.Nation;
         // Find nations controlled by same bot player
         var friendlyNations = game.NationStates.Where(n => n.ControllerId == controller.Id).Select(n => n.Nation).ToHashSet();

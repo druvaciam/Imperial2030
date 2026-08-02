@@ -16,11 +16,11 @@ class ImperialEnv(gym.Env):
         
         self._connect_socket()
         
-        # Actions: 0-6=Rondel, 7=Fight, 8=Retreat, 9-62=BuyBond(Nation 0-5, Cost 0-8), 63=Pass
-        self.action_space = spaces.Discrete(64)
+        # Actions: 0-6=Rondel, 7=Fight, 8=Retreat, 9-62=BuyBond, 63=Pass, 64-125=Maneuver Select, 126=Maneuver DoNotMove, 127-188=Maneuver Move
+        self.action_space = spaces.Discrete(189)
         
-        # State: 600 floats
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(600,), dtype=np.float32)
+        # State: 3164 floats
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(3164,), dtype=np.float32)
 
     def _connect_socket(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

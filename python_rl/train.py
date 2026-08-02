@@ -56,13 +56,13 @@ if __name__ == "__main__":
         # We must disable training mode when not training, but here we ARE training
         vec_env.training = True
         custom_objects = {
-            "learning_rate": linear_schedule(1e-4, 1e-5),
-            "n_steps": 4096,
-            "batch_size": 256,
+            "learning_rate": linear_schedule(5e-5, 1e-5),
+            "n_steps": 8192,
+            "batch_size": 512,
             "clip_range": 0.2,
             "ent_coef": 0.03,
             "gamma": 0.995,
-            "n_epochs": 5,
+            "n_epochs": 10,
             "max_grad_norm": 0.5,
         }
         model = MaskablePPO.load(MODEL_PATH, env=vec_env, custom_objects=custom_objects, verbose=1)
@@ -73,8 +73,8 @@ if __name__ == "__main__":
         
         policy_kwargs = dict(
             net_arch=dict(
-                pi=[512, 512],
-                vf=[512, 512],
+                pi=[1024, 512],
+                vf=[1024, 512, 256],
             )
         )
         
@@ -82,13 +82,13 @@ if __name__ == "__main__":
             "MlpPolicy", 
             vec_env, 
             policy_kwargs=policy_kwargs, 
-            learning_rate=linear_schedule(1e-4, 1e-5),
-            n_steps=4096,
-            batch_size=256,
+            learning_rate=linear_schedule(5e-5, 1e-5),
+            n_steps=8192,
+            batch_size=512,
             clip_range=0.2,
             ent_coef=0.03,           # Balanced exploration for 64-action masked space
             gamma=0.995,
-            n_epochs=5,
+            n_epochs=10,
             max_grad_norm=0.5,
             verbose=1
         )
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     TOTAL_TIMESTEPS = 2000000
     
     save_callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
-    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=0.03, final_ent_coef=0.001, total_timesteps=TOTAL_TIMESTEPS)
+    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=0.025, final_ent_coef=0.005, total_timesteps=TOTAL_TIMESTEPS)
     
     callback = CallbackList([save_callback, ent_coef_callback])
     
