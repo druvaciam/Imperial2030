@@ -30,6 +30,7 @@ public class TcpTrainingServer : BackgroundService
     {
         public Guid GameId { get; set; }
         public Guid RLPlayerId { get; set; }
+        public string? ManeuverSelectedTerritoryId { get; set; } // Non-null when in Stage 2
     }
 
     public class TcpRequest
@@ -399,7 +400,7 @@ public class TcpTrainingServer : BackgroundService
         _sessions[sessionId] = new TrainingSession { GameId = gameId, RLPlayerId = rlPlayer.Id };
 
         var state = GetStateVector(_context, gameId, rlPlayer.Id);
-        var mask = GetActionMask(_context, gameId, rlPlayer.Id);
+        var mask = GetActionMask(_context, gameId, _sessions[sessionId]);
 
         return new ResetResponse { SessionId = sessionId, State = state, ActionMask = mask };
     }
@@ -425,10 +426,94 @@ public class TcpTrainingServer : BackgroundService
         bool wasRondelTurn = !game.IsInvestorTurn && !game.PendingBattleDefenders.Any()
                              && preNs != null && preNs.ControllerId == session.RLPlayerId;
 
-        RLBotStrategy.TrainingActionOverride.Value = req.Action;
-        _botService.SkipDelays = true;
-        await _botService.TryPlayBotTurnAsync(game.Id, singleTurnOnly: true);
-        RLBotStrategy.TrainingActionOverride.Value = null; // Clean up
+        bool wasManeuverAction = false;
+        if (req.Action == 63 && game.CurrentManeuverPhase != ManeuverPhase.None)
+        {
+            wasManeuverAction = true;
+            // Pass Maneuver
+            if (game.CurrentManeuverPhase == ManeuverPhase.Fleets) game.CurrentManeuverPhase = ManeuverPhase.Armies;
+            else game.CurrentManeuverPhase = ManeuverPhase.None;
+            
+            session.ManeuverSelectedTerritoryId = null;
+        }
+        else if (req.Action >= 64 && req.Action <= 125)
+        {
+            wasManeuverAction = true;
+            // Stage 1: Select Unit Territory
+            int idx = req.Action - 64;
+            if (idx >= 0 && idx < RLBotStrategy.AllManeuverTerritories.Length)
+            {
+                session.ManeuverSelectedTerritoryId = RLBotStrategy.AllManeuverTerritories[idx];
+            }
+        }
+        else if (req.Action >= 126 && req.Action <= 188)
+        {
+            wasManeuverAction = true;
+            // Stage 2: Select Destination
+            var unitType = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? UnitType.Fleet : UnitType.Army;
+            var unit = game.Units.FirstOrDefault(u => u.TerritoryId == session.ManeuverSelectedTerritoryId && u.UnitType == unitType && u.Nation == game.CurrentTurnNation && !u.HasMoved);
+            
+            if (unit != null)
+            {
+                unit.HasMoved = true;
+                if (req.Action != 126) // Not "Do Not Move"
+                {
+                    int destIdx = req.Action - 127;
+                    if (destIdx >= 0 && destIdx < RLBotStrategy.AllManeuverTerritories.Length)
+                    {
+                        var target = RLBotStrategy.AllManeuverTerritories[destIdx];
+                        
+                        var friendlyNations = game.NationStates.Where(n => n.ControllerId == session.RLPlayerId).Select(n => n.Nation).ToHashSet();
+                        bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
+                        var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
+                        bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
+
+                        var strategy = _botService.GetStrategy(player);
+                        bool isHostileMove = strategy.DetermineHostility(hasEnemy, isForeignHome);
+
+                        unit.TerritoryId = target;
+                        unit.IsHostile = isHostileMove;
+
+                        var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == target && u.UnitType == unit.UnitType && !friendlyNations.Contains(u.Nation));
+                        if (enemyUnit != null && isHostileMove)
+                        {
+                            _context.Units.Remove(unit);
+                            _context.Units.Remove(enemyUnit);
+                            game.Units.Remove(unit);
+                            game.Units.Remove(enemyUnit);
+                        }
+                    }
+                }
+            }
+            session.ManeuverSelectedTerritoryId = null;
+        }
+        else
+        {
+            // Base Actions (0-63)
+            RLBotStrategy.TrainingActionOverride.Value = req.Action;
+            _botService.SkipDelays = true;
+            await _botService.TryPlayBotTurnAsync(game.Id, singleTurnOnly: true);
+            RLBotStrategy.TrainingActionOverride.Value = null;
+        }
+
+        // Auto-advance maneuver phase logic
+        if (game.CurrentManeuverPhase == ManeuverPhase.Fleets)
+        {
+            bool hasFleets = game.Units.Any(u => u.Nation == game.CurrentTurnNation && u.UnitType == UnitType.Fleet && !u.HasMoved);
+            if (!hasFleets) game.CurrentManeuverPhase = ManeuverPhase.Armies;
+        }
+        if (game.CurrentManeuverPhase == ManeuverPhase.Armies)
+        {
+            bool hasArmies = game.Units.Any(u => u.Nation == game.CurrentTurnNation && u.UnitType == UnitType.Army && !u.HasMoved);
+            if (!hasArmies) game.CurrentManeuverPhase = ManeuverPhase.None;
+        }
+        
+        // If we were manually stepping through maneuver, and the maneuver phase just ended, we must advance the turn
+        if (wasManeuverAction && game.CurrentManeuverPhase == ManeuverPhase.None && game.Status == GameStatus.InProgress)
+        {
+            var nationState = game.NationStates.First(ns => ns.Nation == game.CurrentTurnNation);
+            game.AdvanceTurn();
+        }
 
         await _context.SaveChangesAsync();
 
@@ -531,10 +616,10 @@ public class TcpTrainingServer : BackgroundService
             _context.Games.Remove(game);
             await _context.SaveChangesAsync();
 
-            return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[64] };
+            return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[189] };
         }
 
-        return new StepResponse { State = GetStateVector(_context, game.Id, session.RLPlayerId), Reward = reward, Done = false, ActionMask = GetActionMask(_context, game.Id, session.RLPlayerId) };
+        return new StepResponse { State = GetStateVector(_context, game.Id, session.RLPlayerId, session.ManeuverSelectedTerritoryId), Reward = reward, Done = false, ActionMask = GetActionMask(_context, game.Id, session) };
     }
 
     private async Task<bool> AdvanceUntilRLTurn(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId)
@@ -639,7 +724,7 @@ public class TcpTrainingServer : BackgroundService
         return score;
     }
 
-    private float[] GetStateVector(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId)
+    private float[] GetStateVector(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId, string? maneuverSelectedTerritoryId = null)
     {
         float[] state = new float[RLBotStrategy.StateSize];
 
@@ -709,10 +794,11 @@ public class TcpTrainingServer : BackgroundService
                         state[i++] = (tData.CityType == CityType.Brown) ? 1.0f : 0.0f; // Is Brown (0 means Blue)
                         state[i++] = hasFactory ? 1.0f : 0.0f; // Is Built
                         state[i++] = isOccupied ? 1.0f : 0.0f; // Occupied
+                        state[i++] = (ns.ControllerId == rlPlayerId) ? 1.0f : 0.0f; // Owned by Me
                     }
                     else
                     {
-                        for (int j = 0; j < 3; j++) state[i++] = 0;
+                        for (int j = 0; j < 4; j++) state[i++] = 0;
                     }
                 }
 
@@ -738,9 +824,9 @@ public class TcpTrainingServer : BackgroundService
             {
                 state[i++] = 0;
                 state[i++] = 0;
-                state[i++] = -1.0f;
+                state[i++] = -1.0f; // NEW: Rondel Position
                 for (int j = 0; j < 63; j++) state[i++] = 0; // Bond binary parameters
-                for (int j = 0; j < 12; j++) state[i++] = 0; // Territory states
+                for (int j = 0; j < 16; j++) state[i++] = 0; // Territory states (4 territories * 4 floats)
                 state[i++] = 0;
                 state[i++] = 0;
                 state[i++] = 0;
@@ -860,12 +946,90 @@ public class TcpTrainingServer : BackgroundService
             state[i++] = 0f;
         }
 
+        // === MAP ENCODING (2505 floats) ===
+        var imperial2030NationsMap = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
+
+        // 1. Home Provinces (24 × 54 = 1296 floats)
+        foreach (var tId in RLBotStrategy.HomeProvinceIds)
+        {
+            foreach (var n in imperial2030NationsMap)
+            {
+                var armies = allUnits.Where(u => u.TerritoryId == tId && u.Nation == n && u.UnitType == UnitType.Army).ToList();
+                int armyCount = armies.Count;
+                EncodeUnitCount(armyCount, state, ref i);
+                
+                // Add 1 float for IsHostile presence
+                bool hasHostile = armies.Any(a => a.IsHostile);
+                state[i++] = hasHostile ? 1.0f : 0.0f;
+            }
+            foreach (var n in imperial2030NationsMap)
+            {
+                int fleetCount = allUnits.Count(u => u.TerritoryId == tId && u.Nation == n && u.UnitType == UnitType.Fleet);
+                EncodeUnitCount(fleetCount, state, ref i);
+            }
+        }
+
+        // 2. Neutral Land Territories (28 × 31 = 868 floats)
+        foreach (var tId in RLBotStrategy.NeutralLandIds)
+        {
+            foreach (var n in imperial2030NationsMap)
+            {
+                int armyCount = allUnits.Count(u => u.TerritoryId == tId && u.Nation == n && u.UnitType == UnitType.Army);
+                EncodeUnitCount(armyCount, state, ref i);
+            }
+            var ts = allTerritories.FirstOrDefault(t => t.TerritoryId == tId);
+            Nation? controller = ts?.Controller;
+            EncodeFlagControl(controller, imperial2030NationsMap, state, ref i);
+        }
+
+        // 3. Sea Zones (11 × 31 = 341 floats)
+        foreach (var tId in RLBotStrategy.SeaZoneIds)
+        {
+            foreach (var n in imperial2030NationsMap)
+            {
+                int fleetCount = allUnits.Count(u => u.TerritoryId == tId && u.Nation == n && u.UnitType == UnitType.Fleet);
+                EncodeUnitCount(fleetCount, state, ref i);
+            }
+            var ts = allTerritories.FirstOrDefault(t => t.TerritoryId == tId);
+            Nation? controller = ts?.Controller;
+            EncodeFlagControl(controller, imperial2030NationsMap, state, ref i);
+        }
+
+        // === MANEUVER CONTEXT (66 floats) ===
+        // 1. Maneuver Selected Territory (63 floats: 62 territories + 1 None)
+        for (int idx = 0; idx < RLBotStrategy.AllManeuverTerritories.Length; idx++)
+        {
+            state[i++] = (maneuverSelectedTerritoryId == RLBotStrategy.AllManeuverTerritories[idx]) ? 1.0f : 0.0f;
+        }
+        state[i++] = maneuverSelectedTerritoryId == null ? 1.0f : 0.0f;
+
+        // 2. Current Maneuver Phase (3 floats: None, Fleets, Armies)
+        state[i++] = game.CurrentManeuverPhase == ManeuverPhase.None ? 1.0f : 0.0f;
+        state[i++] = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? 1.0f : 0.0f;
+        state[i++] = game.CurrentManeuverPhase == ManeuverPhase.Armies ? 1.0f : 0.0f;
+
         return state;
     }
 
-    private bool[] GetActionMask(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId)
+    private static void EncodeUnitCount(int count, float[] state, ref int i)
     {
-        var mask = new bool[64];
+        state[i++] = count == 1 ? 1f : 0f;
+        state[i++] = count == 2 ? 1f : 0f;
+        state[i++] = count == 3 ? 1f : 0f;
+        state[i++] = count >= 4 ? 1f : 0f;
+    }
+
+    private static void EncodeFlagControl(Nation? controller, Nation[] nations, float[] state, ref int i)
+    {
+        foreach (var n in nations)
+            state[i++] = (controller.HasValue && controller.Value == n) ? 1f : 0f;
+        state[i++] = !controller.HasValue ? 1f : 0f;
+    }
+
+    private bool[] GetActionMask(ApplicationDbContext _context, Guid gameId, TrainingSession session)
+    {
+        var mask = new bool[189];
+        var rlPlayerId = session.RLPlayerId;
         var game = _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
         if (game == null) return mask;
 
@@ -911,6 +1075,61 @@ public class TcpTrainingServer : BackgroundService
 
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
         if (ns == null || ns.ControllerId != rlPlayerId) return mask;
+
+        if (game.CurrentManeuverPhase != ManeuverPhase.None)
+        {
+            var units = _context.Units.Where(u => u.GameId == game.Id && u.Nation == ns.Nation).ToList();
+            if (session.ManeuverSelectedTerritoryId == null) // Stage 1
+            {
+                mask[63] = true; // Pass (End Maneuver)
+
+                // Select valid units based on phase
+                var validUnits = game.CurrentManeuverPhase == ManeuverPhase.Fleets
+                    ? units.Where(u => u.UnitType == UnitType.Fleet && !u.HasMoved)
+                    : units.Where(u => u.UnitType == UnitType.Army && !u.HasMoved);
+
+                foreach (var unit in validUnits)
+                {
+                    int idx = Array.IndexOf(RLBotStrategy.AllManeuverTerritories, unit.TerritoryId);
+                    if (idx >= 0) mask[64 + idx] = true;
+                }
+            }
+            else // Stage 2
+            {
+                mask[126] = true; // Do Not Move
+
+                // Find valid destinations
+                var unitType = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? UnitType.Fleet : UnitType.Army;
+                var selectedUnit = units.FirstOrDefault(u => u.TerritoryId == session.ManeuverSelectedTerritoryId && u.UnitType == unitType && !u.HasMoved);
+                
+                if (selectedUnit != null)
+                {
+                    // Copy heuristic adjacency logic (simplified)
+                    if (MapConnectivity.Adjacency.TryGetValue(selectedUnit.TerritoryId, out var neighbors))
+                    {
+                        var validNeighbors = neighbors.ToList();
+                        
+                        // NOTE: Proper rail/convoy logic should be used here, but for RL, direct adjacency is safe start.
+                        // We filter by sea/land
+                        if (unitType == UnitType.Fleet)
+                        {
+                            validNeighbors = validNeighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)).ToList();
+                        }
+                        else
+                        {
+                            validNeighbors = validNeighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Land)).ToList();
+                        }
+
+                        foreach (var dest in validNeighbors)
+                        {
+                            int idx = Array.IndexOf(RLBotStrategy.AllManeuverTerritories, dest);
+                            if (idx >= 0) mask[127 + idx] = true;
+                        }
+                    }
+                }
+            }
+            return mask;
+        }
 
         int currentPos = ns.RondelPosition ?? 0;
 

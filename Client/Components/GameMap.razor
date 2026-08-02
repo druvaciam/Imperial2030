@@ -53,9 +53,12 @@
                         <p>You are moving into a region with foreign units or a foreign home territory.</p>
                         <p>Choose your stance:</p>
                         <div class="d-grid gap-2">
-                             <button class="btn btn-success" @onclick="ConfirmPeace">
-                                 Peaceful / Coexist
-                             </button>
+                             @if (!IsForcedHostile)
+                             {
+                                 <button class="btn btn-success" @onclick="ConfirmPeace">
+                                     Peaceful / Coexist
+                                 </button>
+                             }
                              @foreach (var nation in BattleOptions)
                              {
                                  <button class="btn btn-danger" @onclick="() => ConfirmBattle(nation)">
@@ -1039,6 +1042,8 @@
     [Parameter]
     public GameDetailDto? Game { get; set; }
 
+    private bool IsForcedHostile { get; set; } = false;
+
     [Parameter] 
     public bool IsMyTurn { get; set; } = false;
 
@@ -1391,12 +1396,24 @@
                 
                 var tDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
                 bool isForeignHome = tDef != null && tDef.Nation.HasValue && tDef.Nation.Value != selectedUnit.Nation;
+                bool isMyHome = tDef != null && tDef.Nation.HasValue && tDef.Nation.Value == selectedUnit.Nation;
+
+                if (isMyHome && potentialEnemies.Any())
+                {
+                    if (potentialEnemies.Count == 1)
+                    {
+                        // No need for popup, forced hostile auto-attack
+                        await MoveUnit(selectedUnit, territoryId, null, true);
+                        return;
+                    }
+                }
 
                 if (potentialEnemies.Any() || isForeignHome)
                 {
                     PendingBattleUnit = selectedUnit;
                     PendingBattleDest = territoryId;
                     BattleOptions = potentialEnemies;
+                    IsForcedHostile = isMyHome;
                     ShowBattleModal = true;
                     StateHasChanged();
                     return;
