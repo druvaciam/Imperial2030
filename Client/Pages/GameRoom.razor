@@ -439,10 +439,13 @@ else
             {
                          <div style="position: relative; width: 100%; height: 100%;">
                              <GameMap Game="@game" IsMyTurn="@false" IsObserver="@(MyPlayer == null)" />
-                             <div class="game-over-overlay">
-                                <div class="game-over-card">
-                                    <h1 class="text-gradient mb-2">GAME OVER</h1>
-                                    <h5 class="text-white-50 mb-4">Ended by @GetWinningNation() reaching 25 Power</h5>
+                             @if (showGameOverPopup)
+                             {
+                                 <div class="game-over-overlay">
+                                    <div class="game-over-card" style="position: relative;">
+                                        <button type="button" class="btn-close btn-close-white" style="position: absolute; top: 1.5rem; right: 1.5rem;" @onclick="() => showGameOverPopup = false" aria-label="Close"></button>
+                                        <h1 class="text-gradient mb-2">GAME OVER</h1>
+                                        <h5 class="text-white-50 mb-4">Ended by @GetWinningNation() reaching 25 Power</h5>
 
                                     <div class="leaderboard-container">
                                         <table class="table table-dark table-borderless table-sm score-table">
@@ -486,7 +489,8 @@ else
                                     </div>
                                 </div>
                             </div>
-                        </div>
+                        }
+                    </div>
             }
             else
             {
@@ -929,6 +933,7 @@ else
     private int observerCount = 0;
     private PlayerDto? MyPlayer => game?.Players.FirstOrDefault(p => p.UserId == currentUserId);
     private GameMap? gameMap;
+    private bool showGameOverPopup = true;
 
     protected override async Task OnInitializedAsync()
     {

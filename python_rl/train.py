@@ -144,7 +144,7 @@ if __name__ == "__main__":
     TOTAL_TIMESTEPS = 2000000
     
     save_callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
-    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=0.025, final_ent_coef=0.005, total_timesteps=TOTAL_TIMESTEPS)
+    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=0.03, final_ent_coef=0.001, total_timesteps=TOTAL_TIMESTEPS)
     
     callback = CallbackList([save_callback, ent_coef_callback])
     
