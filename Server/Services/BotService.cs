@@ -31,7 +31,7 @@ public class BotService
                ?? new Bots.Strategies.DefaultBotStrategy(); // Fallback if not registered
     }
 
-    public void TriggerBotTurn(Guid gameId, int delayMs = 2500)
+    public void TriggerBotTurn(Guid gameId, int delayMs = 3000)
     {
         _ = Task.Run(async () =>
         {
@@ -93,6 +93,30 @@ public class BotService
                         break; // Pause loop so RL Python env can fetch state
                     }
                 }
+                else if (game.PendingSwissBankForceNation != null)
+                {
+                    var botResponders = game.PendingSwissBankResponders
+                        .Select(id => game.Players.FirstOrDefault(p => p.Id == id))
+                        .Where(p => p != null && p.IsBot)
+                        .ToList();
+
+                    if (botResponders.Any())
+                    {
+                        try
+                        {
+                            await HandleBotSwissBankResponse(ctx, game, botResponders);
+                            botActed = true;
+                        }
+                        catch (Bots.Strategies.RlTrainingPauseException)
+                        {
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        // Waiting for human Swiss Bank player
+                    }
+                }
                 else
                 {
                     var nationState = game.NationStates.FirstOrDefault(ns => ns.Nation == game.CurrentTurnNation);
@@ -149,18 +173,54 @@ public class BotService
             }
 
             int? oldPos = nationState.RondelPosition;
+
+            // --- Swiss Bank Intercept ---
+            bool crossingInvestor = false;
+            if (oldPos != null && targetSlot != 4)
+            {
+                int dist = (targetSlot - oldPos.Value + 8) % 8;
+                for (int i = 1; i < dist; i++)
+                {
+                    if ((oldPos.Value + i) % 8 == 4)
+                    {
+                        crossingInvestor = true;
+                        break;
+                    }
+                }
+            }
+
+            if (crossingInvestor && game.PendingSwissBankForceNation == null)
+            {
+                int totalInterest = game.Bonds.Where(b => b.Nation == nation).Sum(b => b.Interest);
+                if (nationState.Treasury >= totalInterest)
+                {
+                    var swissBankPlayers = game.Players.Where(p => !game.NationStates.Any(ns => ns.ControllerId == p.Id)).ToList();
+                    if (swissBankPlayers.Any())
+                    {
+                        game.PendingSwissBankForceNation = nation;
+                        game.PendingSwissBankForceTargetSlot = targetSlot;
+                        game.PendingSwissBankResponders = swissBankPlayers.Select(p => p.Id).ToList();
+
+                        await SaveChangesAsync(ctx);
+                        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                        return; // PAUSE bot turn!
+                    }
+                }
+            }
+
+            // Clear pending just in case
+            if (game.PendingSwissBankForceNation == nation)
+            {
+                game.PendingSwissBankForceNation = null;
+                game.PendingSwissBankForceTargetSlot = null;
+                game.PendingSwissBankResponders.Clear();
+
+            }
+            // --- End Swiss Bank Intercept ---
+
             controller.Cash -= cost;
             nationState.RondelPosition = targetSlot;
-            nationState.HasMovedThisTurn = true;
-            nationState.HasProducedThisTurn = false;
-            nationState.HasBuiltThisTurn = false;
-            nationState.HasImportedThisTurn = false;
-
-            foreach (var u in game.Units.Where(u => u.Nation == nation))
-            {
-                u.HasMoved = false;
-                u.HasConvoyed = false;
-            }
+            game.ResetStateForNewMove(nationState);
 
             // Check investor pass-through
             bool triggeredInvestor = false;
@@ -205,7 +265,7 @@ public class BotService
                 return;
             }
 
-            if (!SkipDelays) await Task.Delay(2200);
+            if (!SkipDelays) await Task.Delay(3000);
 
             // Reload game state since we might have waited
             game = await ReloadGameAsync(ctx, game);
@@ -254,7 +314,7 @@ public class BotService
         // Check if next turn is also a bot
         if (!SkipDelays)
         {
-            await Task.Delay(1800);
+            await Task.Delay(3000);
         }
     }
 
@@ -904,6 +964,83 @@ public class BotService
     }
 
     // --- Helpers ---
+
+    private async Task HandleBotSwissBankResponse(ApplicationDbContext ctx, Game game, List<Player> botResponders)
+    {
+        var nation = game.PendingSwissBankForceNation;
+        if (nation == null) return;
+
+        foreach (var bot in botResponders.ToList())
+        {
+            bool hasBond = game.Bonds.Any(b => b.Nation == nation && b.HolderId == bot.Id);
+            var request = new Imperial2030.Server.Controllers.SwissBankResponseRequest { ForceStop = hasBond };
+            
+            var nationState = game.NationStates.First(n => n.Nation == nation);
+            var controller = game.Players.First(p => p.Id == nationState.ControllerId);
+
+            if (request.ForceStop)
+            {
+                int targetSlot = 4;
+                int? currentSlot = nationState.RondelPosition;
+                int cost = 0;
+                if (currentSlot != null)
+                {
+                    int distance = (targetSlot - currentSlot.Value + 8) % 8;
+                    if (distance > 3) cost = (distance - 3) * (1 + (nationState.Power / 5));
+                }
+
+                game.PendingSwissBankForceNation = null;
+                game.PendingSwissBankForceTargetSlot = null;
+                game.PendingSwissBankResponders.Clear();
+
+                controller.Cash -= cost;
+                nationState.RondelPosition = targetSlot;
+                game.ResetStateForNewMove(nationState);
+
+                LogAction(ctx, game, $"was forced by Swiss Bank ({bot.BotName ?? "Bot"}) to stop on Investor", "Move", nationState.Nation, bot.BotName ?? "Bot");
+                Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: true);
+                
+                await SaveChangesAsync(ctx);
+                await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
+                return;
+            }
+            else
+            {
+                var responders = game.PendingSwissBankResponders;
+                responders.Remove(bot.Id);
+                game.PendingSwissBankResponders = responders;
+
+                if (!responders.Any())
+                {
+                    int targetSlot = game.PendingSwissBankForceTargetSlot.Value;
+                    int? currentSlot = nationState.RondelPosition;
+                    int cost = 0;
+                    if (currentSlot != null)
+                    {
+                        int distance = (targetSlot - currentSlot.Value + 8) % 8;
+                        if (distance > 3) cost = (distance - 3) * (1 + (nationState.Power / 5));
+                    }
+
+                    game.PendingSwissBankForceNation = null;
+                    game.PendingSwissBankForceTargetSlot = null;
+
+                    controller.Cash -= cost;
+                    nationState.RondelPosition = targetSlot;
+                    game.ResetStateForNewMove(nationState);
+
+                    LogAction(ctx, game, $"moved to {GetSlotName(targetSlot)} (Cost: {cost}M)", "Move", nationState.Nation, bot.BotName ?? "Bot");
+                    Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: false);
+                    
+                    await SaveChangesAsync(ctx);
+                    await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
+                    return;
+                }
+            }
+        }
+        
+        await SaveChangesAsync(ctx);
+        await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
+    }
 
     private async Task<Game?> LoadGame(ApplicationDbContext? ctx, Guid gameId)
     {

@@ -46,16 +46,18 @@ else
             <div class="sidebar-left">
                 <div class="panel mb-3 text-center">
                     <h3 class="m-0 text-white">@game.Name</h3>
-                    <small class="text-muted">Game ID: @GameId.ToString().Substring(0, 8)...</small>
+                    <div class="text-muted small">Game ID: @GameId.ToString().Substring(0, 8)...</div>
+                    @if (game.Players.FirstOrDefault(p => p.IsHost) is var host && host != null)
+                    {
+                        <div class="text-muted small">Host: <strong>@host.UserName</strong></div>
+                    }
                 @if (game.IsPrivate && MyPlayer != null && game.HostId == MyPlayer.UserId && game.JoinCode != null)
                 {
-                            <small class="text-info">Join Code: <strong>@game.JoinCode</strong></small>
-
-                    <br/>
+                    <div class="text-info small">Join Code: <strong>@game.JoinCode</strong></div>
                 }
                 @if (game.VariantBonusOnlyForTaxIncreases)
                 {
-                            <span class="badge bg-warning text-dark mt-1">Variant: Tax Increase Bonus</span>
+                            <div class="mt-1"><span class="badge bg-warning text-dark">Variant: Tax Increase Bonus</span></div>
                 }
                 </div>
 
@@ -102,6 +104,50 @@ else
                         </div>
             }
 
+            @if (game.PendingSwissBankForceNation != null)
+            {
+                        <div class="panel mb-3 border border-info" style="background-color: rgba(23, 162, 184, 0.1);">
+                            <div class="text-center">
+                                <h4 class="text-info mb-2 fw-bold"><i class="oi oi-info"></i> SWISS BANK DECISION</h4>
+                                <p class="small mb-2"><strong>@game.PendingSwissBankForceNation</strong> is skipping Investor but has money to pay all interest.</p>
+                                <hr class="border-info" />
+
+                        @{
+                            bool amISwissBankResponder = MyPlayer != null && game.PendingSwissBankResponders.Contains(MyPlayer.Id);
+                        }
+
+                        @if (amISwissBankResponder)
+                        {
+                            var myBonds = MyPlayer.Bonds.Where(b => b.Nation == game.PendingSwissBankForceNation).ToList();
+                            int totalInterest = myBonds.Sum(b => b.Interest);
+                            bool hasInvestment = totalInterest > 0;
+
+                                        <p class="mb-3 small">Do you want to force them to stop on Investor?</p>
+                                        <div class="d-flex flex-column gap-2 mt-2">
+                                            <button class="btn btn-sm btn-success fw-bold @(hasInvestment ? "pulse-valid-invest" : "")" 
+                                                    title="You will receive @totalInterest M in interest if forced."
+                                                    @onclick="() => RespondToSwissBank(true)">
+                                                <i class="oi oi-media-pause"></i> FORCE STOP
+                                            </button>
+                                            <button class="btn btn-sm btn-danger fw-bold @(!hasInvestment ? "pulse-pass-invest" : "")" 
+                                                    title="You will not receive any interest."
+                                                    @onclick="() => RespondToSwissBank(false)">
+                                                <i class="oi oi-media-skip-forward"></i> ALLOW PASS
+                                            </button>
+                                        </div>
+                        }
+                        else
+                        {
+                            var respondersNames = game.Players.Where(p => game.PendingSwissBankResponders.Contains(p.Id)).Select(p => p.UserName);
+                                        <p class="small mb-0">Waiting for Swiss Bank players (<strong>@string.Join(", ", respondersNames)</strong>) to decide...</p>
+                                        <div class="spinner-border spinner-border-sm text-info mt-2" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                        }
+                            </div>
+                        </div>
+            }
+
                 <div class="panel">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <h4 class="m-0">Players</h4>
@@ -115,8 +161,9 @@ else
                     <ul class="list-group list-group-flush bg-transparent">
                     @foreach (var player in game.Players.OrderBy(p => p.Id))
                     {
-                                <li class="list-group-item bg-transparent text-white d-flex justify-content-between align-items-center @(IsPlayerActive(player) ? "active-player-highlight" : "px-0")">
-                                    <span class="d-flex align-items-center gap-2">
+                                <li class="list-group-item bg-transparent text-white d-flex flex-column @(IsPlayerActive(player) ? "active-player-highlight" : (game.InvestorCardHolderId == player.Id ? "" : "px-0")) @(game.InvestorCardHolderId == player.Id ? "border border-info rounded my-2 p-2" : "")" style="@(game.InvestorCardHolderId == player.Id ? "border-width: 2px !important;" : "")">
+                                    <div class="d-flex justify-content-between align-items-center w-100">
+                                        <span class="d-flex align-items-center gap-2">
                                 @if (player.IsBot)
                                 {
                                                 <span title="Bot Player">🤖</span>
@@ -131,25 +178,103 @@ else
                                         <span class="ms-1" style="font-size: 1.1em; white-space: nowrap;" title="Controlled Nations">@GetPlayerControlledNationsString(player)</span>
                                     </span>
                                     <div class="d-flex align-items-center flex-wrap justify-content-end gap-1">
+                                        <span class="badge bg-warning text-dark" title="Cash">$@(player.Cash)M</span>
                                         <span class="badge bg-success" title="Current Victory Points (Cash + Bond Value * Multiplier)">@GetPlayerScore(player) VP</span>
-                                @if (player.IsHost)
-                                {
-                                                <span class="badge bg-warning text-dark">Host</span>
-                                }
                                 @if (player.IsBot && IsHost && game.Status == GameStatus.Lobby)
                                 {
                                                 <button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size: 0.7rem; line-height: 1;" @onclick="@(() => RemoveBot(player.Id))" title="Remove bot">✕</button>
                                 }
-                                @if (game.InvestorCardHolderId == player.Id)
-                                {
-                                                <span class="badge bg-info text-dark">Inv. Card</span>
-                                }
                                     </div>
+                                    </div>
+                                    @if (game.InvestorCardHolderId == player.Id)
+                                    {
+                                        <div class="w-100 mt-2 text-center text-info fw-bold" style="background-color: rgba(23, 162, 184, 0.1); padding: 2px 0; border-radius: 4px; font-size: 0.85em; letter-spacing: 1px;">
+                                            INVESTOR CARD
+                                        </div>
+                                    }
                                 </li>
                     }
                     </ul>
                 </div>
 
+                <!-- Investor Action Panel -->
+            @if (game.IsInvestorTurn)
+            {
+                        <div class="panel mt-3 border-info @(MyPlayer?.Id == game.ActingPlayerId ? "panel-investor-pulse" : "")">
+                            <h4 class="text-info">Investor Phase</h4>
+                    @if (MyPlayer?.Id == game.ActingPlayerId)
+                    {
+                                    <div class="d-flex justify-content-between align-items-center mb-3 mt-2 bg-dark p-2 rounded border border-warning">
+                                        <span class="text-white fw-bold">Available to Invest:</span>
+                                        <span class="badge bg-warning text-dark" style="font-size: 1.1em;">$@(MyPlayer.Cash)M</span>
+                                    </div>
+                                    <p class="small text-muted mb-3">
+                                        @if (game.InvestorCardHolderId == MyPlayer.Id)
+                                        {
+                                            <text>You hold the Investor Card. You have received a $2M bonus. Choose to invest or pass.</text>
+                                        }
+                                        else
+                                        {
+                                            <text>You are a Swiss Bank. Choose to invest or pass.</text>
+                                        }
+                                    </p>
+
+                                    <div class="d-grid gap-2">
+                                         @{
+                                             bool hasValidOption = false;
+                                             foreach (var testBond in game.AvailableBonds)
+                                             {
+                                                 if ((MyPlayer?.Cash ?? 0) >= testBond.Cost) hasValidOption = true;
+                                                 var testOwned = MyPlayer?.Bonds?.Where(b => b.Nation == testBond.Nation) ?? Enumerable.Empty<Imperial2030.Shared.Models.BondDto>();
+                                                 foreach (var owned in testOwned)
+                                                 {
+                                                     if (owned.Cost < testBond.Cost && (MyPlayer?.Cash ?? 0) >= (testBond.Cost - owned.Cost)) hasValidOption = true;
+                                                 }
+                                             }
+                                         }
+                                         <button class="btn btn-secondary @(!hasValidOption ? "btn-endturn-pulse" : "")" @onclick="@(() => PerformInvestment("Pass", null, null))">Pass (No Investment)</button>
+
+                                         <h6 class="mt-2 text-white border-bottom pb-1">Available Bonds</h6>
+                                         <div style="max-height: 200px; overflow-y: auto;">
+                                @foreach (var bond in game.AvailableBonds.OrderBy(b => b.Nation).ThenBy(b => b.Cost))
+                                {
+                                    bool canAffordFull = (MyPlayer?.Cash ?? 0) >= bond.Cost;
+
+                                    // Check for upgrade
+                                    var ownedBonds = (MyPlayer?.Bonds?.Where(b => b.Nation == bond.Nation).OrderByDescending(b => b.Cost) ?? Enumerable.Empty<Imperial2030.Shared.Models.BondDto>()).ToList();
+
+                                                     <div class="mb-1">
+                                                         <button class="btn btn-sm btn-outline-primary w-100 text-start @(canAffordFull ? "btn-investor-pulse-green" : "")" 
+                                                                 disabled="@(!canAffordFull)"
+                                        @onclick="@(() => PerformInvestment("Buy", bond.Id, null))">
+                                                             <span class="fw-bold">@bond.Nation</span> @bond.Interest M Int. 
+                                                             <span class="float-end badge @(canAffordFull ? "bg-success" : "bg-danger")">@bond.Cost M</span>
+                                                         </button>
+                                        @foreach (var owned in ownedBonds)
+                                        {
+                                            if (owned.Cost < bond.Cost)
+                                            {
+                                                int diff = bond.Cost - owned.Cost;
+                                                bool canAffordUpgrade = (MyPlayer?.Cash ?? 0) >= diff;
+                                                                         <button class="btn btn-sm btn-outline-info w-100 mt-1 text-end small @(canAffordUpgrade ? "btn-investor-pulse-green" : "")"
+                                                                                 disabled="@(!canAffordUpgrade)"
+                                                @onclick="@(() => PerformInvestment("Buy", bond.Id, owned.Id))">
+                                                                             <small>Upgrade from @owned.Cost M (Pay @diff M)</small>
+                                                                         </button>
+                                            }
+                                        }
+                                                     </div>
+                                }
+                                         </div>
+                                    </div>
+                    }
+                    else
+                    {
+                                    <p class="text-warning">Waiting for Investor Action...</p>
+                                    <small>Current Actor: @game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId)?.UserName</small>
+                    }
+                        </div>
+            }
                 <div class="panel mt-3">
                 @{
                     var currentNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
@@ -285,59 +410,6 @@ else
                 }
                 </div>
 
-                <!-- Investor Action Panel -->
-            @if (game.IsInvestorTurn)
-            {
-                        <div class="panel mt-3 border-info">
-                            <h4 class="text-info">Investor Phase</h4>
-                    @if (MyPlayer?.Id == game.ActingPlayerId)
-                    {
-                                    <p class="small text-muted">You hold the Investor Card. You have received 2M bonus. Choose to invest or pass.</p>
-
-                                    <div class="d-grid gap-2">
-                                         <button class="btn btn-secondary" @onclick="@(() => PerformInvestment("Pass", null, null))">Pass (No Investment)</button>
-
-                                         <h6 class="mt-2 text-white border-bottom pb-1">Available Bonds</h6>
-                                         <div style="max-height: 200px; overflow-y: auto;">
-                                @foreach (var bond in game.AvailableBonds.OrderBy(b => b.Nation).ThenBy(b => b.Cost))
-                                {
-                                    bool canAffordFull = (MyPlayer?.Cash ?? 0) >= bond.Cost;
-
-                                    // Check for upgrade
-                                    var ownedBonds = (MyPlayer?.Bonds?.Where(b => b.Nation == bond.Nation).OrderByDescending(b => b.Cost) ?? Enumerable.Empty<Imperial2030.Shared.Models.BondDto>()).ToList();
-
-                                                     <div class="mb-1">
-                                                         <button class="btn btn-sm btn-outline-primary w-100 text-start" 
-                                                                 disabled="@(!canAffordFull)"
-                                        @onclick="@(() => PerformInvestment("Buy", bond.Id, null))">
-                                                             <span class="fw-bold">@bond.Nation</span> @bond.Interest M Int. 
-                                                             <span class="float-end badge @(canAffordFull ? "bg-success" : "bg-danger")">@bond.Cost M</span>
-                                                         </button>
-                                        @foreach (var owned in ownedBonds)
-                                        {
-                                            if (owned.Cost < bond.Cost)
-                                            {
-                                                int diff = bond.Cost - owned.Cost;
-                                                bool canAffordUpgrade = (MyPlayer?.Cash ?? 0) >= diff;
-                                                                         <button class="btn btn-sm btn-outline-info w-100 mt-1 text-end small"
-                                                                                 disabled="@(!canAffordUpgrade)"
-                                                @onclick="@(() => PerformInvestment("Buy", bond.Id, owned.Id))">
-                                                                             <small>Upgrade from @owned.Cost M (Pay @diff M)</small>
-                                                                         </button>
-                                            }
-                                        }
-                                                     </div>
-                                }
-                                         </div>
-                                    </div>
-                    }
-                    else
-                    {
-                                    <p class="text-warning">Waiting for Investor Action...</p>
-                                    <small>Current Actor: @game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId)?.UserName</small>
-                    }
-                        </div>
-            }
 
             @if (game.Status == GameStatus.InProgress)
             {
@@ -350,6 +422,10 @@ else
                                             <b>@ns.Nation</b><br/>
                                             <span class="text-info">Treasury: @ns.Treasury M</span> | 
                                             <span class="text-warning">Power: @ns.Power (@(ns.Power / 5)x)</span><br/>
+                                            @{
+                                                var taxInfo = GetTaxPreview(ns);
+                                            }
+                                            <span class="text-success small">Tax now: Power +@taxInfo.PowerGain, Treasury @(taxInfo.TreasuryGain >= 0 ? "+" : "")@taxInfo.TreasuryGain M, Bonus +@taxInfo.Bonus M</span><br/>
                                             <span class="text-muted">Ctrl: @(ns.ControllerName ?? "None")</span>
                                 @{
                                     var flagNames = game.Territories
@@ -920,6 +996,27 @@ else
         50% { transform: scale(1.05); box-shadow: 0 0 25px rgba(241, 196, 15, 0.9); }
         100% { transform: scale(1); box-shadow: 0 0 10px rgba(241, 196, 15, 0.4); }
     }
+
+    .btn-investor-pulse-green {
+        animation: pulse-investor-green 1.5s infinite;
+        border-color: #27ae60 !important;
+    }
+
+    @@keyframes pulse-investor-green {
+        0% { box-shadow: 0 0 2px rgba(39, 174, 96, 0.4); }
+        50% { box-shadow: 0 0 12px rgba(39, 174, 96, 0.9); }
+        100% { box-shadow: 0 0 2px rgba(39, 174, 96, 0.4); }
+    }
+
+    .panel-investor-pulse {
+        animation: pulse-panel-investor 1.5s infinite;
+    }
+
+    @@keyframes pulse-panel-investor {
+        0% { border-color: rgba(23, 162, 184, 0.5); box-shadow: 0 0 5px rgba(23, 162, 184, 0.2); }
+        50% { border-color: rgba(23, 162, 184, 1); box-shadow: 0 0 20px rgba(241, 196, 15, 0.8); }
+        100% { border-color: rgba(23, 162, 184, 0.5); box-shadow: 0 0 5px rgba(23, 162, 184, 0.2); }
+    }
 </style>
 
 @code {
@@ -1362,6 +1459,31 @@ else
         }
     }
 
+    private async Task RespondToSwissBank(bool forceStop)
+    {
+        if (game == null || isSubmitting) return;
+
+        isSubmitting = true;
+        try
+        {
+            var request = new { ForceStop = forceStop };
+            var response = await Http.PostAsJsonAsync($"api/games/{GameId}/swissbank-response", request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                await ShowToast($"Response failed: {error}", true);
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast($"Error: {ex.Message}", true);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
     private async Task EndTurn()
     {
         if (game == null || isSubmitting) return;
@@ -1720,6 +1842,58 @@ else
         {
             isSubmitting = false;
         }
+    }
+
+    private (int Bonus, int TreasuryGain, int PowerGain) GetTaxPreview(NationStateDto nationState)
+    {
+        var nation = nationState.Nation;
+        int factoryRevenue = 0;
+        var territoriesWithFactories = game.Territories.Where(ts => ts.HasFactory).ToList();
+        
+        foreach (var ts in territoriesWithFactories)
+        {
+            var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
+            if (territoryDef != null && territoryDef.Nation == nation) 
+            {
+                bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
+                if (!hasHostileArmy)
+                {
+                    factoryRevenue += 2;
+                }
+            }
+        }
+
+        int flagRevenue = game.Territories.Count(ts => ts.Controller == nation);
+        flagRevenue = Math.Min(15, flagRevenue);
+        int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
+
+        int unitCount = game.Units.Count(u => u.Nation == nation);
+        int soldiersPay = unitCount * 1;
+        
+        int simulatedTreasury = nationState.Treasury + totalTaxRevenue;
+        int actualPay = Math.Min(simulatedTreasury, soldiersPay);
+        simulatedTreasury -= actualPay;
+
+        int bonus = 0;
+        if (game.VariantBonusOnlyForTaxIncreases)
+        {
+            int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(nationState.TaxRevenue);
+            int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
+            bonus = Math.Max(0, newTier - oldTier);
+        }
+        else
+        {
+            bonus = Imperial2030.Shared.Constants.TaxChart.GetStandardBonus(totalTaxRevenue);
+        }
+        
+        int actualBonus = Math.Min(simulatedTreasury, bonus);
+        simulatedTreasury -= actualBonus;
+
+        int powerGain = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
+        
+        int expectedTreasuryGain = simulatedTreasury - nationState.Treasury;
+
+        return (actualBonus, expectedTreasuryGain, powerGain);
     }
 
     public async ValueTask DisposeAsync()

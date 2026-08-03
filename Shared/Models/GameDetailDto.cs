@@ -21,6 +21,9 @@ public class GameDetailDto : GameDto
     public string? PendingBattleTerritoryId { get; set; }
     public Nation? PendingBattleAggressorNation { get; set; }
     public List<Nation> PendingBattleDefenders { get; set; } = new List<Nation>();
+
+    public Nation? PendingSwissBankForceNation { get; set; }
+    public List<Guid> PendingSwissBankResponders { get; set; } = new List<Guid>();
 }
 
 public enum ManeuverPhase
