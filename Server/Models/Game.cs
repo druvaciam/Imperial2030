@@ -12,10 +12,10 @@ public class Game
     public string Name { get; set; } = string.Empty;
 
     public bool IsPrivate { get; set; } = false;
-    
+
     [MaxLength(10)]
     public string? JoinCode { get; set; }
-    
+
     [Range(2, 6)]
     public int MaxPlayers { get; set; } = 6;
 
@@ -31,10 +31,10 @@ public class Game
     public Guid? ActingPlayerId { get; set; } // If set, this player must take action (e.g. Investor) instead of CurrentTurnNation controller
     public string PendingInvestorIdsJson { get; set; } = "[]";
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
-    public List<Guid> PendingInvestorIds 
-    { 
-        get => string.IsNullOrEmpty(PendingInvestorIdsJson) ? new List<Guid>() : System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(PendingInvestorIdsJson) ?? new List<Guid>(); 
-        set => PendingInvestorIdsJson = System.Text.Json.JsonSerializer.Serialize(value); 
+    public List<Guid> PendingInvestorIds
+    {
+        get => string.IsNullOrEmpty(PendingInvestorIdsJson) ? new List<Guid>() : System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(PendingInvestorIdsJson) ?? new List<Guid>();
+        set => PendingInvestorIdsJson = System.Text.Json.JsonSerializer.Serialize(value);
     }
 
     public ManeuverPhase CurrentManeuverPhase { get; set; } = ManeuverPhase.None;
@@ -42,11 +42,15 @@ public class Game
     // Pending Battle Negotiation State
     public string? PendingBattleTerritoryId { get; set; }
     public Nation? PendingBattleAggressorNation { get; set; }
-    
+
     // Using a list of Nations that must still answer. If a Nation responds Fight, it triggers. 
     // If Peace, they are removed. If empty, Peace prevails.
     public List<Nation> PendingBattleDefenders { get; set; } = new List<Nation>();
 
+    // Swiss Bank Forced Stop
+    public int? PendingSwissBankForceTargetSlot { get; set; }
+    public Nation? PendingSwissBankForceNation { get; set; }
+    public List<Guid> PendingSwissBankResponders { get; set; } = new List<Guid>();
 
     public virtual ICollection<Player> Players { get; set; } = new List<Player>();
     public virtual ICollection<Bond> Bonds { get; set; } = new List<Bond>();
@@ -54,6 +58,21 @@ public class Game
     public virtual ICollection<TerritoryState> TerritoryStates { get; set; } = new List<TerritoryState>();
     public virtual ICollection<Unit> Units { get; set; } = new List<Unit>();
     public virtual ICollection<GameAction> Actions { get; set; } = new List<GameAction>();
+
+    public void ResetStateForNewMove(NationState nationState, Action<Unit>? modifyUnitTracker = null)
+    {
+        nationState.HasMovedThisTurn = true;
+        nationState.HasProducedThisTurn = false;
+        nationState.HasBuiltThisTurn = false;
+        nationState.HasImportedThisTurn = false;
+
+        foreach (var u in Units.Where(u => u.Nation == nationState.Nation))
+        {
+            u.HasMoved = false;
+            u.HasConvoyed = false;
+            modifyUnitTracker?.Invoke(u);
+        }
+    }
 
     public void AdvanceTurn()
     {
@@ -73,13 +92,13 @@ public class Game
 
         var nations = Enum.GetValues(typeof(Nation)).Cast<Nation>().ToList();
         int currentIndex = nations.IndexOf(this.CurrentTurnNation);
-        
+
         for (int i = 1; i <= nations.Count; i++)
         {
             int nextIndex = (currentIndex + i) % nations.Count;
             var nextNation = nations[nextIndex];
             var ns = this.NationStates.FirstOrDefault(n => n.Nation == nextNation);
-            
+
             // Skip nations with no controller
             if (ns != null && ns.ControllerId.HasValue)
             {
@@ -96,7 +115,7 @@ public class Game
 
         int score = player.Cash;
         var playerBonds = this.Bonds.Where(b => b.HolderId == playerId).ToList();
-        
+
         foreach (var bond in playerBonds)
         {
             var nation = this.NationStates.FirstOrDefault(n => n.Nation == bond.Nation);

@@ -365,11 +365,13 @@ public class GamesController : ControllerBase
             InvestorCardHolderId = game.InvestorCardHolderId,
             IsInvestorTurn = game.IsInvestorTurn,
             ActingPlayerId = game.ActingPlayerId,
-            Units = game.Units.ToList(),
-            ManeuverState = new ManeuverState { Phase = game.CurrentManeuverPhase },
             PendingBattleTerritoryId = game.PendingBattleTerritoryId,
             PendingBattleAggressorNation = game.PendingBattleAggressorNation,
             PendingBattleDefenders = game.PendingBattleDefenders.ToList(),
+            PendingSwissBankForceNation = game.PendingSwissBankForceNation,
+            PendingSwissBankResponders = game.PendingSwissBankResponders.ToList(),
+            Units = game.Units.ToList(),
+            ManeuverState = new ManeuverState { Phase = game.CurrentManeuverPhase },
             Actions = game.Actions.OrderBy(a => a.Timestamp).Select(a => new GameActionDto
             {
                 Id = a.Id,
@@ -1113,6 +1115,51 @@ public class GamesController : ControllerBase
 
         if (cost > 0 && controller.Cash < cost) return BadRequest($"Not enough cash. Cost: {cost}M");
 
+        // --- Swiss Bank Intercept Logic ---
+        bool crossingInvestor = false;
+        if (currentSlot != null && targetSlot != 4)
+        {
+            int dist = (targetSlot - currentSlot.Value + 8) % 8;
+            for (int i = 1; i < dist; i++) // Check intermediate steps
+            {
+                if ((currentSlot.Value + i) % 8 == 4)
+                {
+                    crossingInvestor = true;
+                    break;
+                }
+            }
+        }
+
+        if (crossingInvestor && game.PendingSwissBankForceNation == null)
+        {
+            int totalInterest = game.Bonds.Where(b => b.Nation == nation).Sum(b => b.Interest);
+            if (nationState.Treasury >= totalInterest)
+            {
+                // Find Swiss Bank players (players with no controlled government)
+                var swissBankPlayers = game.Players.Where(p => !game.NationStates.Any(ns => ns.ControllerId == p.Id)).ToList();
+                if (swissBankPlayers.Any())
+                {
+                    game.PendingSwissBankForceNation = nation;
+                    game.PendingSwissBankForceTargetSlot = targetSlot;
+                    game.PendingSwissBankResponders = swissBankPlayers.Select(p => p.Id).ToList();
+
+                    await _context.SaveChangesAsync();
+                    await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                    return Ok();
+                }
+            }
+        }
+        // --- End Swiss Bank Intercept Logic ---
+
+        // Clear the pending state just in case we are executing a deferred move
+        if (game.PendingSwissBankForceNation == nation)
+        {
+            game.PendingSwissBankForceNation = null;
+            game.PendingSwissBankForceTargetSlot = null;
+            game.PendingSwissBankResponders.Clear();
+
+        }
+
         // Execute Move
         controller.Cash -= cost;
         nationState.RondelPosition = targetSlot;
@@ -1732,5 +1779,106 @@ public class GamesController : ControllerBase
         _context.GameActions.Add(action);
         // Note: Caller must SaveChanges
     }
+    [HttpPost("{gameId}/swissbank-response")]
+    public async Task<IActionResult> SwissBankResponse(Guid gameId, [FromBody] SwissBankResponseRequest request)
+    {
+        var game = await _context.Games
+            .Include(g => g.Players)
+            .Include(g => g.NationStates)
+            .Include(g => g.TerritoryStates)
+            .Include(g => g.Bonds)
+            .Include(g => g.Units)
+            .Include(g => g.Actions)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound();
+
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var responder = game.Players.FirstOrDefault(p => p.UserId == userId);
+        if (responder == null) return Forbid();
+
+        if (game.PendingSwissBankForceNation == null) return BadRequest("No pending Swiss Bank decision.");
+
+        if (!game.PendingSwissBankResponders.Contains(responder.Id)) return BadRequest("You are not required to respond.");
+
+        var nationState = game.NationStates.First(n => n.Nation == game.PendingSwissBankForceNation);
+        var controller = game.Players.First(p => p.Id == nationState.ControllerId);
+
+        if (request.ForceStop)
+        {
+            int targetSlot = 4;
+            int? currentSlot = nationState.RondelPosition;
+            int cost = 0;
+            if (currentSlot != null)
+            {
+                int distance = (targetSlot - currentSlot.Value + 8) % 8;
+                if (distance > 3) cost = (distance - 3) * (1 + (nationState.Power / 5));
+            }
+
+            game.PendingSwissBankForceNation = null;
+            game.PendingSwissBankForceTargetSlot = null;
+            game.PendingSwissBankResponders.Clear();
+
+
+            controller.Cash -= cost;
+            nationState.RondelPosition = targetSlot;
+            game.ResetStateForNewMove(nationState, u => _context.Entry(u).State = EntityState.Modified);
+            _context.Entry(controller).State = EntityState.Modified;
+            _context.Entry(nationState).State = EntityState.Modified;
+
+            LogAction(game, $"was forced by Swiss Bank to stop on {GetRondelSlotName(targetSlot)}", "Move", nationState.Nation);
+            
+            HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: true);
+
+            await _context.SaveChangesAsync();
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+            return Ok();
+        }
+        else
+        {
+            var responders = game.PendingSwissBankResponders;
+            responders.Remove(responder.Id);
+            game.PendingSwissBankResponders = responders; // Trigger setter
+
+            if (!responders.Any())
+            {
+                int targetSlot = game.PendingSwissBankForceTargetSlot.Value;
+                int? currentSlot = nationState.RondelPosition;
+                int cost = 0;
+                if (currentSlot != null)
+                {
+                    int distance = (targetSlot - currentSlot.Value + 8) % 8;
+                    if (distance > 3) cost = (distance - 3) * (1 + (nationState.Power / 5));
+                }
+
+                game.PendingSwissBankForceNation = null;
+                game.PendingSwissBankForceTargetSlot = null;
+
+                controller.Cash -= cost;
+                nationState.RondelPosition = targetSlot;
+                game.ResetStateForNewMove(nationState, u => _context.Entry(u).State = EntityState.Modified);
+                _context.Entry(controller).State = EntityState.Modified;
+                _context.Entry(nationState).State = EntityState.Modified;
+
+                LogAction(game, $"moved to {GetRondelSlotName(targetSlot)} (Cost: {cost}M)", "Move", nationState.Nation);
+
+                HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: false);
+
+                await _context.SaveChangesAsync();
+                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                return Ok();
+            }
+            else
+            {
+                await _context.SaveChangesAsync();
+                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                return Ok();
+            }
+        }
+    }
 }
 
+public class SwissBankResponseRequest
+{
+    public bool ForceStop { get; set; }
+}
