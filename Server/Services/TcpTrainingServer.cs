@@ -7,28 +7,25 @@ using Imperial2030.Server.Models;
 using Imperial2030.Server.Services.Bots.Strategies;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
-using Microsoft.EntityFrameworkCore;
 
 namespace Imperial2030.Server.Services;
 
 public class TcpTrainingServer : BackgroundService
 {
-    private readonly IServiceProvider _serviceProvider;
     private readonly BotService _botService;
     private readonly ILogger<TcpTrainingServer> _logger;
 
     private static readonly Dictionary<string, TrainingSession> _sessions = new();
 
-    public TcpTrainingServer(IServiceProvider serviceProvider, BotService botService, ILogger<TcpTrainingServer> logger)
+    public TcpTrainingServer(BotService botService, ILogger<TcpTrainingServer> logger)
     {
-        _serviceProvider = serviceProvider;
         _botService = botService;
         _logger = logger;
     }
 
     public class TrainingSession
     {
-        public Guid GameId { get; set; }
+        public Game Game { get; set; } = default!;
         public Guid RLPlayerId { get; set; }
         public string? ManeuverSelectedTerritoryId { get; set; } // Non-null when in Stage 2
     }
@@ -140,42 +137,6 @@ public class TcpTrainingServer : BackgroundService
 
     private async Task<ResetResponse> HandleResetAsync()
     {
-        using var scope = _serviceProvider.CreateScope();
-        var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-        // Cleanup old finished games to free up memory immediately
-        var oldGames = await _context.Games
-            .Where(g => g.Status == GameStatus.Finished)
-            .ToListAsync();
-
-        if (oldGames.Count > 0)
-        {
-            var oldGameIds = oldGames.Select(g => g.Id).ToList();
-
-            var gameActions = await _context.GameActions.Where(a => oldGameIds.Contains(a.GameId)).ToListAsync();
-            _context.GameActions.RemoveRange(gameActions);
-
-            var units = await _context.Units.Where(u => oldGameIds.Contains(u.GameId)).ToListAsync();
-            _context.Units.RemoveRange(units);
-
-            var territoryStates = await _context.TerritoryStates.Where(t => oldGameIds.Contains(t.GameId)).ToListAsync();
-            _context.TerritoryStates.RemoveRange(territoryStates);
-
-            var oldNationStates = await _context.NationStates.Where(n => oldGameIds.Contains(n.GameId)).ToListAsync();
-            _context.NationStates.RemoveRange(oldNationStates);
-
-            var oldBonds = await _context.Bonds.Where(b => oldGameIds.Contains(b.GameId)).ToListAsync();
-            _context.Bonds.RemoveRange(oldBonds);
-
-            var oldPlayers = await _context.Players.Where(p => oldGameIds.Contains(p.GameId)).ToListAsync();
-            _context.Players.RemoveRange(oldPlayers);
-
-            _context.Games.RemoveRange(oldGames);
-
-            await _context.SaveChangesAsync();
-            _context.ChangeTracker.Clear();
-        }
-
         // 1. Create a quick, isolated game in the DB
         var gameId = Guid.NewGuid();
         var game = new Game
@@ -207,10 +168,6 @@ public class TcpTrainingServer : BackgroundService
         game.Players = players;
         game.ActingPlayerId = rlPlayer.Id; // Starts acting
 
-        _context.Games.Add(game);
-        await _context.SaveChangesAsync();
-        _context.ChangeTracker.Clear();
-
         // --- Official Imperial 2030 Initialization Logic ---
         var newBonds = new List<Bond>();
         var newNationStates = new List<NationState>();
@@ -235,7 +192,7 @@ public class TcpTrainingServer : BackgroundService
         {
             newTerritoryStates.Add(new TerritoryState { TerritoryId = t.Id, GameId = gameId, HasFactory = startingFactories.Contains(t.Id) });
         }
-        _context.TerritoryStates.AddRange(newTerritoryStates);
+        game.TerritoryStates = newTerritoryStates;
 
         var bondDefinitions = new[]
         {
@@ -252,14 +209,11 @@ public class TcpTrainingServer : BackgroundService
             }
         }
 
-        _context.NationStates.AddRange(newNationStates);
-        _context.Bonds.AddRange(newBonds);
-        await _context.SaveChangesAsync();
-        _context.ChangeTracker.Clear();
-
-        var bonds = await _context.Bonds.Where(b => b.GameId == gameId).ToListAsync();
-        var nationStates = await _context.NationStates.Where(ns => ns.GameId == gameId).ToListAsync();
-        var allPlayers = await _context.Players.Where(p => p.GameId == gameId).OrderBy(p => p.Id).ToListAsync();
+        game.NationStates = newNationStates;
+        game.Bonds = newBonds;
+        var bonds = newBonds;
+        var nationStates = newNationStates;
+        var allPlayers = players;
 
         var random = new Random();
         var shuffledPlayers = allPlayers.OrderBy(p => random.Next()).ToList();
@@ -290,26 +244,20 @@ public class TcpTrainingServer : BackgroundService
 
             var bond9M = bonds.First(b => b.Nation == def.Primary && b.Cost == 9);
             bond9M.HolderId = player.Id;
-            _context.Entry(bond9M).State = EntityState.Modified;
 
             var nsPrimary = nationStates.First(ns => ns.Nation == def.Primary);
             nsPrimary.Treasury += 9;
-            _context.Entry(nsPrimary).State = EntityState.Modified;
 
             var bond2M = bonds.First(b => b.Nation == def.Secondary && b.Cost == 2);
             bond2M.HolderId = player.Id;
-            _context.Entry(bond2M).State = EntityState.Modified;
 
             var nsSecondary = nationStates.First(ns => ns.Nation == def.Secondary);
             nsSecondary.Treasury += 2;
-            _context.Entry(nsSecondary).State = EntityState.Modified;
         }
 
-        await _context.SaveChangesAsync();
-        _context.ChangeTracker.Clear();
 
-        var bondsHeld = await _context.Bonds.Where(b => b.GameId == gameId && b.HolderId != null).ToListAsync();
-        var nationStatesToUpdate = await _context.NationStates.Where(ns => ns.GameId == gameId).ToListAsync();
+        var bondsHeld = bonds.Where(b => b.HolderId != null).ToList();
+        var nationStatesToUpdate = nationStates;
 
         foreach (var ns in nationStatesToUpdate)
         {
@@ -324,7 +272,6 @@ public class TcpTrainingServer : BackgroundService
                 if (bond2M != null)
                 {
                     ns.ControllerId = bond2M.HolderId;
-                    _context.Entry(ns).State = EntityState.Modified;
                     continue;
                 }
             }
@@ -333,17 +280,14 @@ public class TcpTrainingServer : BackgroundService
             if (controller != null)
             {
                 ns.ControllerId = controller.Id;
-                _context.Entry(ns).State = EntityState.Modified;
             }
         }
 
-        await _context.SaveChangesAsync();
-        _context.ChangeTracker.Clear();
 
         if (allPlayers.Any())
         {
             var sorted = allPlayers.OrderBy(p => p.Id).ToList();
-            var gameToInit = await _context.Games.Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == gameId);
+            var gameToInit = game;
             if (gameToInit != null)
             {
                 var russiaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.Russia);
@@ -365,13 +309,11 @@ public class TcpTrainingServer : BackgroundService
                 {
                     gameToInit.InvestorCardHolderId = sorted[0].Id;
                 }
-                _context.Entry(gameToInit).State = EntityState.Modified;
             }
         }
-        await _context.SaveChangesAsync();
 
-        var gameToUpdate = await _context.Games.Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == gameId);
-        var playersToUpdate = await _context.Players.Where(p => p.GameId == gameId).ToListAsync();
+        var gameToUpdate = game;
+        var playersToUpdate = players;
 
         if (gameToUpdate != null)
         {
@@ -381,7 +323,6 @@ public class TcpTrainingServer : BackgroundService
             {
                 gameToUpdate.AdvanceTurn();
             }
-            _context.Entry(gameToUpdate).State = EntityState.Modified;
         }
 
         int startingCash = 13;
@@ -390,34 +331,77 @@ public class TcpTrainingServer : BackgroundService
             p.Cash = startingCash;
             int pkgCount = distribution.Values.Count(v => v.Id == p.Id);
             p.Cash -= pkgCount * 11;
-            _context.Entry(p).State = EntityState.Modified;
         }
-        await _context.SaveChangesAsync();
-        _context.ChangeTracker.Clear();
 
 
         var sessionId = Guid.NewGuid().ToString();
-        _sessions[sessionId] = new TrainingSession { GameId = gameId, RLPlayerId = rlPlayer.Id };
+        _sessions[sessionId] = new TrainingSession { Game = game, RLPlayerId = rlPlayer.Id };
 
-        var state = GetStateVector(_context, gameId, rlPlayer.Id);
-        var mask = GetActionMask(_context, gameId, _sessions[sessionId]);
+        var state = GetStateVector(game, rlPlayer.Id);
+        var mask = GetActionMask(game, _sessions[sessionId]);
 
         return new ResetResponse { SessionId = sessionId, State = state, ActionMask = mask };
+    }
+
+    private async Task TryPlayBotTurnAsync(Game game)
+    {
+        if (game.IsInvestorTurn && game.ActingPlayerId.HasValue)
+        {
+            var actor = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId);
+            if (actor != null && actor.IsBot)
+            {
+                try
+                {
+                    await _botService.BotInvestorAction(null, game, actor);
+                }
+                catch (Bots.Strategies.RlTrainingPauseException)
+                {
+                    return; // Pause loop so RL Python env can fetch state
+                }
+            }
+        }
+        else if (game.PendingBattleDefenders.Any())
+        {
+            try
+            {
+                await _botService.HandleBotBattleResponse(null, game);
+            }
+            catch (Bots.Strategies.RlTrainingPauseException)
+            {
+                return; // Pause loop so RL Python env can fetch state
+            }
+        }
+        else
+        {
+            var nationState = game.NationStates.FirstOrDefault(ns => ns.Nation == game.CurrentTurnNation);
+            if (nationState?.ControllerId != null)
+            {
+                var controller = game.Players.First(p => p.Id == nationState.ControllerId);
+                if (controller != null && controller.IsBot)
+                {
+                    try
+                    {
+                        await _botService.ExecuteBotTurn(null, game, nationState, controller);
+                    }
+                    catch (Bots.Strategies.RlTrainingPauseException)
+                    {
+                        // Pause the game loop so the Training Controller can fetch the next action from Python
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     private async Task<StepResponse?> HandleStepAsync(TcpRequest req)
     {
         if (!_sessions.TryGetValue(req.SessionId, out var session)) return null;
-
-        using var scope = _serviceProvider.CreateScope();
-        var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-        var game = await _context.Games.Include(g => g.Players).Include(g => g.NationStates).Include(g => g.Bonds).FirstOrDefaultAsync(g => g.Id == session.GameId);
+        var game = session.Game;
         if (game == null) return null;
 
         var player = game.Players.First(p => p.Id == session.RLPlayerId);
 
-        float prevVP = CalculateRelativeVP(_context, game, session.RLPlayerId);
+        float prevVP = CalculateRelativeVP(game, session.RLPlayerId);
 
         // Snapshot pre-turn state to detect wasted actions
         var preNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
@@ -426,6 +410,53 @@ public class TcpTrainingServer : BackgroundService
         bool wasRondelTurn = !game.IsInvestorTurn && !game.PendingBattleDefenders.Any()
                              && preNs != null && preNs.ControllerId == session.RLPlayerId;
 
+        int preFlags = 0;
+        int preHostilesInHome = 0;
+        int expectedTaxBonus = 0;
+        int expectedTaxRevenue = 0;
+        int expectedTaxCosts = 0;
+        bool isTaxationAction = false;
+
+        if (preNs != null && preNs.ControllerId == session.RLPlayerId)
+        {
+            preFlags = game.TerritoryStates.Count(t => t.Controller == preNs.Nation);
+            var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == preNs.Nation).Select(t => t.Id).ToHashSet();
+            preHostilesInHome = game.Units.Count(u => homeTerritories.Contains(u.TerritoryId) && u.Nation != preNs.Nation && u.IsHostile);
+
+            if (wasRondelTurn && req.Action >= 0 && req.Action <= 5 && preRondelPos.HasValue)
+            {
+                int targetSlot = (preRondelPos.Value + req.Action + 1) % 8;
+                if (targetSlot == 0) // Taxation slot
+                {
+                    isTaxationAction = true;
+                    var taxPreview = Imperial2030.Server.Helpers.TaxationHelper.PreviewTaxation(game, preNs);
+                    expectedTaxBonus = taxPreview.ExpectedBonus;
+
+                    int factoryRevenue = 0;
+                    var territoriesWithFactories = game.TerritoryStates.Where(ts => ts.HasFactory).ToList();
+                    foreach (var ts in territoriesWithFactories)
+                    {
+                        var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
+                        if (territoryDef != null && territoryDef.Nation == preNs.Nation)
+                        {
+                            bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != preNs.Nation && u.IsHostile);
+                            if (!hasHostileArmy) factoryRevenue += 2;
+                        }
+                    }
+                    int flagRevenue = Math.Min(15, game.TerritoryStates.Count(ts => ts.Controller == preNs.Nation));
+                    expectedTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
+                    expectedTaxCosts = game.Units.Count(u => u.Nation == preNs.Nation);
+                }
+            }
+        }
+
+        var preUnitCounts = game.Units.GroupBy(u => u.Nation).ToDictionary(g => g.Key, g => g.Count());
+        var preOccupiedFactories = game.TerritoryStates.Where(t => t.HasFactory).ToDictionary(
+            t => t.TerritoryId,
+            t => game.Units.Any(u => u.TerritoryId == t.TerritoryId && u.Nation != TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation && u.IsHostile)
+        );
+        float explicitBonusReward = 0f;
+
         bool wasManeuverAction = false;
         if (req.Action == 63 && game.CurrentManeuverPhase != ManeuverPhase.None)
         {
@@ -433,7 +464,7 @@ public class TcpTrainingServer : BackgroundService
             // Pass Maneuver
             if (game.CurrentManeuverPhase == ManeuverPhase.Fleets) game.CurrentManeuverPhase = ManeuverPhase.Armies;
             else game.CurrentManeuverPhase = ManeuverPhase.None;
-            
+
             session.ManeuverSelectedTerritoryId = null;
         }
         else if (req.Action >= 64 && req.Action <= 125)
@@ -452,7 +483,7 @@ public class TcpTrainingServer : BackgroundService
             // Stage 2: Select Destination
             var unitType = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? UnitType.Fleet : UnitType.Army;
             var unit = game.Units.FirstOrDefault(u => u.TerritoryId == session.ManeuverSelectedTerritoryId && u.UnitType == unitType && u.Nation == game.CurrentTurnNation && !u.HasMoved);
-            
+
             if (unit != null)
             {
                 unit.HasMoved = true;
@@ -462,7 +493,7 @@ public class TcpTrainingServer : BackgroundService
                     if (destIdx >= 0 && destIdx < RLBotStrategy.AllManeuverTerritories.Length)
                     {
                         var target = RLBotStrategy.AllManeuverTerritories[destIdx];
-                        
+
                         var friendlyNations = game.NationStates.Where(n => n.ControllerId == session.RLPlayerId).Select(n => n.Nation).ToHashSet();
                         bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
                         var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
@@ -477,8 +508,6 @@ public class TcpTrainingServer : BackgroundService
                         var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == target && u.UnitType == unit.UnitType && !friendlyNations.Contains(u.Nation));
                         if (enemyUnit != null && isHostileMove)
                         {
-                            _context.Units.Remove(unit);
-                            _context.Units.Remove(enemyUnit);
                             game.Units.Remove(unit);
                             game.Units.Remove(enemyUnit);
                         }
@@ -492,7 +521,7 @@ public class TcpTrainingServer : BackgroundService
             // Base Actions (0-63)
             RLBotStrategy.TrainingActionOverride.Value = req.Action;
             _botService.SkipDelays = true;
-            await _botService.TryPlayBotTurnAsync(game.Id, singleTurnOnly: true);
+            await TryPlayBotTurnAsync(game);
             RLBotStrategy.TrainingActionOverride.Value = null;
         }
 
@@ -507,7 +536,7 @@ public class TcpTrainingServer : BackgroundService
             bool hasArmies = game.Units.Any(u => u.Nation == game.CurrentTurnNation && u.UnitType == UnitType.Army && !u.HasMoved);
             if (!hasArmies) game.CurrentManeuverPhase = ManeuverPhase.None;
         }
-        
+
         // If we were manually stepping through maneuver, and the maneuver phase just ended, we must advance the turn
         if (wasManeuverAction && game.CurrentManeuverPhase == ManeuverPhase.None && game.Status == GameStatus.InProgress)
         {
@@ -515,13 +544,90 @@ public class TcpTrainingServer : BackgroundService
             game.AdvanceTurn();
         }
 
-        await _context.SaveChangesAsync();
+        // Calculate destruction explicit rewards before AdvanceUntilRLTurn (so we don't reward for other bots' actions)
+        foreach (Nation nation in Enum.GetValues(typeof(Nation)))
+        {
+            int preCount = preUnitCounts.ContainsKey(nation) ? preUnitCounts[nation] : 0;
+            int postCount = game.Units.Count(u => u.Nation == nation);
+            if (postCount < preCount)
+            {
+                var rlInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId == session.RLPlayerId).Sum(b => b.Interest);
+                var leaderInterest = game.Players.Select(p => game.Bonds.Where(b => b.Nation == nation && b.HolderId == p.Id).Sum(b => b.Interest)).DefaultIfEmpty(0).Max();
 
-        bool done = await AdvanceUntilRLTurn(_context, game.Id, session.RLPlayerId);
-        game = await _context.Games.Include(g => g.Players).Include(g => g.NationStates).Include(g => g.Bonds).FirstAsync(g => g.Id == session.GameId);
+                if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
+                {
+                    explicitBonusReward += 1.0f * (preCount - postCount);
+                    //_logger.LogInformation($"[RL REWARD] Destroyed unit of {nation}. +{1.0f * (preCount - postCount)}");
+                }
+            }
+        }
 
-        float newVP = CalculateRelativeVP(_context, game, session.RLPlayerId);
-        float reward = newVP - prevVP;
+        foreach (var kvp in preOccupiedFactories)
+        {
+            bool wasOccupied = kvp.Value;
+            var tId = kvp.Key;
+            var def = TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == tId);
+            if (def != null && def.Nation.HasValue)
+            {
+                bool isOccupiedNow = game.Units.Any(u => u.TerritoryId == tId && u.Nation != def.Nation && u.IsHostile);
+                if (!wasOccupied && isOccupiedNow)
+                {
+                    var occupyingUnit = game.Units.FirstOrDefault(u => u.TerritoryId == tId && u.Nation != def.Nation && u.IsHostile);
+                    var occupyingNs = game.NationStates.FirstOrDefault(n => n.Nation == occupyingUnit?.Nation);
+                    if (occupyingNs != null && occupyingNs.ControllerId == session.RLPlayerId)
+                    {
+                        var nation = def.Nation.Value;
+                        var rlInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId == session.RLPlayerId).Sum(b => b.Interest);
+                        var leaderInterest = game.Players.Select(p => game.Bonds.Where(b => b.Nation == nation && b.HolderId == p.Id).Sum(b => b.Interest)).DefaultIfEmpty(0).Max();
+
+                        if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
+                        {
+                            explicitBonusReward += 2.0f;
+                            //_logger.LogInformation($"[RL REWARD] Occupied factory of {nation}. +2.0f");
+                        }
+                    }
+                }
+            }
+        }
+
+        bool done = await AdvanceUntilRLTurn(game, session.RLPlayerId);
+
+        float newVP = CalculateRelativeVP(game, session.RLPlayerId);
+        float reward = newVP - prevVP + explicitBonusReward;
+
+        if (preNs != null && preNs.ControllerId == session.RLPlayerId)
+        {
+            int postFlags = game.TerritoryStates.Count(t => t.Controller == preNs.Nation);
+            var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == preNs.Nation).Select(t => t.Id).ToHashSet();
+            int postHostilesInHome = game.Units.Count(u => homeTerritories.Contains(u.TerritoryId) && u.Nation != preNs.Nation && u.IsHostile);
+
+            if (postFlags > preFlags)
+            {
+                reward += (postFlags - preFlags) * 1.0f; // Small reward for placing flag
+                //_logger.LogInformation($"[RL REWARD] Flag placed by {preNs.Nation}. +{(postFlags - preFlags) * 1.0f}");
+            }
+            if (postHostilesInHome < preHostilesInHome)
+            {
+                reward += (preHostilesInHome - postHostilesInHome) * 5.0f; // Nice reward for clearing home territory
+                //_logger.LogInformation($"[RL REWARD] Hostiles cleared from home by {preNs.Nation}. +{(preHostilesInHome - postHostilesInHome) * 5.0f}");
+            }
+
+            if (isTaxationAction)
+            {
+                if (expectedTaxBonus > 0)
+                {
+                    reward += 2.0f; // Reward if personal bonus > 0
+                }
+                if (expectedTaxRevenue > expectedTaxCosts)
+                {
+                    reward += 2.0f; // Reward if revenue > costs
+                }
+                else if (expectedTaxRevenue < expectedTaxCosts)
+                {
+                    reward -= 5.0f; // Penalty if revenue < costs
+                }
+            }
+        }
 
         // Continuous reward for leading the game (or penalty for trailing)
         // This gives the agent a dense gradient to always try and increase its relative score, even if it's currently losing
@@ -532,41 +638,67 @@ public class TcpTrainingServer : BackgroundService
         if (wasRondelTurn && req.Action >= 0 && req.Action <= 5 && preRondelPos.HasValue)
         {
             int targetSlot = (preRondelPos.Value + req.Action + 1) % 8;
+            int dist = (targetSlot - preRondelPos.Value + 8) % 8;
+            int moveCost = 0;
+            if (dist > 3 && preNs != null)
+            {
+                int pf = preNs.Power / 5;
+                moveCost = (dist - 3) * (1 + pf);
+            }
+
             // Factory (slot 1) wasted: not enough treasury OR no valid cities to build in
             if (targetSlot == 1 && preNs != null)
             {
-                bool noMoney = preTreasury.HasValue && preTreasury.Value < 5;
+                bool noMoney = preTreasury.HasValue && preTreasury < 5;
                 bool allBuiltOrBlocked = false;
+                var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == preNs.Nation && t.CityType != CityType.None);
                 if (!noMoney)
                 {
-                    var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == preNs.Nation && t.CityType != CityType.None);
                     allBuiltOrBlocked = homeCities.All(city =>
                     {
-                        var ts = _context.TerritoryStates.FirstOrDefault(t => t.GameId == game.Id && t.TerritoryId == city.Id);
+                        var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
                         if (ts != null && ts.HasFactory) return true; // Already built
-                        bool blocked = _context.Units.Any(u => u.GameId == game.Id && u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != preNs.Nation && u.IsHostile);
+                        bool blocked = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != preNs.Nation && u.IsHostile);
                         return blocked; // Blocked by enemy
                     });
                 }
                 if (noMoney || allBuiltOrBlocked)
                 {
-                    _logger.LogWarning($"[RL PENALTY] Wasted Factory action by {preNs.Nation}. NoMoney: {noMoney}, AllBuiltOrBlocked: {allBuiltOrBlocked}");
-                    reward -= 5.0f;
+                    bool allBuilt = homeCities.All(city =>
+                    {
+                        var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
+                        return ts != null && ts.HasFactory;
+                    });
+                    bool blocked = !allBuilt && allBuiltOrBlocked;
+                    _logger.LogWarning($"[RL PENALTY] Wasted Factory action by {preNs.Nation}. NoMoney: {noMoney}, AllBuilt: {allBuilt}, Blocked: {blocked}, Cost: {moveCost}M");
+                    reward -= 15.0f;
+                    reward -= allBuilt ? 10.0f : 0;
+                    reward -= moveCost * 10.0f; // Extra penalty for wasting money on useless move
                 }
             }
-            if (targetSlot == 5 && preTreasury.HasValue && preTreasury.Value < 1)
+            if (targetSlot == 5 && preTreasury.HasValue && preTreasury < 1)
             {
-                _logger.LogWarning($"[RL PENALTY] Wasted Import action by {preNs?.Nation}. Treasury < 1.");
-                reward -= 5.0f;
+                _logger.LogWarning($"[RL PENALTY] Wasted Import action by {preNs?.Nation}. Treasury < 1, Cost: {moveCost}M");
+                reward -= 7.0f;
+                reward -= moveCost * 10.0f;
             }
             // Maneuver (slot 3 or 7) with 0 units = wasted turn
             if ((targetSlot == 3 || targetSlot == 7) && preNs != null)
             {
-                bool hasUnits = _context.Units.Any(u => u.GameId == game.Id && u.Nation == preNs.Nation);
+                bool hasUnits = game.Units.Any(u => u.Nation == preNs.Nation);
                 if (!hasUnits)
                 {
-                    _logger.LogWarning($"[RL PENALTY] Wasted Maneuver action by {preNs.Nation}. No units to move.");
-                    reward -= 5.0f;
+                    if (targetSlot == 7 && dist >= 3)
+                    {
+                        _logger.LogWarning($"[RL PENALTY] Strategic positioning to Maneuver 2 by {preNs.Nation}. No units, but getting closer to Tax. Cost: {moveCost}M");
+                        reward -= 2.0f;
+                    }
+                    else
+                    {
+                        _logger.LogWarning($"[RL PENALTY] Wasted Maneuver action by {preNs.Nation}. No units to move, Cost: {moveCost}M");
+                        reward -= 10.0f;
+                    }
+                    reward -= moveCost * 10.0f;
                 }
             }
         }
@@ -575,8 +707,6 @@ public class TcpTrainingServer : BackgroundService
         float maxOfOthersScore = allScores.Where(s => s.Id != session.RLPlayerId).Max(s => s.Score);
         float rlScore = allScores.First(s => s.Id == session.RLPlayerId).Score;
 
-        //_logger.LogInformation($"RL player scored {rlScore} and max of others score is {maxOfOthersScore}, intermediate score: {newVP}, prev {prevVP}, step reward: {reward}, gamestatus: {game.Status}, done: {done}");
-
         if (game.Status == GameStatus.Finished)
         {
             _logger.LogInformation($"Finished! RL player scored {rlScore} and max of others score is {maxOfOthersScore}, intermediate score: {newVP}, reward: {reward}");
@@ -584,52 +714,32 @@ public class TcpTrainingServer : BackgroundService
             // At the end of the game, reward perfectly aligns with the final VP difference
             reward += (rlScore - maxOfOthersScore) * 1.0f;
 
-            // Small flat bonus for winning
+            // Small flat bonus for winning (and penalty for losing)
             if (rlScore > maxOfOthersScore)
             {
                 reward += 100f;
             }
+            else if (rlScore < maxOfOthersScore)
+            {
+                reward -= 100f;
+            }
 
             _logger.LogInformation($"Final reward is {reward}, game players: {string.Join(", ", game.Players.Select(p => p.BotType))}");
 
-            var stateResponse = GetStateVector(_context, game.Id, session.RLPlayerId);
+            var stateResponse = GetStateVector(game, session.RLPlayerId);
 
-            // Immediately cleanup the finished game to prevent memory buildup and 10-second freezes
-            var gameActions = await _context.GameActions.Where(a => a.GameId == game.Id).ToListAsync();
-            _context.GameActions.RemoveRange(gameActions);
-
-            var units = await _context.Units.Where(u => u.GameId == game.Id).ToListAsync();
-            _context.Units.RemoveRange(units);
-
-            var territoryStates = await _context.TerritoryStates.Where(t => t.GameId == game.Id).ToListAsync();
-            _context.TerritoryStates.RemoveRange(territoryStates);
-
-            var nationStates = await _context.NationStates.Where(n => n.GameId == game.Id).ToListAsync();
-            _context.NationStates.RemoveRange(nationStates);
-
-            var bondsHeld = await _context.Bonds.Where(b => b.GameId == game.Id).ToListAsync();
-            _context.Bonds.RemoveRange(bondsHeld);
-
-            var gamePlayers = await _context.Players.Where(p => p.GameId == game.Id).ToListAsync();
-            _context.Players.RemoveRange(gamePlayers);
-
-            _context.Games.Remove(game);
-            await _context.SaveChangesAsync();
-
+            _sessions.Remove(req.SessionId);
             return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[189] };
         }
 
-        return new StepResponse { State = GetStateVector(_context, game.Id, session.RLPlayerId, session.ManeuverSelectedTerritoryId), Reward = reward, Done = false, ActionMask = GetActionMask(_context, game.Id, session) };
+        return new StepResponse { State = GetStateVector(game, session.RLPlayerId, session.ManeuverSelectedTerritoryId), Reward = reward, Done = false, ActionMask = GetActionMask(game, session) };
     }
 
-    private async Task<bool> AdvanceUntilRLTurn(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId)
+    private async Task<bool> AdvanceUntilRLTurn(Game g, Guid rlPlayerId)
     {
         int safety = 0;
         while (safety++ < 1000)
         {
-            _context.ChangeTracker.Clear();
-
-            var g = _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstOrDefault(x => x.Id == gameId);
             if (g == null || g.Status == GameStatus.Finished) return true;
 
             if (g.IsInvestorTurn && g.ActingPlayerId == rlPlayerId) return false;
@@ -646,27 +756,27 @@ public class TcpTrainingServer : BackgroundService
                 if (ns != null && ns.ControllerId == rlPlayerId) return false;
             }
 
-            await _botService.TryPlayBotTurnAsync(gameId, singleTurnOnly: true);
+            await TryPlayBotTurnAsync(g);
         }
         return true;
     }
 
-    private float CalculateRelativeVP(ApplicationDbContext _context, Game game, Guid playerId)
+    private float CalculateRelativeVP(Game game, Guid playerId)
     {
-        var allScores = game.Players.Select(p => new { p.Id, Score = CalculateVP(_context, game, p.Id, useDense: true) }).ToList();
+        var allScores = game.Players.Select(p => new { p.Id, Score = CalculateVP(game, p.Id, useDense: true) }).ToList();
         float myScore = allScores.First(s => s.Id == playerId).Score;
         float maxOtherScore = allScores.Where(s => s.Id != playerId).Max(s => s.Score);
         return myScore - maxOtherScore;
     }
 
-    private float CalculateVP(ApplicationDbContext _context, Game game, Guid playerId, bool useDense = true)
+    private float CalculateVP(Game game, Guid playerId, bool useDense = true)
     {
         var player = game.Players.FirstOrDefault(p => p.Id == playerId);
         if (player == null) return 0;
 
         float score = player.Cash * .9f;
 
-        var bonds = _context.Bonds.Where(b => b.HolderId == playerId).ToList();
+        var bonds = game.Bonds.Where(b => b.HolderId == playerId).ToList();
         foreach (var bond in bonds)
         {
             var nation = game.NationStates.FirstOrDefault(n => n.Nation == bond.Nation);
@@ -679,8 +789,8 @@ public class TcpTrainingServer : BackgroundService
 
                     foreach (var terrId in homeTerritories)
                     {
-                        var ts = _context.TerritoryStates.FirstOrDefault(t => t.GameId == game.Id && t.TerritoryId == terrId);
-                        bool isOccupied = _context.Units.Any(u => u.GameId == game.Id && u.TerritoryId == terrId && u.Nation != nation.Nation && u.IsHostile);
+                        var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == terrId);
+                        bool isOccupied = game.Units.Any(u => u.TerritoryId == terrId && u.Nation != nation.Nation && u.IsHostile);
 
                         if (ts != null && ts.HasFactory)
                         {
@@ -693,8 +803,8 @@ public class TcpTrainingServer : BackgroundService
                         }
                     }
 
-                    int flagCount = _context.TerritoryStates.Count(t => t.GameId == game.Id && t.Controller == nation.Nation);
-                    int unitCount = _context.Units.Count(u => u.GameId == game.Id && u.Nation == nation.Nation);
+                    int flagCount = game.TerritoryStates.Count(t => t.Controller == nation.Nation);
+                    int unitCount = game.Units.Count(u => u.Nation == nation.Nation);
 
                     float denseFactor = (nation.Power / 5.0f);
 
@@ -724,11 +834,9 @@ public class TcpTrainingServer : BackgroundService
         return score;
     }
 
-    private float[] GetStateVector(ApplicationDbContext _context, Guid gameId, Guid rlPlayerId, string? maneuverSelectedTerritoryId = null)
+    private float[] GetStateVector(Game game, Guid rlPlayerId, string? maneuverSelectedTerritoryId = null)
     {
         float[] state = new float[RLBotStrategy.StateSize];
-
-        var game = _context.Games.Include(g => g.NationStates).Include(g => g.Players).Include(g => g.Bonds).FirstOrDefault(g => g.Id == gameId);
         if (game == null) return state;
 
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
@@ -737,8 +845,8 @@ public class TcpTrainingServer : BackgroundService
         var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
         var bonds = game.Bonds.ToList();
 
-        var allTerritories = _context.TerritoryStates.Where(t => t.GameId == gameId).ToList();
-        var allUnits = _context.Units.Where(u => u.GameId == gameId).ToList();
+        var allTerritories = game.TerritoryStates.ToList();
+        var allUnits = game.Units.ToList();
 
         var allPlayers = game.Players.Select(p => new
         {
@@ -911,9 +1019,9 @@ public class TcpTrainingServer : BackgroundService
                         .Where(t => t.Nation == actingNs.Nation && t.CityType != CityType.None);
                     allBuiltOrBlocked = homeCities.All(city =>
                     {
-                        var ts = _context.TerritoryStates.FirstOrDefault(t => t.GameId == gameId && t.TerritoryId == city.Id);
+                        var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
                         if (ts != null && ts.HasFactory) return true;
-                        return _context.Units.Any(u => u.GameId == gameId && u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != actingNs.Nation && u.IsHostile);
+                        return game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != actingNs.Nation && u.IsHostile);
                     });
                 }
                 if (noMoney || allBuiltOrBlocked) isPenalized = true;
@@ -924,7 +1032,7 @@ public class TcpTrainingServer : BackgroundService
             }
             else if (targetSlot == 3 || targetSlot == 7) // Maneuver
             {
-                bool hasUnits = _context.Units.Any(u => u.GameId == gameId && u.Nation == actingNs.Nation);
+                bool hasUnits = game.Units.Any(u => u.Nation == actingNs.Nation);
                 if (!hasUnits) isPenalized = true;
             }
 
@@ -957,7 +1065,7 @@ public class TcpTrainingServer : BackgroundService
                 var armies = allUnits.Where(u => u.TerritoryId == tId && u.Nation == n && u.UnitType == UnitType.Army).ToList();
                 int armyCount = armies.Count;
                 EncodeUnitCount(armyCount, state, ref i);
-                
+
                 // Add 1 float for IsHostile presence
                 bool hasHostile = armies.Any(a => a.IsHostile);
                 state[i++] = hasHostile ? 1.0f : 0.0f;
@@ -1026,11 +1134,10 @@ public class TcpTrainingServer : BackgroundService
         state[i++] = !controller.HasValue ? 1f : 0f;
     }
 
-    private bool[] GetActionMask(ApplicationDbContext _context, Guid gameId, TrainingSession session)
+    private bool[] GetActionMask(Game game, TrainingSession session)
     {
         var mask = new bool[189];
         var rlPlayerId = session.RLPlayerId;
-        var game = _context.Games.Include(g => g.Players).Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
         if (game == null) return mask;
 
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
@@ -1078,7 +1185,7 @@ public class TcpTrainingServer : BackgroundService
 
         if (game.CurrentManeuverPhase != ManeuverPhase.None)
         {
-            var units = _context.Units.Where(u => u.GameId == game.Id && u.Nation == ns.Nation).ToList();
+            var units = game.Units.Where(u => u.Nation == ns.Nation).ToList();
             if (session.ManeuverSelectedTerritoryId == null) // Stage 1
             {
                 mask[63] = true; // Pass (End Maneuver)
@@ -1101,14 +1208,14 @@ public class TcpTrainingServer : BackgroundService
                 // Find valid destinations
                 var unitType = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? UnitType.Fleet : UnitType.Army;
                 var selectedUnit = units.FirstOrDefault(u => u.TerritoryId == session.ManeuverSelectedTerritoryId && u.UnitType == unitType && !u.HasMoved);
-                
+
                 if (selectedUnit != null)
                 {
                     // Copy heuristic adjacency logic (simplified)
                     if (MapConnectivity.Adjacency.TryGetValue(selectedUnit.TerritoryId, out var neighbors))
                     {
                         var validNeighbors = neighbors.ToList();
-                        
+
                         // NOTE: Proper rail/convoy logic should be used here, but for RL, direct adjacency is safe start.
                         // We filter by sea/land
                         if (unitType == UnitType.Fleet)

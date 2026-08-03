@@ -56,7 +56,7 @@ public class BotService
                 using var scope = _scopeFactory.CreateScope();
                 var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-                var game = await LoadGame(ctx, gameId);
+                Game? game = await LoadGame(ctx, gameId);
                 if (game == null || game.Status != GameStatus.InProgress) break;
 
                 bool botActed = false;
@@ -70,7 +70,7 @@ public class BotService
                         try
                         {
                             await BotInvestorAction(ctx, game, actor);
-                            await ctx.SaveChangesAsync();
+                            await SaveChangesAsync(ctx);
                             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
                             if (!SkipDelays) await Task.Delay(2500);
                             botActed = true;
@@ -124,7 +124,7 @@ public class BotService
         }
     }
 
-    private async Task ExecuteBotTurn(ApplicationDbContext ctx, Game game, NationState nationState, Player controller)
+    public async Task ExecuteBotTurn(ApplicationDbContext? ctx, Game game, NationState nationState, Player controller)
     {
         var nation = nationState.Nation;
         var gameId = game.Id;
@@ -196,7 +196,7 @@ public class BotService
             else
                 game.CurrentManeuverPhase = ManeuverPhase.None;
 
-            await ctx.SaveChangesAsync();
+            await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
             if (game.IsInvestorTurn)
@@ -208,7 +208,7 @@ public class BotService
             if (!SkipDelays) await Task.Delay(2200);
 
             // Reload game state since we might have waited
-            game = await LoadGame(ctx, gameId);
+            game = await ReloadGameAsync(ctx, game);
             if (game == null) return;
             nationState = game.NationStates.First(ns => ns.Nation == nation);
             controller = game.Players.First(p => p.Id == nationState.ControllerId);
@@ -232,14 +232,14 @@ public class BotService
             case 4: break; // Investor handled separately
         }
 
-        await ctx.SaveChangesAsync();
+        await SaveChangesAsync(ctx);
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
         // If not taxation (which auto-advances) and not in maneuver, end turn
         if (targetSlot != 0 && game.Status == GameStatus.InProgress && game.CurrentManeuverPhase == ManeuverPhase.None)
         {
             if (!SkipDelays) await Task.Delay(2000);
-            game = await LoadGame(ctx, gameId);
+            game = await ReloadGameAsync(ctx, game);
             if (game == null) return;
             nationState = game.NationStates.First(ns => ns.Nation == nation);
 
@@ -247,7 +247,7 @@ public class BotService
             game.AdvanceTurn();
 
             LogAction(ctx, game, "ended their turn", "EndTurn", nation, controller.BotName ?? "Bot");
-            await ctx.SaveChangesAsync();
+            await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
         }
 
@@ -334,7 +334,7 @@ public class BotService
 
     // --- Slot Action Implementations ---
 
-    private async Task BotBuildFactory(ApplicationDbContext ctx, Game game, NationState ns, Player controller)
+    private async Task BotBuildFactory(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
     {
         if (ns.Treasury < 5) return;
         var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation && t.CityType != CityType.None).ToList();
@@ -357,8 +357,7 @@ public class BotService
                 if (ts == null)
                 {
                     ts = new TerritoryState { TerritoryId = city.Id, GameId = game.Id };
-                    game.TerritoryStates.Add(ts);
-                    ctx.TerritoryStates.Add(ts);
+                    AddTerritoryState(ctx, game, ts);
                 }
                 ns.Treasury -= 5;
                 ts.HasFactory = true;
@@ -368,7 +367,7 @@ public class BotService
         }
     }
 
-    private async Task BotProduction(ApplicationDbContext ctx, Game game, NationState ns)
+    private async Task BotProduction(ApplicationDbContext? ctx, Game game, NationState ns)
     {
         var nation = ns.Nation;
         int produced = 0;
@@ -387,7 +386,7 @@ public class BotService
             if (unitType == UnitType.Army && currentArmies >= NationData.GetMaxArmies(nation)) continue;
             if (unitType == UnitType.Fleet && currentFleets >= NationData.GetMaxFleets(nation)) continue;
 
-            ctx.Units.Add(new Unit { GameId = game.Id, Nation = nation, TerritoryId = ts.TerritoryId, UnitType = unitType, IsHostile = false });
+            AddUnit(ctx, game, new Unit { GameId = game.Id, Nation = nation, TerritoryId = ts.TerritoryId, UnitType = unitType, IsHostile = false });
             if (unitType == UnitType.Army) currentArmies++;
             else currentFleets++;
             produced++;
@@ -398,7 +397,7 @@ public class BotService
         LogAction(ctx, game, $"produced {produced} units ({string.Join(", ", locationNames)})", "Production", nation, botName);
     }
 
-    private async Task BotManeuver(ApplicationDbContext ctx, Game game, NationState ns, Player controller)
+    private async Task BotManeuver(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
     {
         var strategy = GetStrategy(controller);
         if (strategy is RLBotStrategy && RLBotStrategy.TrainingActionOverride.Value.HasValue)
@@ -509,10 +508,8 @@ public class BotService
 
                             if (enemyFleet != null)
                             {
-                                ctx.Units.Remove(fleet);
-                                ctx.Units.Remove(enemyFleet);
-                                game.Units.Remove(fleet);
-                                game.Units.Remove(enemyFleet);
+                                RemoveUnit(ctx, game, fleet);
+                                RemoveUnit(ctx, game, enemyFleet);
                                 LogAction(ctx, game, $"fleet attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
                                 continue;
                             }
@@ -530,7 +527,7 @@ public class BotService
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
                             // Exit BotManeuverFleets and pause the turn to await responses
-                            return; 
+                            return;
                         }
                     }
                 }
@@ -660,10 +657,8 @@ public class BotService
 
                             if (enemyUnit != null)
                             {
-                                ctx.Units.Remove(army);
-                                ctx.Units.Remove(enemyUnit);
-                                game.Units.Remove(army);
-                                game.Units.Remove(enemyUnit);
+                                RemoveUnit(ctx, game, army);
+                                RemoveUnit(ctx, game, enemyUnit);
                                 LogAction(ctx, game, $"army attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
                                 continue;
                             }
@@ -681,7 +676,7 @@ public class BotService
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
                             // Exit BotManeuver and pause the turn to await responses
-                            return; 
+                            return;
                         }
                     }
                 }
@@ -695,7 +690,7 @@ public class BotService
         game.CurrentManeuverPhase = ManeuverPhase.None;
     }
 
-    private async Task BotUpdateTerritoryControl(ApplicationDbContext ctx, Game game, string botName)
+    private async Task BotUpdateTerritoryControl(ApplicationDbContext? ctx, Game game, string botName)
     {
         var territoriesWithUnits = game.Units.Select(u => u.TerritoryId).Distinct().ToList();
 
@@ -719,16 +714,14 @@ public class BotService
                         // Clean up duplicates caused by concurrent API calls
                         for (int i = 1; i < states.Count; i++)
                         {
-                            game.TerritoryStates.Remove(states[i]);
-                            ctx.TerritoryStates.Remove(states[i]);
+                            RemoveTerritoryState(ctx, game, states[i]);
                         }
                     }
 
                     if (tState == null)
                     {
                         tState = new TerritoryState { TerritoryId = tId, GameId = game.Id };
-                        game.TerritoryStates.Add(tState);
-                        ctx.TerritoryStates.Add(tState);
+                        AddTerritoryState(ctx, game, tState);
                     }
 
                     bool isHomeProvince = territoryDef.Nation.HasValue;
@@ -749,7 +742,7 @@ public class BotService
         }
     }
 
-    private async Task BotTaxation(ApplicationDbContext ctx, Game game, NationState ns, Player controller)
+    private async Task BotTaxation(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
     {
         var nation = ns.Nation;
         int oldTreasury = ns.Treasury;
@@ -767,8 +760,8 @@ public class BotService
         if (ns.Power >= 25)
         {
             game.Status = GameStatus.Finished;
-            ctx.Entry(game).State = EntityState.Modified;
-            await ctx.SaveChangesAsync();
+            if (ctx != null) ctx.Entry(game).State = EntityState.Modified;
+            await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameEnded", game.Id);
             return;
@@ -778,7 +771,7 @@ public class BotService
         game.AdvanceTurn();
     }
 
-    private async Task BotImport(ApplicationDbContext ctx, Game game, NationState ns)
+    private async Task BotImport(ApplicationDbContext? ctx, Game game, NationState ns)
     {
         var nation = ns.Nation;
         if (ns.Treasury < 1) return;
@@ -795,7 +788,7 @@ public class BotService
 
         foreach (var import in imports)
         {
-            ctx.Units.Add(new Unit { GameId = game.Id, Nation = nation, TerritoryId = import.TerritoryId, UnitType = import.Type, IsHostile = false });
+            AddUnit(ctx, game, new Unit { GameId = game.Id, Nation = nation, TerritoryId = import.TerritoryId, UnitType = import.Type, IsHostile = false });
             imported++;
             var tName = homeTerritories.FirstOrDefault(t => t.Id == import.TerritoryId)?.Name ?? import.TerritoryId;
             locationNames.Add($"{import.Type} in {tName}");
@@ -807,7 +800,7 @@ public class BotService
         LogAction(ctx, game, $"imported {imported} units ({string.Join(", ", locationNames)})", "Import", nation, botName);
     }
 
-    private async Task BotInvestorAction(ApplicationDbContext ctx, Game game, Player actor)
+    public async Task BotInvestorAction(ApplicationDbContext? ctx, Game game, Player actor)
     {
         var controlledNations = game.NationStates.Where(ns => ns.ControllerId == actor.Id).Select(ns => ns.Nation).ToList();
         var availableBonds = game.Bonds.Where(b => b.HolderId == null).ToList();
@@ -844,11 +837,11 @@ public class BotService
             game.ActingPlayerId = null;
         }
 
-        await ctx.SaveChangesAsync();
+        await SaveChangesAsync(ctx);
         await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
     }
 
-    private async Task HandleBotBattleResponse(ApplicationDbContext ctx, Game game)
+    public async Task HandleBotBattleResponse(ApplicationDbContext? ctx, Game game)
     {
         foreach (var defNation in game.PendingBattleDefenders.ToList())
         {
@@ -887,10 +880,8 @@ public class BotService
                 var friendlyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == defNation);
                 if (enemyUnit != null && friendlyUnit != null)
                 {
-                    ctx.Units.Remove(enemyUnit);
-                    ctx.Units.Remove(friendlyUnit);
-                    game.Units.Remove(enemyUnit);
-                    game.Units.Remove(friendlyUnit);
+                    RemoveUnit(ctx, game, enemyUnit);
+                    RemoveUnit(ctx, game, friendlyUnit);
                     LogAction(ctx, game, $"Battle in {pendingBattle.TerritoryId}: {defNation} vs {pendingBattle.AggressorNation}. Both destroyed 1 unit.", "Battle", defNation, "System");
                 }
             }
@@ -904,7 +895,7 @@ public class BotService
             game.PendingBattleAggressorNation = null;
         }
 
-        await ctx.SaveChangesAsync();
+        await SaveChangesAsync(ctx);
         await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
         if (!SkipDelays)
         {
@@ -914,8 +905,9 @@ public class BotService
 
     // --- Helpers ---
 
-    private async Task<Game?> LoadGame(ApplicationDbContext ctx, Guid gameId)
+    private async Task<Game?> LoadGame(ApplicationDbContext? ctx, Guid gameId)
     {
+        if (ctx == null) return null;
         return await ctx.Games
             .Include(g => g.Players)
             .Include(g => g.NationStates)
@@ -926,17 +918,18 @@ public class BotService
             .FirstOrDefaultAsync(g => g.Id == gameId);
     }
 
-    private void LogAction(ApplicationDbContext ctx, Game game, string message, string type, Nation? nation, string playerName)
+    private void LogAction(ApplicationDbContext? ctx, Game game, string message, string type, Nation? nation, string playerName)
     {
-        ctx.GameActions.Add(new GameAction
+        var action = new GameAction
         {
             GameId = game.Id,
-            Timestamp = DateTime.UtcNow,
-            PlayerName = playerName,
-            Message = message,
             ActionType = type,
-            Nation = nation
-        });
+            Message = message,
+            Nation = nation,
+            PlayerName = playerName
+        };
+        game.Actions.Add(action);
+        if (ctx != null) ctx.Entry(action).State = Microsoft.EntityFrameworkCore.EntityState.Added;
     }
 
     private string GetSlotName(int slot) => slot switch
@@ -951,6 +944,41 @@ public class BotService
         7 => "Maneuver",
         _ => $"Slot {slot}"
     };
+
+    private void AddUnit(ApplicationDbContext? ctx, Game game, Unit unit)
+    {
+        game.Units.Add(unit);
+        if (ctx != null) ctx.Entry(unit).State = Microsoft.EntityFrameworkCore.EntityState.Added;
+    }
+
+    private void RemoveUnit(ApplicationDbContext? ctx, Game game, Unit unit)
+    {
+        game.Units.Remove(unit);
+        if (ctx != null) ctx.Units.Remove(unit);
+    }
+
+    private void AddTerritoryState(ApplicationDbContext? ctx, Game game, TerritoryState ts)
+    {
+        game.TerritoryStates.Add(ts);
+        if (ctx != null) ctx.Entry(ts).State = Microsoft.EntityFrameworkCore.EntityState.Added;
+    }
+
+    private void RemoveTerritoryState(ApplicationDbContext? ctx, Game game, TerritoryState ts)
+    {
+        game.TerritoryStates.Remove(ts);
+        if (ctx != null) ctx.TerritoryStates.Remove(ts);
+    }
+
+    private async Task SaveChangesAsync(ApplicationDbContext? ctx)
+    {
+        if (ctx != null) await ctx.SaveChangesAsync();
+    }
+
+    private async Task<Game?> ReloadGameAsync(ApplicationDbContext? ctx, Game? game)
+    {
+        if (ctx == null) return game;
+        if (game == null) return null;
+        var reloaded = await LoadGame(ctx, game.Id);
+        return reloaded ?? game;
+    }
 }
-
-

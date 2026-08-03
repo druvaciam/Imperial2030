@@ -150,7 +150,7 @@ namespace Imperial2030.Tests
                     }
                 }
 
-                await Task.Delay(50);
+                await Task.Delay(10);
                 timeoutTicks++;
             }
 
