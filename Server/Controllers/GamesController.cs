@@ -817,14 +817,14 @@ public class GamesController : ControllerBase
             .Select(s => s[random.Next(s.Length)]).ToArray());
     }
 
-    public static void HandleInvestorPhase(ApplicationDbContext context, Game game, NationState nationState, Player controller, bool isLandedOn)
+    public static void HandleInvestorPhase(ApplicationDbContext? context, Game game, NationState nationState, Player controller, bool isLandedOn)
     {
         string GetPlayerName(Player p)
         {
             if (p == null) return "Unknown";
             if (p.IsBot) return p.BotName ?? "Bot";
             if (p.User != null) return p.User.UserName ?? "Player";
-            var user = context.Users.FirstOrDefault(u => u.Id == p.UserId);
+            var user = context?.Users.FirstOrDefault(u => u.Id == p.UserId);
             return user?.UserName ?? "Player";
         }
 
@@ -855,9 +855,9 @@ public class GamesController : ControllerBase
                 {
                     var holder = game.Players.First(p => p.Id == bond.HolderId);
                     holder.Cash += bond.Interest;
-                    context.Entry(holder).State = EntityState.Modified;
+                    if (context != null) context.Entry(holder).State = EntityState.Modified;
                     var holderName = GetPlayerName(holder);
-                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
+                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
                 }
 
                 // Pay Controller
@@ -865,18 +865,18 @@ public class GamesController : ControllerBase
                 {
                     nationState.Treasury -= owedToController;
                     controller.Cash += owedToController;
-                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {owedToController}M interest to {controllerName}" });
+                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {owedToController}M interest to {controllerName}" });
                 }
                 else if (nationState.Treasury > 0 && owedToController > 0)
                 {
                     // Partial payment to controller
                     controller.Cash += nationState.Treasury;
-                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {nationState.Treasury}M interest to {controllerName}" });
+                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {nationState.Treasury}M interest to {controllerName}" });
                     nationState.Treasury = 0;
                 }
                 else if (owedToController > 0)
                 {
-                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay interest to {controllerName} (treasury empty)" });
+                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay interest to {controllerName} (treasury empty)" });
                 }
             }
             else
@@ -892,7 +892,7 @@ public class GamesController : ControllerBase
                 controller.Cash -= paymentFromController;
                 if (paymentFromController > 0)
                 {
-                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"personally contributed {paymentFromController}M to cover interest deficit" });
+                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"personally contributed {paymentFromController}M to cover interest deficit" });
                 }
 
                 // Total funds available for others
@@ -906,9 +906,9 @@ public class GamesController : ControllerBase
                     {
                         var holder = game.Players.First(p => p.Id == bond.HolderId);
                         holder.Cash += bond.Interest;
-                        context.Entry(holder).State = EntityState.Modified;
+                        if (context != null) context.Entry(holder).State = EntityState.Modified;
                         var holderName = GetPlayerName(holder);
-                        context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
+                        if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
                     }
                 }
                 else
@@ -920,15 +920,15 @@ public class GamesController : ControllerBase
                         var holder = game.Players.First(p => p.Id == bond.HolderId);
                         int payout = (int)(bond.Interest * ratio);
                         holder.Cash += payout;
-                        context.Entry(holder).State = EntityState.Modified;
+                        if (context != null) context.Entry(holder).State = EntityState.Modified;
                         var holderName = GetPlayerName(holder);
-                        context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {payout}M interest to {holderName}" });
+                        if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {payout}M interest to {holderName}" });
                     }
                 }
 
                 if (owedToController > 0)
                 {
-                    context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay interest to {controllerName} (treasury empty)" });
+                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay interest to {controllerName} (treasury empty)" });
                 }
             }
         }
@@ -941,9 +941,9 @@ public class GamesController : ControllerBase
             if (investor != null)
             {
                 investor.Cash += 2;
-                context.Entry(investor).State = EntityState.Modified;
+                if (context != null) context.Entry(investor).State = EntityState.Modified;
                 var investorName = GetPlayerName(investor);
-                context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = investorName, ActionType = "InvestorBonus", Message = "received 2M Investor bonus" });
+                if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = investorName, ActionType = "InvestorBonus", Message = "received 2M Investor bonus" });
             }
         }
 
@@ -973,7 +973,7 @@ public class GamesController : ControllerBase
         }
     }
 
-    public static void UpdateNationController(ApplicationDbContext context, Game game, Nation nation)
+    public static void UpdateNationController(ApplicationDbContext? context, Game game, Nation nation)
     {
         var nationState = game.NationStates.First(n => n.Nation == nation);
         var bonds = game.Bonds.Where(b => b.Nation == nation && b.HolderId != null).ToList();
@@ -1019,7 +1019,7 @@ public class GamesController : ControllerBase
             if (nationState.ControllerId != candidates[0])
             {
                 nationState.ControllerId = candidates[0];
-                context.Entry(nationState).State = EntityState.Modified;
+                if (context != null) context.Entry(nationState).State = EntityState.Modified;
             }
         }
         else
@@ -1040,13 +1040,13 @@ public class GamesController : ControllerBase
                 if (game.ActingPlayerId.HasValue && candidates.Contains(game.ActingPlayerId.Value))
                 {
                     nationState.ControllerId = game.ActingPlayerId.Value;
-                    context.Entry(nationState).State = EntityState.Modified;
+                    if (context != null) context.Entry(nationState).State = EntityState.Modified;
                 }
                 else
                 {
                     // Fallback: Pick first
                     nationState.ControllerId = candidates[0];
-                    context.Entry(nationState).State = EntityState.Modified;
+                    if (context != null) context.Entry(nationState).State = EntityState.Modified;
                 }
             }
         }
@@ -1728,6 +1728,7 @@ public class GamesController : ControllerBase
             ActionType = type,
             Nation = nation
         };
+        game.Actions.Add(action);
         _context.GameActions.Add(action);
         // Note: Caller must SaveChanges
     }

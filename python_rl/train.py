@@ -62,7 +62,7 @@ if __name__ == "__main__":
             "clip_range": 0.2,
             "ent_coef": 0.03,
             "gamma": 0.995,
-            "n_epochs": 10,
+            "n_epochs": 6,
             "max_grad_norm": 0.5,
         }
         model = MaskablePPO.load(MODEL_PATH, env=vec_env, custom_objects=custom_objects, verbose=1)
@@ -88,7 +88,7 @@ if __name__ == "__main__":
             clip_range=0.2,
             ent_coef=0.03,           # Balanced exploration for 64-action masked space
             gamma=0.995,
-            n_epochs=10,
+            n_epochs=6,
             max_grad_norm=0.5,
             verbose=1
         )
@@ -141,10 +141,10 @@ if __name__ == "__main__":
     print("Starting Training...")
     # Train for a larger number of timesteps.
     # It will automatically save every 5,000 steps to the current directory
-    TOTAL_TIMESTEPS = 2000000
+    TOTAL_TIMESTEPS = 3000000
     
     save_callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
-    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=0.025, final_ent_coef=0.005, total_timesteps=TOTAL_TIMESTEPS)
+    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=0.03, final_ent_coef=0.005, total_timesteps=TOTAL_TIMESTEPS)
     
     callback = CallbackList([save_callback, ent_coef_callback])
     

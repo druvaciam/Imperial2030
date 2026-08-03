@@ -95,3 +95,4 @@ python_rl/vec_normalize*.pkl
 python_rl/best_reward.txt
 python_rl/*.onnx
 python_rl/*.onnx.data
+python_rl/__pycache__/imperial_env.cpython-313.pyc

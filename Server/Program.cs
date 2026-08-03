@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Security.Claims;
 using Imperial2030.Shared.Models;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -96,6 +97,19 @@ builder.Services.AddAuthentication(options =>
                     context.Token = accessToken;
                 }
                 return Task.CompletedTask;
+            },
+            OnTokenValidated = async context =>
+            {
+                var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<Imperial2030.Server.Models.ApplicationUser>>();
+                var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (userId != null)
+                {
+                    var user = await userManager.FindByIdAsync(userId);
+                    if (user == null)
+                    {
+                        context.Fail("User no longer exists.");
+                    }
+                }
             }
         };
     });

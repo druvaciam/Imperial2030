@@ -117,9 +117,9 @@ public class RLBotStrategy : BotStrategyBase
 
         if (slot == targetSlot)
         {
-            return 100; // Force this choice
+            return 1000; // Force this choice
         }
-        return -100; // Don't pick this
+        return -1000; // Don't pick this
     }
 
     private float[] GetStateVector(Game game, Player rlPlayer, string? maneuverSelectedTerritoryId = null)
@@ -381,7 +381,7 @@ public class RLBotStrategy : BotStrategyBase
                 var armies = game.Units.Where(u => u.TerritoryId == tId && u.Nation == n && u.UnitType == UnitType.Army).ToList();
                 int armyCount = armies.Count;
                 EncodeUnitCount(armyCount, state, ref i);
-                
+
                 // Add 1 float for IsHostile presence
                 bool hasHostile = armies.Any(a => a.IsHostile);
                 state[i++] = hasHostile ? 1.0f : 0.0f;
