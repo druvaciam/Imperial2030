@@ -30,4 +30,9 @@ public interface IBotStrategy
     bool RetreatFromBattle(Game game, PendingBattle battle);
     
     bool DetermineHostility(bool hasEnemy, bool isForeignHome);
+
+    /// <summary>
+    /// Decides whether the bot should destroy an enemy factory when it has >= 3 armies on a foreign factory territory.
+    /// </summary>
+    bool ShouldDestroyFactory(Game game, Nation nation, string territoryId, Player controller);
 }

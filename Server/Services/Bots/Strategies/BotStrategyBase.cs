@@ -163,6 +163,11 @@ public abstract class BotStrategyBase : IBotStrategy
         return Random.Shared.Next(0, 100) < 80; // Default 80% hostile
     }
 
+    public virtual bool ShouldDestroyFactory(Game game, Nation nation, string territoryId, Player controller)
+    {
+        return Random.Shared.Next(0, 2) == 0; // 50/50 chance
+    }
+
     // Shared helpers
     protected int EstimateProductionYield(Game game, Nation nation)
     {

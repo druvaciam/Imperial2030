@@ -87,4 +87,9 @@ public class AggressiveBotStrategy : BotStrategyBase
     {
         return false; // Aggressive never retreats
     }
+
+    public override bool ShouldDestroyFactory(Game game, Nation nation, string territoryId, Player controller)
+    {
+        return true; // Aggressive always destroys factories
+    }
 }

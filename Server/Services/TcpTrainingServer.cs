@@ -470,6 +470,7 @@ public class TcpTrainingServer : BackgroundService
         }
 
         var preUnitCounts = game.Units.GroupBy(u => u.Nation).ToDictionary(g => g.Key, g => g.Count());
+        var preFactoryCounts = game.TerritoryStates.Where(t => TerritoryData.AllTerritories.First(x => x.Id == t.TerritoryId).Nation.HasValue).GroupBy(t => TerritoryData.AllTerritories.First(x => x.Id == t.TerritoryId).Nation).ToDictionary(g => g.Key, g => g.Where(t => t.HasFactory).Count());
         var preOccupiedFactories = game.TerritoryStates.Where(t => t.HasFactory).ToDictionary(
             t => t.TerritoryId,
             t => game.Units.Any(u => u.TerritoryId == t.TerritoryId && u.Nation != TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation && u.IsHostile)
@@ -530,6 +531,8 @@ public class TcpTrainingServer : BackgroundService
                             game.Units.Remove(unit);
                             game.Units.Remove(enemyUnit);
                         }
+
+                        await _botService.BotTryDestroyFactories(null, game, unit.Nation, player);
                     }
                 }
             }
@@ -577,6 +580,27 @@ public class TcpTrainingServer : BackgroundService
                 {
                     explicitBonusReward += 1.0f * (preCount - postCount);
                     //_logger.LogInformation($"[RL REWARD] Destroyed unit of {nation}. +{1.0f * (preCount - postCount)}");
+                }
+            }
+        }
+
+        var postFactoryCounts = game.TerritoryStates.Where(t => TerritoryData.AllTerritories.First(x => x.Id == t.TerritoryId).Nation.HasValue).GroupBy(t => TerritoryData.AllTerritories.First(x => x.Id == t.TerritoryId).Nation).ToDictionary(g => g.Key, g => g.Where(t => t.HasFactory).Count());
+        if (postFactoryCounts.Values.Sum() < preFactoryCounts.Values.Sum())
+        {
+            foreach (Nation nation in Enum.GetValues(typeof(Nation)))
+            {
+                int preCount = preFactoryCounts.ContainsKey(nation) ? preFactoryCounts[nation] : 0;
+                int postCount = postFactoryCounts.ContainsKey(nation) ? postFactoryCounts[nation] : 0;
+                if (postCount < preCount)
+                {
+                    var rlInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId == session.RLPlayerId).Sum(b => b.Interest);
+                    var leaderInterest = game.Players.Select(p => game.Bonds.Where(b => b.Nation == nation && b.HolderId == p.Id).Sum(b => b.Interest)).DefaultIfEmpty(0).Max();
+
+                    if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
+                    {
+                        explicitBonusReward += 3.0f * (preCount - postCount);
+                        _logger.LogInformation($"[RL REWARD] Destroyed factory of {nation}. +{3.0f * (preCount - postCount)}");
+                    }
                 }
             }
         }

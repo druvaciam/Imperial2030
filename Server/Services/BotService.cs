@@ -6,6 +6,7 @@ using Imperial2030.Server.Services.Bots;
 using Imperial2030.Server.Services.Bots.Strategies;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Imperial2030.Server.Hubs;
 
 namespace Imperial2030.Server.Services;
 
@@ -14,13 +15,22 @@ public class BotService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
     private readonly IEnumerable<Bots.IBotStrategy> _botStrategies;
+    private readonly ILogger<BotService> _logger;
     public bool SkipDelays { get; set; } = false;
 
-    public BotService(IServiceScopeFactory scopeFactory, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, IEnumerable<Bots.IBotStrategy> botStrategies)
+    public BotService(IServiceScopeFactory scopeFactory, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, IEnumerable<Bots.IBotStrategy> botStrategies, ILogger<BotService> logger)
     {
         _scopeFactory = scopeFactory;
         _hubContext = hubContext;
         _botStrategies = botStrategies;
+        _logger = logger;
+    }
+
+    public BotService(IServiceScopeFactory object1, IHubContext<GameHub> object2, List<IBotStrategy> botStrategies1)
+    {
+        _object1 = object1;
+        _object2 = object2;
+        _botStrategies1 = botStrategies1;
     }
 
     public Bots.IBotStrategy GetStrategy(Player player)
@@ -44,6 +54,9 @@ public class BotService
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> _activeBotGames = new();
+    private IServiceScopeFactory _object1;
+    private IHubContext<GameHub> _object2;
+    private List<IBotStrategy> _botStrategies1;
 
     public async Task TryPlayBotTurnAsync(Guid gameId, bool singleTurnOnly = false)
     {
@@ -220,7 +233,6 @@ public class BotService
                 game.PendingSwissBankForceNation = null;
                 game.PendingSwissBankForceTargetSlot = null;
                 game.PendingSwissBankResponders.Clear();
-
             }
             // --- End Swiss Bank Intercept ---
 
@@ -752,8 +764,67 @@ public class BotService
         }
 
         await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
+
+        // Factory Destruction: Check if bot has >= 3 armies on any foreign factory
+        await BotTryDestroyFactories(ctx, game, ns.Nation, controller);
+
         LogAction(ctx, game, "auto-ended Armies maneuver phase", "NextPhase", nation, controller.BotName ?? "Bot");
         game.CurrentManeuverPhase = ManeuverPhase.None;
+    }
+
+    public async Task BotTryDestroyFactories(ApplicationDbContext? ctx, Game game, Nation nation, Player controller)
+    {
+        var strategy = GetStrategy(controller);
+        var friendlyNations = game.NationStates.Where(n => n.ControllerId == controller.Id).Select(n => n.Nation).ToHashSet();
+
+        // Find territories where this nation has >= 3 armies on a foreign factory with no defenders
+        var armiesByTerritory = game.Units
+            .Where(u => u.Nation == nation && u.UnitType == UnitType.Army)
+            .GroupBy(u => u.TerritoryId)
+            .Where(g => g.Count() >= 3)
+            .ToList();
+
+        foreach (var group in armiesByTerritory)
+        {
+            var territoryId = group.Key;
+            var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
+            if (territoryDef == null || !territoryDef.Nation.HasValue) continue;
+
+            var defenderNation = territoryDef.Nation.Value;
+
+            // Cannot destroy your own factory
+            if (friendlyNations.Contains(defenderNation)) continue;
+
+            // Check factory exists
+            var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == territoryId);
+            if (tState == null || !tState.HasFactory) continue;
+
+            // Check no defenders present
+            bool hasDefenders = game.Units.Any(u => u.TerritoryId == territoryId && u.Nation == defenderNation);
+            if (hasDefenders) continue;
+
+            // Check defender has > 1 factory (cannot destroy the last one)
+            var defenderFactoryCount = game.TerritoryStates.Count(s =>
+            {
+                if (!s.HasFactory) return false;
+                var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
+                return t != null && t.Nation == defenderNation;
+            });
+            if (defenderFactoryCount <= 1) continue;
+
+            // Ask strategy if we should destroy
+            if (!strategy.ShouldDestroyFactory(game, nation, territoryId, controller)) continue;
+
+            // Execute destruction: remove 3 armies and the factory
+            var armiesToSacrifice = group.Take(3).ToList();
+            foreach (var army in armiesToSacrifice)
+            {
+                RemoveUnit(ctx, game, army);
+            }
+            tState.HasFactory = false;
+
+            LogAction(ctx, game, $"destroyed factory in {territoryId}", "DestroyFactory", nation, controller.BotName ?? "Bot");
+        }
     }
 
     private async Task BotUpdateTerritoryControl(ApplicationDbContext? ctx, Game game, string botName)
@@ -986,7 +1057,7 @@ public class BotService
         {
             bool hasBond = game.Bonds.Any(b => b.Nation == nation && b.HolderId == bot.Id);
             var request = new Imperial2030.Server.Controllers.SwissBankResponseRequest { ForceStop = hasBond };
-            
+
             var nationState = game.NationStates.First(n => n.Nation == nation);
             var controller = game.Players.First(p => p.Id == nationState.ControllerId);
 
@@ -1018,7 +1089,7 @@ public class BotService
 
                 LogAction(ctx, game, $"was forced by Swiss Bank to stop on Investor", "Move", nationState.Nation, controllerName);
                 Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: true);
-                
+
                 await SaveChangesAsync(ctx);
                 await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
                 await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", $"{botName} forced {nationState.Nation} to stop on Investor.", false);
@@ -1057,14 +1128,14 @@ public class BotService
                     string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (ctx != null ? (ctx.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human") : "Human");
                     LogAction(ctx, game, $"moved to {GetSlotName(targetSlot)} (Cost: {cost}M)", "Move", nationState.Nation, controllerName);
                     Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: false);
-                    
+
                     await SaveChangesAsync(ctx);
                     await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
                     return;
                 }
             }
         }
-        
+
         await SaveChangesAsync(ctx);
         await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
     }

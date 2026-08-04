@@ -448,7 +448,7 @@ public class GamesController : ControllerBase
         int botIndex = game.Players.Count(p => p.IsBot);
         var botName = botIndex < BotNames.Length ? BotNames[botIndex] : $"Bot {botIndex + 1}";
 
-        var botTypes = new[] { "Default", "Aggressive", "Friendly", "Greedy", "RL" };
+        var botTypes = new[] { "Default", "Aggressive", "Friendly", "Greedy", "RL", "Random" };
         var randomBotType = botTypes[Random.Shared.Next(botTypes.Length)];
         var selectedBotType = string.IsNullOrEmpty(botType) || !botTypes.Contains(botType) ? randomBotType : botType;
 
