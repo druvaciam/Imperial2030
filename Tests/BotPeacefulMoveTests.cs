@@ -107,8 +107,8 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new IBotStrategy[] { new StubPeacefulBotStrategy() });
+            var loggerMock = new Mock<ILogger<BotService>>();
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new StubPeacefulBotStrategy()], loggerMock.Object);
             botService.SkipDelays = true;
             await botService.TryPlayBotTurnAsync(gameId, singleTurnOnly: true);
 

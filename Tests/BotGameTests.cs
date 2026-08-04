@@ -18,6 +18,7 @@ using Moq;
 using Xunit;
 using Imperial2030.Server.Services;
 using Xunit.Abstractions;
+using Microsoft.Extensions.Logging;
 
 namespace Imperial2030.Tests
 {
@@ -76,7 +77,8 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() });
+            var mockLogger = new Mock<ILogger<BotService>>();
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object);
             botService.SkipDelays = true;
 
             // Mock UserManager
@@ -196,7 +198,8 @@ namespace Imperial2030.Tests
                     return scope.Object;
                 });
 
-                var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() });
+                var mockLogger = new Mock<ILogger<BotService>>();
+                var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object);
                 botService.SkipDelays = true;
 
                 var store = new Mock<IUserStore<ApplicationUser>>();
@@ -307,7 +310,9 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
+            var mockLogger = new Mock<ILogger<BotService>>();
+
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object) { SkipDelays = true };
 
             var gameId = Guid.NewGuid();
             var humanId = Guid.NewGuid();
@@ -362,7 +367,9 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
+            var mockLogger = new Mock<ILogger<BotService>>();
+
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object) { SkipDelays = true };
 
             var gameId = Guid.NewGuid();
             var botId = Guid.NewGuid();
@@ -428,7 +435,9 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
+            var mockLogger = new Mock<ILogger<BotService>>();
+
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object) { SkipDelays = true };
 
             var gameId = Guid.NewGuid();
             var humanId = Guid.NewGuid();
@@ -481,7 +490,9 @@ namespace Imperial2030.Tests
             scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
             sp.Setup(s => s.GetService(typeof(ApplicationDbContext))).Returns(() => GetDbContext(dbName));
 
-            var botService = new BotService(scopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() })
+            var mockLogger = new Mock<ILogger<BotService>>();
+
+            var botService = new BotService(scopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object)
             {
                 SkipDelays = true // Important: no delays, they execute instantly
             };
@@ -559,14 +570,16 @@ namespace Imperial2030.Tests
                     return scope.Object;
                 });
 
-                var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> {
+                var mockLogger = new Mock<ILogger<BotService>>();
+
+                var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [
                     new Imperial2030.Server.Services.Bots.Strategies.RandomBotStrategy(),
                     new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy(),
                     new Imperial2030.Server.Services.Bots.Strategies.GreedyBotStrategy(),
                     new Imperial2030.Server.Services.Bots.Strategies.AggressiveBotStrategy(),
                     new Imperial2030.Server.Services.Bots.Strategies.FriendlyBotStrategy(),
                     new Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy()
-                });
+                ], mockLogger.Object);
                 botService.SkipDelays = true;
 
                 var store = new Mock<IUserStore<ApplicationUser>>();
@@ -681,7 +694,9 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
+            var mockLogger = new Mock<ILogger<BotService>>();
+
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object) { SkipDelays = true };
 
             var maneuverController = new ManeuverController(context, mockHub.Object, botService);
 
@@ -756,7 +771,9 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
+            var mockLogger = new Mock<ILogger<BotService>>();
+
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object) { SkipDelays = true };
 
             var maneuverController = new ManeuverController(context, mockHub.Object, botService);
 

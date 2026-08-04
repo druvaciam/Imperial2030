@@ -18,6 +18,7 @@ using Moq;
 using Xunit;
 using Imperial2030.Server.Services;
 using Xunit.Abstractions;
+using Microsoft.Extensions.Logging;
 
 namespace Imperial2030.Tests
 {
@@ -53,7 +54,8 @@ namespace Imperial2030.Tests
                 return scope.Object;
             });
 
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }) { SkipDelays = true };
+            var mockLogger = new Mock<ILogger<BotService>>();
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object) { SkipDelays = true };
 
             // Mock UserManager
             var store = new Mock<IUserStore<ApplicationUser>>();

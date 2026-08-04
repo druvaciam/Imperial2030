@@ -55,7 +55,8 @@ namespace Imperial2030.Tests
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() });
+            var mockLogger = new Mock<Microsoft.Extensions.Logging.ILogger<BotService>>();
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object);
 
             var controller = new ManeuverController(context, mockHub.Object, botService);
 

@@ -141,7 +141,7 @@ if __name__ == "__main__":
     print("Starting Training...")
     # Train for a larger number of timesteps.
     # It will automatically save every 5,000 steps to the current directory
-    TOTAL_TIMESTEPS = 3000000
+    TOTAL_TIMESTEPS = 10_000_000
     
     save_callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
     ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=0.03, final_ent_coef=0.005, total_timesteps=TOTAL_TIMESTEPS)

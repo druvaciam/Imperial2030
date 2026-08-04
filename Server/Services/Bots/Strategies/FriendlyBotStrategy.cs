@@ -71,4 +71,9 @@ public class FriendlyBotStrategy : BotStrategyBase
     {
         return true; // Friendly bot retreats if possible
     }
+
+    public override bool ShouldDestroyFactory(Game game, Nation nation, string territoryId, Player controller)
+    {
+        return false; // Friendly never destroys factories
+    }
 }
