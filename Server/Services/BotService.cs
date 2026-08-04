@@ -104,6 +104,7 @@ public class BotService
                     {
                         try
                         {
+                            if (!SkipDelays) await Task.Delay(3000); // add some delay before bot responds
                             await HandleBotSwissBankResponse(ctx, game, botResponders);
                             botActed = true;
                         }
@@ -141,6 +142,11 @@ public class BotService
 
                 if (!botActed || singleTurnOnly) break;
             }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[TryPlayBotTurnAsync] ERROR: {ex.Message}\n{ex.StackTrace}");
+            throw;
         }
         finally
         {
@@ -921,13 +927,19 @@ public class BotService
 
             if (retreat)
             {
-                game.PendingBattleDefenders.Remove(defNation);
+                var defenders = game.PendingBattleDefenders.ToList();
+                defenders.Remove(defNation);
+                game.PendingBattleDefenders = defenders;
+                if (ctx != null) ctx.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
                 LogAction(ctx, game, $"{defNation} agreed to PEACE / RETREATED", "BattleResponse", defNation, defController.BotName ?? "Bot");
             }
             else
             {
                 // Fight!
-                game.PendingBattleDefenders.Remove(defNation); // It's no longer pending for them
+                var defenders = game.PendingBattleDefenders.ToList();
+                defenders.Remove(defNation); // It's no longer pending for them
+                game.PendingBattleDefenders = defenders;
+                if (ctx != null) ctx.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
                 // Resolve battle...
                 // The current codebase just removes them and logs peace for everyone. 
                 // Let's preserve the original behavior for now if they fight (we'll just log they fought, 
@@ -965,7 +977,7 @@ public class BotService
 
     // --- Helpers ---
 
-    private async Task HandleBotSwissBankResponse(ApplicationDbContext ctx, Game game, List<Player> botResponders)
+    public async Task HandleBotSwissBankResponse(ApplicationDbContext? ctx, Game game, List<Player> botResponders)
     {
         var nation = game.PendingSwissBankForceNation;
         if (nation == null) return;
@@ -997,18 +1009,32 @@ public class BotService
                 nationState.RondelPosition = targetSlot;
                 game.ResetStateForNewMove(nationState);
 
-                LogAction(ctx, game, $"was forced by Swiss Bank ({bot.BotName ?? "Bot"}) to stop on Investor", "Move", nationState.Nation, bot.BotName ?? "Bot");
+                string botName = bot.BotName ?? "Bot";
+                LogAction(ctx, game, $"chose to FORCE STOP {nationState.Nation} on Investor.", "SwissBankResponse", nationState.Nation, botName);
+
+                string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : "Human"; // In bot service, we might not have the username loaded, but let's try to get it if we can. Actually, we can just use controller.User?.UserName??
+                // To be safe without User loaded:
+                controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (ctx != null ? (ctx.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human") : "Human");
+
+                LogAction(ctx, game, $"was forced by Swiss Bank to stop on Investor", "Move", nationState.Nation, controllerName);
                 Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: true);
                 
                 await SaveChangesAsync(ctx);
                 await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
+                await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", $"{botName} forced {nationState.Nation} to stop on Investor.", false);
                 return;
             }
             else
             {
+                string botName = bot.BotName ?? "Bot";
+                LogAction(ctx, game, $"chose to PASS on forcing {nationState.Nation} to stop.", "SwissBankResponse", nationState.Nation, botName);
+
                 var responders = game.PendingSwissBankResponders;
                 responders.Remove(bot.Id);
-                game.PendingSwissBankResponders = responders;
+                game.PendingSwissBankResponders = responders.ToList();
+                if (ctx != null) ctx.Entry(game).Property(g => g.PendingSwissBankResponders).IsModified = true;
+
+                await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", $"{botName} passed on forcing {nationState.Nation} to stop.", false);
 
                 if (!responders.Any())
                 {
@@ -1028,7 +1054,8 @@ public class BotService
                     nationState.RondelPosition = targetSlot;
                     game.ResetStateForNewMove(nationState);
 
-                    LogAction(ctx, game, $"moved to {GetSlotName(targetSlot)} (Cost: {cost}M)", "Move", nationState.Nation, bot.BotName ?? "Bot");
+                    string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (ctx != null ? (ctx.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human") : "Human");
+                    LogAction(ctx, game, $"moved to {GetSlotName(targetSlot)} (Cost: {cost}M)", "Move", nationState.Nation, controllerName);
                     Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: false);
                     
                     await SaveChangesAsync(ctx);

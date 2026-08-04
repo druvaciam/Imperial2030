@@ -103,7 +103,27 @@ public class ManeuverController : ControllerBase
         unit.TerritoryId = request.DestinationId;
         unit.HasMoved = true;
 
+        // Determine if the fleet will engage in battle
+        bool willFight = false;
+        List<Nation> foreignFleets = new List<Nation>();
         if (request.IsHostile)
+        {
+            if (request.BattleTargetNation.HasValue)
+            {
+                willFight = game.Units.Any(u => u.TerritoryId == request.DestinationId && u.Nation == request.BattleTargetNation.Value);
+            }
+            else
+            {
+                foreignFleets = game.Units
+                    .Where(u => u.TerritoryId == request.DestinationId && u.UnitType == UnitType.Fleet && u.Nation != nation)
+                    .Select(u => u.Nation)
+                    .Distinct()
+                    .ToList();
+                willFight = foreignFleets.Any();
+            }
+        }
+
+        if (request.IsHostile && !willFight)
         {
             var destDef2 = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
             if (destDef2 != null && destDef2.Nation.HasValue && destDef2.Nation.Value != nation)
@@ -117,10 +137,10 @@ public class ManeuverController : ControllerBase
                         if (!s.HasFactory) return false;
                         var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
                         if (t == null || t.Nation != defenderNation) return false;
-                        bool isOccupied = game.Units.Any(u => u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
+                        bool isOccupied = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
                         return !isOccupied;
                     });
-                    bool isTargetOccupied = game.Units.Any(u => u.TerritoryId == request.DestinationId && u.Nation != defenderNation && u.IsHostile);
+                    bool isTargetOccupied = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == request.DestinationId && u.Nation != defenderNation && u.IsHostile);
                     if (defenderFactoryCount <= 1 && !isTargetOccupied)
                     {
                         return BadRequest("Cannot enter the last unoccupied factory of a nation hostilely. Must enter peacefully.");
@@ -154,12 +174,6 @@ public class ManeuverController : ControllerBase
         else
         {
             // Peace Move for Fleets
-            var foreignFleets = game.Units
-                .Where(u => u.TerritoryId == request.DestinationId && u.UnitType == UnitType.Fleet && u.Nation != nation)
-                .Select(u => u.Nation)
-                .Distinct()
-                .ToList();
-
             if (foreignFleets.Any())
             {
                 if (request.IsHostile && foreignFleets.Count == 1)
@@ -372,7 +386,33 @@ public class ManeuverController : ControllerBase
         unit.TerritoryId = request.DestinationId;
         unit.HasMoved = true;
 
+        // Determine if the unit will engage in battle (and thus be destroyed)
+        bool willFight = false;
+        var destDefForBattle = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
+        bool isForeignHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value != nation;
+        bool isMyHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value == nation;
+
+        // Always compute foreignDefenders so forced-battle logic (isMyHome) works even on peaceful moves
+        List<Nation> foreignDefenders = game.Units
+            .Where(u => u.TerritoryId == request.DestinationId && u.Nation != nation)
+            .Where(u => u.UnitType == UnitType.Army || (isForeignHome && u.Nation == destDefForBattle!.Nation!.Value))
+            .Select(u => u.Nation)
+            .Distinct()
+            .ToList();
+
         if (request.IsHostile)
+        {
+            if (request.BattleTargetNation.HasValue)
+            {
+                willFight = game.Units.Any(u => u.TerritoryId == request.DestinationId && u.Nation == request.BattleTargetNation.Value);
+            }
+            else
+            {
+                willFight = foreignDefenders.Any();
+            }
+        }
+
+        if (request.IsHostile && !willFight)
         {
             var destDef2 = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
             if (destDef2 != null && destDef2.Nation.HasValue && destDef2.Nation.Value != nation)
@@ -423,17 +463,6 @@ public class ManeuverController : ControllerBase
         }
         else
         {
-            var destDefForBattle = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
-            bool isForeignHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value != nation;
-            bool isMyHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value == nation;
-
-            var foreignDefenders = game.Units
-                .Where(u => u.TerritoryId == request.DestinationId && u.Nation != nation)
-                .Where(u => u.UnitType == UnitType.Army || (isForeignHome && u.Nation == destDefForBattle.Nation.Value && request.IsHostile))
-                .Select(u => u.Nation)
-                .Distinct()
-                .ToList();
-
             if (isMyHome && foreignDefenders.Any())
             {
                 // Foreign armies in your home territory are always hostile. You cannot peacefully coexist.
@@ -745,6 +774,7 @@ public class ManeuverController : ControllerBase
                 game.Units.Remove(aggUnit);
 
                 LogAction(game, $"{respondingNation} chose FIGHT against {aggressorNation} in {territoryId}. Both units destroyed.", "BattleResponse", respondingNation);
+                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} chose FIGHT against {aggressorNation}!", false);
             }
 
             // A single fight breaks the peace negotiation. Clear pending state.
@@ -759,8 +789,12 @@ public class ManeuverController : ControllerBase
         else
         {
             // Peace! Remove from defenders list
-            game.PendingBattleDefenders.Remove(respondingNation);
+            var defenders = game.PendingBattleDefenders.ToList();
+            defenders.Remove(respondingNation);
+            game.PendingBattleDefenders = defenders;
+            _context.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
             LogAction(game, $"{respondingNation} agreed to PEACE with {game.PendingBattleAggressorNation} in {game.PendingBattleTerritoryId}.", "BattleResponse", respondingNation);
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} agreed to PEACE.", false);
 
             if (!game.PendingBattleDefenders.Any())
             {

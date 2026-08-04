@@ -401,6 +401,24 @@ public class GamesController : ControllerBase
                 }
             }
 
+            if (!botTurn && game.PendingBattleTerritoryId != null && game.PendingBattleDefenders.Any())
+            {
+                var botDefenders = game.PendingBattleDefenders.Where(nation =>
+                {
+                    var ns = game.NationStates.FirstOrDefault(n => n.Nation == nation);
+                    if (ns == null || ns.ControllerId == null) return false;
+                    var controller = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId);
+                    return controller != null && controller.IsBot;
+                }).ToList();
+                if (botDefenders.Any()) botTurn = true;
+            }
+
+            if (!botTurn && game.PendingSwissBankForceNation != null && game.PendingSwissBankResponders.Any())
+            {
+                var botResponders = game.PendingSwissBankResponders.Select(id => game.Players.FirstOrDefault(p => p.Id == id)).Where(p => p != null && p.IsBot).ToList();
+                if (botResponders.Any()) botTurn = true;
+            }
+
             if (botTurn)
             {
                 _botService.TriggerBotTurn(gameId, 1500);
@@ -718,7 +736,7 @@ public class GamesController : ControllerBase
                 {
                     var russiaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.Russia);
                     var chinaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.China);
-                    
+
                     if (russiaNs != null && russiaNs.ControllerId.HasValue)
                     {
                         var index = sorted.FindIndex(p => p.Id == russiaNs.ControllerId.Value);
@@ -915,17 +933,46 @@ public class GamesController : ControllerBase
                 }
                 else
                 {
-                    // Partial payment (Pro-rata)
-                    double ratio = (double)totalForOthers / owedToOthers;
-                    foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+                    // Partial payment (Lowest denomination first)
+                    // Order bonds held by others by lowest interest (or lowest cost, they are correlated)
+                    var otherBonds = bonds.Where(b => b.HolderId != controller.Id).OrderBy(b => b.Interest).ToList();
+                    int remainingFunds = totalForOthers;
+                    foreach (var bond in otherBonds)
                     {
-                        var holder = game.Players.First(p => p.Id == bond.HolderId);
-                        int payout = (int)(bond.Interest * ratio);
-                        holder.Cash += payout;
-                        if (context != null) context.Entry(holder).State = EntityState.Modified;
-                        var holderName = GetPlayerName(holder);
-                        if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {payout}M interest to {holderName}" });
+                        if (remainingFunds >= bond.Interest)
+                        {
+                            var holder = game.Players.First(p => p.Id == bond.HolderId);
+                            holder.Cash += bond.Interest;
+                            if (context != null) context.Entry(holder).State = EntityState.Modified;
+                            var holderName = GetPlayerName(holder);
+                            if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
+                            remainingFunds -= bond.Interest;
+                        }
+                        else
+                        {
+                            // Not enough to pay this bond fully. Give them the remaining funds as a partial payment.
+                            if (remainingFunds > 0)
+                            {
+                                var holder = game.Players.First(p => p.Id == bond.HolderId);
+                                holder.Cash += remainingFunds;
+                                if (context != null) context.Entry(holder).State = EntityState.Modified;
+                                var holderName = GetPlayerName(holder);
+                                if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {remainingFunds}M interest to {holderName} (insufficient funds for full {bond.Interest}M)" });
+                                remainingFunds = 0;
+                            }
+                            else
+                            {
+                                // No funds left at all
+                                var holder = game.Players.First(p => p.Id == bond.HolderId);
+                                var holderName = GetPlayerName(holder);
+                                if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay {bond.Interest}M interest to {holderName} (insufficient funds)" });
+                            }
+                        }
                     }
+
+                    // Any leftover funds are returned to the treasury (should be 0 here because of the partial payment logic, 
+                    // unless they somehow had EXACTLY enough to pay the first bond but not others, wait if they had exactly enough, remainingFunds is 0).
+                    nationState.Treasury += remainingFunds;
                 }
 
                 if (owedToController > 0)
@@ -1132,7 +1179,7 @@ public class GamesController : ControllerBase
 
         if (crossingInvestor && game.PendingSwissBankForceNation == null)
         {
-            int totalInterest = game.Bonds.Where(b => b.Nation == nation).Sum(b => b.Interest);
+            int totalInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId != null).Sum(b => b.Interest);
             if (nationState.Treasury >= totalInterest)
             {
                 // Find Swiss Bank players (players with no controlled government)
@@ -1145,6 +1192,7 @@ public class GamesController : ControllerBase
 
                     await _context.SaveChangesAsync();
                     await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                    _botService.TriggerBotTurn(gameId, 2500);
                     return Ok();
                 }
             }
@@ -1764,13 +1812,13 @@ public class GamesController : ControllerBase
         return Ok($"Imported {request.Units.Count} units ({string.Join(", ", locationNames)}).");
     }
 
-    private void LogAction(Game game, string message, string type, Nation? nation = null)
+    private void LogAction(Game game, string message, string type, Nation? nation = null, string? playerNameOverride = null)
     {
         var action = new GameAction
         {
             GameId = game.Id,
             Timestamp = DateTime.UtcNow,
-            PlayerName = User.Identity?.Name ?? "System",
+            PlayerName = playerNameOverride ?? User.Identity?.Name ?? "System",
             Message = message,
             ActionType = type,
             Nation = nation
@@ -1826,19 +1874,29 @@ public class GamesController : ControllerBase
             _context.Entry(controller).State = EntityState.Modified;
             _context.Entry(nationState).State = EntityState.Modified;
 
-            LogAction(game, $"was forced by Swiss Bank to stop on {GetRondelSlotName(targetSlot)}", "Move", nationState.Nation);
-            
+            string responderName = responder.IsBot ? (responder.BotName ?? "Bot") : (User.Identity?.Name ?? "Human");
+            LogAction(game, $"chose to FORCE STOP {nationState.Nation} on Investor", "SwissBankResponse", nationState.Nation, responderName);
+
+            string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (_context.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human");
+            LogAction(game, $"was forced by Swiss Bank to stop on {GetRondelSlotName(targetSlot)}", "Move", nationState.Nation, controllerName);
+
             HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: true);
 
             await _context.SaveChangesAsync();
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} forced {nationState.Nation} to stop on Investor.", false);
+            _botService.TriggerBotTurn(gameId, 2500);
             return Ok();
         }
         else
         {
+            string responderName = responder.IsBot ? (responder.BotName ?? "Bot") : (User.Identity?.Name ?? "Human");
+            LogAction(game, $"chose to PASS on forcing {nationState.Nation} to stop", "SwissBankResponse", nationState.Nation, responderName);
+
             var responders = game.PendingSwissBankResponders;
             responders.Remove(responder.Id);
-            game.PendingSwissBankResponders = responders; // Trigger setter
+            game.PendingSwissBankResponders = responders.ToList();
+            _context.Entry(game).Property(g => g.PendingSwissBankResponders).IsModified = true;
 
             if (!responders.Any())
             {
@@ -1860,18 +1918,23 @@ public class GamesController : ControllerBase
                 _context.Entry(controller).State = EntityState.Modified;
                 _context.Entry(nationState).State = EntityState.Modified;
 
-                LogAction(game, $"moved to {GetRondelSlotName(targetSlot)} (Cost: {cost}M)", "Move", nationState.Nation);
+                string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (_context.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human");
+                LogAction(game, $"moved to {GetRondelSlotName(targetSlot)} (Cost: {cost}M)", "Move", nationState.Nation, controllerName);
 
                 HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: false);
 
                 await _context.SaveChangesAsync();
                 await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} passed on forcing {nationState.Nation} to stop.", false);
+                _botService.TriggerBotTurn(gameId, 2500);
                 return Ok();
             }
             else
             {
                 await _context.SaveChangesAsync();
                 await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} passed on forcing {nationState.Nation} to stop.", false);
+                _botService.TriggerBotTurn(gameId, 2500);
                 return Ok();
             }
         }
