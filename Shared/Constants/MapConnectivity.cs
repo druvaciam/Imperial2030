@@ -48,7 +48,7 @@ public static class MapConnectivity
         { "Kazakhstan", new List<string> { "Moscow", "Novosibirsk", "Urumqi", "Mongolia", "Afghanistan" } },
         { "Urumqi", new List<string> { "Kazakhstan", "Beijing", "Chongqing", "NewDelhi", "Mongolia", "Afghanistan" } },
         { "Korea", new List<string> { "Beijing", "Vladivostok", "SeaOfJapan", "ChinaSea" } },
-        { "Beijing", new List<string> { "Urumqi", "Chongqing", "Shanghai", "Vladivostok", "Korea", "Mongolia" } },
+        { "Beijing", new List<string> { "Urumqi", "Chongqing", "Shanghai", "Vladivostok", "Korea", "Mongolia", "ChinaSea" } },
         { "Shanghai", new List<string> { "Beijing", "Chongqing", "ChinaSea" } },
         { "Chongqing", new List<string> { "Beijing", "Shanghai", "Urumqi", "Kolkata", "Indochina" } },
         
@@ -79,7 +79,7 @@ public static class MapConnectivity
         { "SouthPacific", new List<string> { "NorthPacific", "Peru", "Argentina", "TasmanSea", "ChinaSea", "SouthAtlantic" } },
         { "CaribbeanSea", new List<string> { "NewOrleans", "Colombia", "Manaus", "Fortaleza", "NorthAtlantic", "SouthAtlantic", "Mexico", "GulfOfGuinea", "NorthPacific" } },
         { "SeaOfJapan", new List<string> { "Vladivostok", "Japan", "NorthPacific", "Korea", "ChinaSea" } },
-        { "ChinaSea", new List<string> { "Shanghai", "Indochina", "Indonesia", "Korea", "Philippines", "SeaOfJapan", "IndianOcean", "SouthPacific", "NorthPacific", "TasmanSea" } },
+        { "ChinaSea", new List<string> { "Shanghai", "Beijing", "Indochina", "Indonesia", "Korea", "Philippines", "SeaOfJapan", "IndianOcean", "SouthPacific", "NorthPacific", "TasmanSea" } },
         { "TasmanSea", new List<string> { "Australia", "NewZealand", "SouthPacific", "Indonesia", "IndianOcean", "ChinaSea" } },
         { "GulfOfGuinea", new List<string> { "Nigeria", "Guinea", "Congo", "South-Africa", "SouthAtlantic", "NorthAtlantic", "CaribbeanSea", "IndianOcean" } },
     };

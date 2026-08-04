@@ -474,12 +474,13 @@ else
                 {
                              <div class="input-group">
                                  <select class="form-select bg-dark text-white border-secondary" @bind="selectedBotType">
-                                     <option value="">Random Bot</option>
-                                     <option value="Default">Default</option>
-                                     <option value="Aggressive">Aggressive</option>
-                                     <option value="Friendly">Friendly</option>
-                                     <option value="Greedy">Greedy</option>
-                                     <option value="RL">RL</option>
+                                     <option value="">Random Selection</option>
+                                     <option value="Default">Default Bot</option>
+                                     <option value="Aggressive">Aggressive Bot</option>
+                                     <option value="Friendly">Friendly Bot</option>
+                                     <option value="Greedy">Greedy Bot</option>
+                                     <option value="RL">RL Bot</option>
+                                     <option value="Random">Random Bot</option>
                                  </select>
                                  <button class="btn btn-outline-info" @onclick="AddBot" disabled="@(game.Players.Count >= game.MaxPlayers)">
                                      🤖 Add Bot

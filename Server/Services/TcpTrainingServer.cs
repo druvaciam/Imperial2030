@@ -599,7 +599,7 @@ public class TcpTrainingServer : BackgroundService
                     if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
                     {
                         explicitBonusReward += 3.0f * (preCount - postCount);
-                        _logger.LogWarning($"[RL REWARD] Destroyed factory of {nation}. +{3.0f * (preCount - postCount)}");
+                        _logger.LogInformation($"[RL REWARD] Destroyed factory of {nation}. +{3.0f * (preCount - postCount)}");
                     }
                 }
             }

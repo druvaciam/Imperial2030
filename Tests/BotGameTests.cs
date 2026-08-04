@@ -609,7 +609,7 @@ namespace Imperial2030.Tests
                 var players = context.Players.Where(p => p.GameId == gameId).ToList();
                 players[0].IsBot = true;
                 players[0].BotName = "RL Bot";
-                players[0].BotType = "RL"; // Fix actual strategy name
+                players[0].BotType = "RL";
 
                 var randomOpponents = new[] { "Random", "Default" };//, "Greedy", "Aggressive", "Friendly" };
                 var rng = new Random(g); // Use g for seed or just new Random()

@@ -28,7 +28,6 @@ builder.Services.AddSingleton<Imperial2030.Server.Services.BotService>();
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 var isTrainingMode = args.Contains("--training");
-isTrainingMode = true;
 
 if (isTrainingMode)
 {
