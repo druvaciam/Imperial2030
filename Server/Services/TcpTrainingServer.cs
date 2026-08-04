@@ -371,6 +371,25 @@ public class TcpTrainingServer : BackgroundService
                 return; // Pause loop so RL Python env can fetch state
             }
         }
+        else if (game.PendingSwissBankForceNation != null)
+        {
+            var botResponders = game.PendingSwissBankResponders
+                .Select(id => game.Players.FirstOrDefault(p => p.Id == id))
+                .Where(p => p != null && p.IsBot)
+                .ToList();
+
+            if (botResponders.Any())
+            {
+                try
+                {
+                    await _botService.HandleBotSwissBankResponse(null, game, botResponders);
+                }
+                catch (Bots.Strategies.RlTrainingPauseException)
+                {
+                    return;
+                }
+            }
+        }
         else
         {
             var nationState = game.NationStates.FirstOrDefault(ns => ns.Nation == game.CurrentTurnNation);

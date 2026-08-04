@@ -1117,6 +1117,8 @@ else
             }
         });
 
+        hubConnection.On<string, bool>("ShowToast", OnShowToastAction);
+
         await hubConnection.StartAsync();
         observerCount = await hubConnection.InvokeAsync<int>("JoinGameGroup", GameId.ToString(), MyPlayer == null);
     }
@@ -1527,7 +1529,6 @@ else
             {
                 await ShowToast("Failed to submit battle response.", true);
             }
-            // If successful, SignalR will push the GameUpdated event and the UI will refresh automatically.
         }
         catch (Exception ex)
         {

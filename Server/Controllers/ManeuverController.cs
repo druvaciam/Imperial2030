@@ -745,6 +745,7 @@ public class ManeuverController : ControllerBase
                 game.Units.Remove(aggUnit);
 
                 LogAction(game, $"{respondingNation} chose FIGHT against {aggressorNation} in {territoryId}. Both units destroyed.", "BattleResponse", respondingNation);
+                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} chose FIGHT against {aggressorNation}!", false);
             }
 
             // A single fight breaks the peace negotiation. Clear pending state.
@@ -759,8 +760,12 @@ public class ManeuverController : ControllerBase
         else
         {
             // Peace! Remove from defenders list
-            game.PendingBattleDefenders.Remove(respondingNation);
+            var defenders = game.PendingBattleDefenders.ToList();
+            defenders.Remove(respondingNation);
+            game.PendingBattleDefenders = defenders;
+            _context.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
             LogAction(game, $"{respondingNation} agreed to PEACE with {game.PendingBattleAggressorNation} in {game.PendingBattleTerritoryId}.", "BattleResponse", respondingNation);
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} agreed to PEACE.", false);
 
             if (!game.PendingBattleDefenders.Any())
             {
