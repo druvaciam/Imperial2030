@@ -5,8 +5,14 @@ import os
 
 app = Flask(__name__)
 
-model_path_best = "imperial_ppo_bot_best.zip"
-model_path_latest = "imperial_ppo_bot.zip"
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--bot-type", type=str, default="RL", help="The name of the bot to serve (e.g. RL, RL-2).")
+args = parser.parse_args()
+
+model_path_best = f"{args.bot_type}_best.zip"
+model_path_latest = f"{args.bot_type}.zip"
 model = None
 
 # Prioritize the best model, fallback to the latest checkpoint

@@ -475,12 +475,10 @@ else
                              <div class="input-group">
                                  <select class="form-select bg-dark text-white border-secondary" @bind="selectedBotType">
                                      <option value="">Random Selection</option>
-                                     <option value="Default">Default Bot</option>
-                                     <option value="Aggressive">Aggressive Bot</option>
-                                     <option value="Friendly">Friendly Bot</option>
-                                     <option value="Greedy">Greedy Bot</option>
-                                     <option value="RL">RL Bot</option>
-                                     <option value="Random">Random Bot</option>
+                                     @foreach (var botType in availableBotTypes)
+                                     {
+                                         <option value="@botType">@botType Bot</option>
+                                     }
                                  </select>
                                  <button class="btn btn-outline-info" @onclick="AddBot" disabled="@(game.Players.Count >= game.MaxPlayers)">
                                      🤖 Add Bot
@@ -1032,6 +1030,7 @@ else
     private PlayerDto? MyPlayer => game?.Players.FirstOrDefault(p => p.UserId == currentUserId);
     private GameMap? gameMap;
     private bool showGameOverPopup = true;
+    private List<string> availableBotTypes = new() { "Default", "Aggressive", "Friendly", "Greedy", "RL", "Random" };
 
     protected override async Task OnInitializedAsync()
     {
@@ -1043,6 +1042,15 @@ else
 
 
         await LoadGame();
+        
+        try
+        {
+            availableBotTypes = await Http.GetFromJsonAsync<List<string>>("api/games/available-bots") ?? availableBotTypes;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not fetch available bots: {ex.Message}");
+        }
 
         var token = await JSRuntime.InvokeAsync<string>("localStorage.getItem", "authToken");
 

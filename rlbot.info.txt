@@ -16,9 +16,17 @@ The training pipeline consists of two components:
 2. **Start Python Training**: In a separate terminal, navigate to the `python_rl` directory and run the training script.
    ```bash
    cd python_rl
-   python train.py
+   python train.py --bot-type RL
    ```
-   *Note: `train.py` will periodically save checkpoints (`imperial_ppo_bot.zip`) and normalization statistics (`vec_normalize.pkl`). The best model is saved as `imperial_ppo_bot_best.zip`.*
+   *Note: You can train a new bot (e.g. `RL-2`) against specific opponents by using the `--opponents` flag:*
+   ```bash
+   python train.py --bot-type RL-2 --opponents RL,Default,Random
+   ```
+   *To start training completely from scratch and ignore any existing checkpoints for that bot type, append the `--reset` flag:*
+   ```bash
+   python train.py --bot-type RL-2 --reset
+   ```
+   *`train.py` will periodically save checkpoints (`RL.zip`) and normalization statistics (`vec_normalize.pkl`). The best model is saved as `RL_best.zip`.*
 
 ## 2. Converting the Model for C# (ONNX Export)
 
@@ -27,27 +35,35 @@ Because the C# server requires native execution for low latency and zero depende
 1. **Run the Export Script**: In the `python_rl` directory, execute the export script. This script loads the trained `.zip` model and `.pkl` statistics, and traces the PyTorch neural network into an ONNX graph.
    ```bash
    cd python_rl
-   python export_onnx.py
+   python export_onnx.py --bot-type RL
    ```
    This will generate three files:
-   - `imperial_ppo_bot.onnx`: The ONNX neural network graph structure.
-   - `imperial_ppo_bot.onnx.data`: The external neural network weights (generated because the model is large/uses specific opsets).
+   - `RL.onnx`: The ONNX neural network graph structure.
+   - `RL.onnx.data`: The external neural network weights (generated because the model is large/uses specific opsets).
 
 2. **Copy the Artifacts to the C# Server**:
    Copy the generated files from `python_rl` into the `Server` directory:
    ```bash
-   cp python_rl/imperial_ppo_bot.onnx Server/
-   cp python_rl/imperial_ppo_bot.onnx.data Server/
+   cp python_rl/RL.onnx Server/
+   cp python_rl/RL.onnx.data Server/
    ```
 
 3. **Verify the C# Project**:
-   Ensure that these files are configured to be copied to the output directory in `Imperial2030.Server.csproj`:
+   Ensure that these files are configured to be copied to the output directory in `Imperial2030.Server.csproj`. *Note: we preserve the legacy `imperial_ppo_bot.onnx` logic for older models, but new models use the exact `--bot-type` name you provided!*
    ```xml
    <ItemGroup>
+     <!-- Legacy RL Model -->
      <Content Include="imperial_ppo_bot.onnx">
        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
      </Content>
      <Content Include="imperial_ppo_bot.onnx.data">
+       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+     </Content>
+     <!-- New RL Models (e.g. RL, RL-2) -->
+     <Content Include="RL-2.onnx">
+       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+     </Content>
+     <Content Include="RL-2.onnx.data">
        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
      </Content>
    </ItemGroup>

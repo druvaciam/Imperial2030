@@ -8,10 +8,12 @@ class ImperialEnv(gym.Env):
     """Custom Environment that follows gym interface"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, host="127.0.0.1", port=5295):
+    def __init__(self, host="127.0.0.1", port=5295, bot_type="RL", opponents=None):
         super(ImperialEnv, self).__init__()
         self.host = host
         self.port = port
+        self.bot_type = bot_type
+        self.opponents = opponents if opponents is not None else []
         self.session_id = None
         
         self._connect_socket()
@@ -58,7 +60,11 @@ class ImperialEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        res = self._send_receive({"command": "reset"})
+        res = self._send_receive({
+            "command": "reset", 
+            "botType": self.bot_type,
+            "opponents": self.opponents
+        })
         self.session_id = res.get("sessionId")
         obs = np.array(res.get("state", []), dtype=np.float32)
         

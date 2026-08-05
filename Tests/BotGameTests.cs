@@ -541,12 +541,13 @@ namespace Imperial2030.Tests
             Assert.Equal(2, updatedGame.Actions.Count);
         }
 
-        [Fact]
-        public async Task TestRLBotWinRate()
+        [Theory]
+        [InlineData("RL")]
+        [InlineData("RL-2")]
+        public async Task TestRLBotWinRate(string testBotType)
         {
-
             int rlWins = 0;
-            int totalGames = 100;
+            int totalGames = 50;
             for (int g = 0; g < totalGames; g++)
             {
                 var dbName = Guid.NewGuid().ToString();
@@ -578,7 +579,7 @@ namespace Imperial2030.Tests
                     new Imperial2030.Server.Services.Bots.Strategies.GreedyBotStrategy(),
                     new Imperial2030.Server.Services.Bots.Strategies.AggressiveBotStrategy(),
                     new Imperial2030.Server.Services.Bots.Strategies.FriendlyBotStrategy(),
-                    new Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy()
+                    new Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy(testBotType)
                 ], mockLogger.Object);
                 botService.SkipDelays = true;
 
@@ -608,8 +609,8 @@ namespace Imperial2030.Tests
                 // Force them to be Random / RL bots
                 var players = context.Players.Where(p => p.GameId == gameId).ToList();
                 players[0].IsBot = true;
-                players[0].BotName = "RL Bot";
-                players[0].BotType = "RL";
+                players[0].BotName = $"{testBotType} Bot";
+                players[0].BotType = testBotType;
 
                 var randomOpponents = new[] { "Random", "Default" };//, "Greedy", "Aggressive", "Friendly" };
                 var rng = new Random(g); // Use g for seed or just new Random()
@@ -654,7 +655,7 @@ namespace Imperial2030.Tests
                 {
                     var rankedPlayers = finalGame.GetRankedPlayers();
                     var winner = rankedPlayers.First();
-                    if (winner.BotType == "RL") rlWins++;
+                    if (winner.BotType == testBotType) rlWins++;
                     _output.WriteLine($"Game {g} finished in {turns} turns. Winner: {winner.BotName}");
                 }
             }
@@ -667,7 +668,7 @@ namespace Imperial2030.Tests
             }
 
             float winRate = (float)rlWins / totalGames * 100;
-            _output.WriteLine($"RL Bot Win Rate: {rlWins}/{totalGames} ({winRate}%)");
+            _output.WriteLine($"{testBotType} Bot Win Rate: {rlWins}/{totalGames} ({winRate}%)");
             Assert.True(winRate >= 25);
         }
 

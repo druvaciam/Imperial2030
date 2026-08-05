@@ -7,7 +7,13 @@ from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from imperial_env import ImperialEnv
 
-model_path = "imperial_ppo_bot_best"
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--bot-type", type=str, default="RL", help="The name of the bot to export (e.g. RL, RL-2).")
+args = parser.parse_args()
+
+model_path = f"{args.bot_type}_best"
 vec_env_path = "vec_normalize_best.pkl"
 
 if not os.path.exists(model_path + ".zip"):
@@ -38,7 +44,7 @@ onnx_policy = OnnxablePolicy(model.policy)
 obs_dim = model.observation_space.shape[0]
 dummy_input = torch.randn(1, obs_dim)
 
-onnx_path = "imperial_ppo_bot.onnx"
+onnx_path = f"{args.bot_type}.onnx"
 print(f"Exporting ONNX model to {onnx_path}...")
 torch.onnx.export(
     onnx_policy,

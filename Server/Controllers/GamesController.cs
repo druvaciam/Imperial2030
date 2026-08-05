@@ -430,6 +430,43 @@ public class GamesController : ControllerBase
 
     private static readonly string[] BotNames = { "Bot Alpha", "Bot Bravo", "Bot Charlie", "Bot Delta", "Bot Echo" };
 
+    [HttpGet("available-bots")]
+    public IActionResult GetAvailableBots()
+    {
+        var bots = GetAvailableBotTypes();
+        return Ok(bots);
+    }
+
+    private static List<string> GetAvailableBotTypes()
+    {
+        var botTypes = new List<string> { "Default", "Aggressive", "Friendly", "Greedy", "Random" };
+        
+        try
+        {
+            var basePath = AppContext.BaseDirectory;
+            if (System.IO.File.Exists(System.IO.Path.Combine(basePath, "imperial_ppo_bot.onnx")) || System.IO.File.Exists(System.IO.Path.Combine(basePath, "RL.onnx")))
+            {
+                botTypes.Add("RL");
+            }
+
+            var onnxFiles = System.IO.Directory.GetFiles(basePath, "*.onnx");
+            foreach (var file in onnxFiles)
+            {
+                var fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                if (!fileName.Equals("imperial_ppo_bot", StringComparison.OrdinalIgnoreCase) && !fileName.Equals("RL", StringComparison.OrdinalIgnoreCase) && fileName.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
+                {
+                    botTypes.Add(fileName);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error discovering bot types: {ex.Message}");
+        }
+
+        return botTypes;
+    }
+
     [HttpPost("{gameId}/add-bot")]
     public async Task<IActionResult> AddBot(Guid gameId, [FromQuery] string? botType = null)
     {
@@ -448,8 +485,8 @@ public class GamesController : ControllerBase
         int botIndex = game.Players.Count(p => p.IsBot);
         var botName = botIndex < BotNames.Length ? BotNames[botIndex] : $"Bot {botIndex + 1}";
 
-        var botTypes = new[] { "Default", "Aggressive", "Friendly", "Greedy", "RL", "Random" };
-        var randomBotType = botTypes[Random.Shared.Next(botTypes.Length)];
+        var botTypes = GetAvailableBotTypes();
+        var randomBotType = botTypes[Random.Shared.Next(botTypes.Count)];
         var selectedBotType = string.IsNullOrEmpty(botType) || !botTypes.Contains(botType) ? randomBotType : botType;
 
         var bot = new Player
