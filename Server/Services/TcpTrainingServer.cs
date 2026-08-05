@@ -40,6 +40,12 @@ public class TcpTrainingServer : BackgroundService
 
         [JsonPropertyName("action")]
         public int Action { get; set; }
+
+        [JsonPropertyName("botType")]
+        public string? BotType { get; set; }
+
+        [JsonPropertyName("opponents")]
+        public List<string>? Opponents { get; set; }
     }
 
     public class ResetResponse
@@ -110,7 +116,7 @@ public class TcpTrainingServer : BackgroundService
 
                     if (req.Command == "reset")
                     {
-                        var res = await HandleResetAsync();
+                        var res = await HandleResetAsync(req);
                         await writer.WriteLineAsync(JsonSerializer.Serialize(res));
                     }
                     else if (req.Command == "step")
@@ -135,7 +141,7 @@ public class TcpTrainingServer : BackgroundService
         }
     }
 
-    private async Task<ResetResponse> HandleResetAsync()
+    private async Task<ResetResponse> HandleResetAsync(TcpRequest req)
     {
         // 1. Create a quick, isolated game in the DB
         var gameId = Guid.NewGuid();
@@ -147,7 +153,8 @@ public class TcpTrainingServer : BackgroundService
             CurrentTurnNation = Nation.Russia
         };
 
-        var randomOpponents = new[] { "Random", "Default" };// "Greedy", "Aggressive", "Friendly" };
+        var availableBots = new[] { "Default", "Aggressive", "Friendly", "Greedy", "Random", "RL" };
+        var opponentsList = req.Opponents != null && req.Opponents.Any() ? req.Opponents.ToArray() : new[] { "Random", "Default" };
         var rng = new Random();
         var players = new List<Player>();
         for (int i = 0; i < 6; i++)
@@ -155,14 +162,14 @@ public class TcpTrainingServer : BackgroundService
             var p = new Player { Id = Guid.NewGuid(), GameId = gameId, UserId = null, IsBot = true, BotName = $"Bot {i}", Cash = 2 };
             if (i > 0)
             {
-                p.BotType = randomOpponents[rng.Next(randomOpponents.Length)];
+                p.BotType = opponentsList[rng.Next(opponentsList.Length)];
                 p.BotName = $"{p.BotType} Bot {i}";
             }
             players.Add(p);
         }
         var rlPlayer = players[0];
-        rlPlayer.BotName = "RLAgent"; // We will control player 0
-        rlPlayer.BotType = "RL";
+        rlPlayer.BotName = string.IsNullOrEmpty(req.BotType) ? "RLAgent" : $"{req.BotType}Agent"; // We will control player 0
+        rlPlayer.BotType = string.IsNullOrEmpty(req.BotType) ? "RL" : req.BotType;
 
         RLBotStrategy.IsTraining = true;
         game.Players = players;
@@ -522,17 +529,77 @@ public class TcpTrainingServer : BackgroundService
                         var strategy = _botService.GetStrategy(player);
                         bool isHostileMove = strategy.DetermineHostility(hasEnemy, isForeignHome);
 
+                        if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != unit.Nation)
+                        {
+                            var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == target);
+                            if (tState != null && tState.HasFactory)
+                            {
+                                var defenderNation = def.Nation.Value;
+                                var defenderFactoryCount = game.TerritoryStates.Count(s =>
+                                {
+                                    if (!s.HasFactory) return false;
+                                    var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
+                                    if (t == null || t.Nation != defenderNation) return false;
+                                    bool isOccupied = game.Units.Any(u => u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
+                                    return !isOccupied;
+                                });
+                                bool isTargetOccupied = game.Units.Any(u => u.TerritoryId == target && u.Nation != defenderNation && u.IsHostile);
+                                if (defenderFactoryCount <= 1 && !isTargetOccupied)
+                                {
+                                    isHostileMove = false;
+                                }
+                            }
+                        }
+
                         unit.TerritoryId = target;
                         unit.IsHostile = isHostileMove;
 
-                        var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == target && u.UnitType == unit.UnitType && !friendlyNations.Contains(u.Nation));
-                        if (enemyUnit != null && isHostileMove)
+                        if (unitType == UnitType.Army)
                         {
-                            game.Units.Remove(unit);
-                            game.Units.Remove(enemyUnit);
+                            var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, session.ManeuverSelectedTerritoryId, unit.Nation);
+                            var destInfo = destinations.FirstOrDefault(d => d.TerritoryId == target);
+                            if (destInfo.IsConvoy && destInfo.ConvoyFleets != null)
+                            {
+                                foreach (var f in destInfo.ConvoyFleets) f.HasConvoyed = true;
+                            }
                         }
 
-                        await _botService.BotTryDestroyFactories(null, game, unit.Nation, player);
+                        if (hasEnemy)
+                        {
+                            var foreignDefenders = game.Units
+                                .Where(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation))
+                                .Where(u => u.UnitType == unit.UnitType || (isForeignHome && def != null && u.Nation == def.Nation.Value && isHostileMove))
+                                .Select(u => u.Nation)
+                                .Distinct()
+                                .ToList();
+
+                            if (foreignDefenders.Any())
+                            {
+                                if (isHostileMove && foreignDefenders.Count == 1)
+                                {
+                                    var targetNation = foreignDefenders.First();
+                                    var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == target && u.Nation == targetNation &&
+                                        (u.UnitType == unit.UnitType || (isForeignHome && def != null && u.Nation == def.Nation.Value)));
+
+                                    if (enemyUnit != null)
+                                    {
+                                        game.Units.Remove(unit);
+                                        game.Units.Remove(enemyUnit);
+                                    }
+                                }
+                                else
+                                {
+                                    game.PendingBattleTerritoryId = target;
+                                    game.PendingBattleAggressorNation = unit.Nation;
+                                    game.PendingBattleDefenders = foreignDefenders.ToList();
+                                }
+                            }
+                        }
+
+                        if (!game.PendingBattleDefenders.Any())
+                        {
+                            await _botService.BotTryDestroyFactories(null, game, unit.Nation, player);
+                        }
                     }
                 }
             }
@@ -1259,21 +1326,43 @@ public class TcpTrainingServer : BackgroundService
                     {
                         var validNeighbors = neighbors.ToList();
 
-                        // NOTE: Proper rail/convoy logic should be used here, but for RL, direct adjacency is safe start.
-                        // We filter by sea/land
                         if (unitType == UnitType.Fleet)
                         {
-                            validNeighbors = validNeighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)).ToList();
+                            validNeighbors = validNeighbors.Where(n => {
+                                if (!TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)) return false;
+                                
+                                var canal = MapConnectivity.CanalLinks.FirstOrDefault(c => 
+                                    (c.Region1 == selectedUnit.TerritoryId && c.Region2 == n) ||
+                                    (c.Region1 == n && c.Region2 == selectedUnit.TerritoryId));
+
+                                if (canal != default)
+                                {
+                                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == canal.ControllerId);
+                                    if (tState != null && tState.Controller != null && tState.Controller != selectedUnit.Nation)
+                                    {
+                                        var canalNationState = game.NationStates.FirstOrDefault(ns => ns.Nation == tState.Controller.Value);
+                                        if (canalNationState == null || canalNationState.ControllerId != session.RLPlayerId)
+                                        {
+                                            return false; // Canal blocked
+                                        }
+                                    }
+                                }
+                                return true;
+                            }).ToList();
+                            foreach (var dest in validNeighbors)
+                            {
+                                int idx = Array.IndexOf(RLBotStrategy.AllManeuverTerritories, dest);
+                                if (idx >= 0) mask[127 + idx] = true;
+                            }
                         }
                         else
                         {
-                            validNeighbors = validNeighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Land)).ToList();
-                        }
-
-                        foreach (var dest in validNeighbors)
-                        {
-                            int idx = Array.IndexOf(RLBotStrategy.AllManeuverTerritories, dest);
-                            if (idx >= 0) mask[127 + idx] = true;
+                            var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, selectedUnit.TerritoryId, selectedUnit.Nation);
+                            foreach (var dest in destinations)
+                            {
+                                int idx = Array.IndexOf(RLBotStrategy.AllManeuverTerritories, dest.TerritoryId);
+                                if (idx >= 0) mask[127 + idx] = true;
+                            }
                         }
                     }
                 }

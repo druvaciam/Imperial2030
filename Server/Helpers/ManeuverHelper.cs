@@ -162,7 +162,14 @@ namespace Imperial2030.Server.Helpers
                        var tState = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == canal.ControllerId);
                        if (tState != null && tState.Controller != null && tState.Controller != armyNation)
                        {
-                           continue; // Canal blocked
+                           var controllerNation = tState.Controller.Value;
+                           var controllerState = game.NationStates.FirstOrDefault(ns => ns.Nation == controllerNation);
+                           var armyState = game.NationStates.FirstOrDefault(ns => ns.Nation == armyNation);
+                           
+                           if (controllerState == null || armyState == null || controllerState.ControllerId != armyState.ControllerId)
+                           {
+                               continue; // Canal blocked
+                           }
                        }
                     }
 

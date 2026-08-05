@@ -90,7 +90,7 @@ Properties/launchSettings.json
 [Pp]ublish/
 
 # Python RL Model Outputs
-python_rl/imperial_ppo*.zip
+python_rl/RL*.zip
 python_rl/vec_normalize*.pkl
 python_rl/best_reward.txt
 python_rl/*.onnx

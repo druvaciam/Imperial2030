@@ -2,6 +2,7 @@ using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 using System.Text;
+using System.Threading;
 using System.Text.Json;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
@@ -12,9 +13,10 @@ public class RlTrainingPauseException : Exception { }
 
 public class RLBotStrategy : BotStrategyBase
 {
-    public override string Name => "RL";
+    public override string Name { get; }
     public static AsyncLocal<int?> TrainingActionOverride = new AsyncLocal<int?>();
     public static bool IsTraining = false;
+    public float Temperature { get; set; } = 0.5f;
 
     public override bool DetermineHostility(bool hasEnemy, bool isForeignHome)
     {
@@ -25,7 +27,10 @@ public class RLBotStrategy : BotStrategyBase
     public static int InvalidActionCount = 0;
     public static int TotalActionCount = 0;
 
-    private static InferenceSession? _onnxSession;
+
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, InferenceSession> _sessionCache = new();
+    private InferenceSession? _onnxSession;
 
     public static readonly int StateSize = 3164;
 
@@ -60,21 +65,36 @@ public class RLBotStrategy : BotStrategyBase
 
     public static readonly string[] AllManeuverTerritories = HomeProvinceIds.Concat(NeutralLandIds).Concat(SeaZoneIds).ToArray();
 
-    static RLBotStrategy()
+    public RLBotStrategy(string botType = "RL")
     {
+        Name = botType;
         try
         {
             string basePath = AppContext.BaseDirectory;
-            string onnxPath = Path.Combine(basePath, "imperial_ppo_bot.onnx");
+            string modelFilename = $"{botType}.onnx";
+            if (botType.Equals("RL", StringComparison.OrdinalIgnoreCase) && !File.Exists(Path.Combine(basePath, modelFilename)))
+            {
+                modelFilename = "imperial_ppo_bot.onnx";
+            }
+            string onnxPath = Path.Combine(basePath, modelFilename);
 
             if (File.Exists(onnxPath))
             {
-                _onnxSession = new InferenceSession(onnxPath);
+                _onnxSession = _sessionCache.GetOrAdd(onnxPath, path =>
+                {
+                    var session = new InferenceSession(path);
+                    Console.WriteLine($"Loaded ONNX model: {modelFilename}");
+                    return session;
+                });
+            }
+            else
+            {
+                Console.WriteLine($"WARNING: ONNX model {modelFilename} not found at {onnxPath}. Inference will be disabled.");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error loading ONNX model: {ex.Message}");
+            Console.WriteLine($"Error loading ONNX model for {botType}: {ex.Message}");
         }
     }
 
@@ -95,9 +115,10 @@ public class RLBotStrategy : BotStrategyBase
         {
             _cachedAction = TrainingActionOverride.Value.Value;
         }
-        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_"))
+        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
         {
             // If we are training but have no override, we need to pause the C# game loop and wait for Python.
+            // Only pause if this player is the primary agent being trained.
             throw new RlTrainingPauseException();
         }
         else
@@ -427,24 +448,102 @@ public class RLBotStrategy : BotStrategyBase
 
     public override bool RetreatFromBattle(Game game, PendingBattle battle)
     {
-        if (TrainingActionOverride.Value.HasValue)
-        {
-            return TrainingActionOverride.Value.Value == 8; // 8 = Retreat, 7 = Fight
-        }
-        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_"))
-        {
-            throw new RlTrainingPauseException();
-        }
-
         var defNationToResolve = game.PendingBattleDefenders.FirstOrDefault();
         if (defNationToResolve == default) return false;
 
         var controllerId = game.NationStates.First(ns => ns.Nation == defNationToResolve).ControllerId;
         var controller = game.Players.First(p => p.Id == controllerId);
 
+        if (TrainingActionOverride.Value.HasValue)
+        {
+            return TrainingActionOverride.Value.Value == 8; // 8 = Retreat, 7 = Fight
+        }
+        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
+        {
+            throw new RlTrainingPauseException();
+        }
+
         var mask = GetActionMask(game, controller.Id);
         int action = GetActionFromOnnx(game, controller, mask);
         return action == 8;
+    }
+
+    private ThreadLocal<(Guid UnitId, int ChosenAction)> _maneuverCache = new ThreadLocal<(Guid, int)>();
+
+    public override double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller)
+    {
+        if (_onnxSession == null)
+        {
+            return base.ScoreManeuverDestination(game, unit, destinationId, controller);
+        }
+
+        var cache = _maneuverCache.Value;
+        if (cache.UnitId != unit.Id || cache.ChosenAction == 0)
+        {
+            bool[] mask = new bool[189];
+            mask[126] = true; // Do Not Move
+
+            if (unit.UnitType == UnitType.Fleet)
+            {
+                if (MapConnectivity.Adjacency.TryGetValue(unit.TerritoryId, out var neighbors))
+                {
+                    var validNeighbors = neighbors.Where(n => {
+                        if (!TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)) return false;
+                        
+                        var canal = MapConnectivity.CanalLinks.FirstOrDefault(c => 
+                            (c.Region1 == unit.TerritoryId && c.Region2 == n) ||
+                            (c.Region1 == n && c.Region2 == unit.TerritoryId));
+
+                        if (canal != default)
+                        {
+                            var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == canal.ControllerId);
+                            if (tState != null && tState.Controller != null && tState.Controller != unit.Nation)
+                            {
+                                var canalNationState = game.NationStates.FirstOrDefault(ns => ns.Nation == tState.Controller.Value);
+                                if (canalNationState == null || canalNationState.ControllerId != controller.Id)
+                                {
+                                    return false; // Canal blocked
+                                }
+                            }
+                        }
+                        return true;
+                    }).ToList();
+                    
+                    foreach (var dest in validNeighbors)
+                    {
+                        int mIdx = Array.IndexOf(AllManeuverTerritories, dest);
+                        if (mIdx >= 0) mask[127 + mIdx] = true;
+                    }
+                }
+            }
+            else
+            {
+                var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, unit.TerritoryId, unit.Nation);
+                foreach (var dest in destinations)
+                {
+                    int mIdx = Array.IndexOf(AllManeuverTerritories, dest.TerritoryId);
+                    if (mIdx >= 0) mask[127 + mIdx] = true;
+                }
+            }
+
+            int chosenAction = GetActionFromOnnx(game, controller, mask, unit.TerritoryId);
+            cache = (unit.Id, chosenAction);
+            _maneuverCache.Value = cache;
+        }
+
+        int thisAction = 126;
+        if (destinationId != unit.TerritoryId)
+        {
+            int idx = Array.IndexOf(AllManeuverTerritories, destinationId);
+            if (idx >= 0) thisAction = 127 + idx;
+        }
+
+        if (thisAction == cache.ChosenAction)
+        {
+            return 1000;
+        }
+
+        return -1000;
     }
 
     public override Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)
@@ -453,7 +552,7 @@ public class RLBotStrategy : BotStrategyBase
         {
             _cachedAction = TrainingActionOverride.Value.Value;
         }
-        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_"))
+        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && actor.BotName != null && actor.BotName.EndsWith("Agent"))
         {
             throw new RlTrainingPauseException();
         }
@@ -485,9 +584,9 @@ public class RLBotStrategy : BotStrategyBase
         return null;
     }
 
-    private int GetActionFromOnnx(Game game, Player controller, bool[] actionMask)
+    private int GetActionFromOnnx(Game game, Player controller, bool[] actionMask, string? maneuverSelectedTerritoryId = null)
     {
-        var state = GetStateVector(game, controller);
+        var state = GetStateVector(game, controller, maneuverSelectedTerritoryId);
 
         if (_onnxSession == null)
         {
@@ -508,24 +607,55 @@ public class RLBotStrategy : BotStrategyBase
         using var results = _onnxSession.Run(inputs);
         var output = results.First().AsTensor<float>();
 
-        // Apply Mask & ArgMax
+        // Apply Mask & Action Selection
         int bestAction = -1;
-        float maxLogit = float.MinValue;
 
-        for (int j = 0; j < 64; j++)
+        if (Temperature <= 0.001f)
         {
-            if (actionMask[j])
+            float maxLogit = float.MinValue;
+            for (int j = 0; j < actionMask.Length; j++)
             {
-                if (output[0, j] > maxLogit)
+                if (actionMask[j])
                 {
-                    maxLogit = output[0, j];
-                    bestAction = j;
+                    if (output[0, j] > maxLogit)
+                    {
+                        maxLogit = output[0, j];
+                        bestAction = j;
+                    }
                 }
+            }
+        }
+        else
+        {
+            var validLogits = new List<(int Index, float Logit)>();
+            for (int j = 0; j < actionMask.Length; j++)
+            {
+                if (actionMask[j]) validLogits.Add((j, output[0, j]));
+            }
+
+            if (validLogits.Count > 0)
+            {
+                float maxValidLogit = validLogits.Max(x => x.Logit);
+                var exps = validLogits.Select(x => (float)Math.Exp((x.Logit - maxValidLogit) / Temperature)).ToList();
+                float sumExp = exps.Sum();
+                float randomVal = (float)Random.Shared.NextDouble() * sumExp;
+                
+                float cumulative = 0;
+                for (int i = 0; i < validLogits.Count; i++)
+                {
+                    cumulative += exps[i];
+                    if (randomVal <= cumulative)
+                    {
+                        bestAction = validLogits[i].Index;
+                        break;
+                    }
+                }
+                if (bestAction == -1) bestAction = validLogits.Last().Index;
             }
         }
 
         TotalActionCount++;
-        if (bestAction < 0 || bestAction > 63 || !actionMask[bestAction])
+        if (bestAction < 0 || bestAction >= actionMask.Length || !actionMask[bestAction])
         {
             InvalidActionCount++;
             var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();

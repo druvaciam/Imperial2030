@@ -26,16 +26,18 @@ public class BotService
         _logger = logger;
     }
 
-    public BotService(IServiceScopeFactory object1, IHubContext<GameHub> object2, List<IBotStrategy> botStrategies1)
-    {
-        _object1 = object1;
-        _object2 = object2;
-        _botStrategies1 = botStrategies1;
-    }
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Bots.IBotStrategy> _rlStrategies = new();
 
     public Bots.IBotStrategy GetStrategy(Player player)
     {
         var type = player.BotType ?? "Default";
+        
+        // Handle RL bots dynamically
+        if (type.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
+        {
+            return _rlStrategies.GetOrAdd(type, t => new Bots.Strategies.RLBotStrategy(t));
+        }
+
         return _botStrategies.FirstOrDefault(s => s.Name.Equals(type, StringComparison.OrdinalIgnoreCase))
                ?? _botStrategies.FirstOrDefault(s => s.Name == "Default")
                ?? new Bots.Strategies.DefaultBotStrategy(); // Fallback if not registered
@@ -54,9 +56,6 @@ public class BotService
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> _activeBotGames = new();
-    private IServiceScopeFactory _object1;
-    private IHubContext<GameHub> _object2;
-    private List<IBotStrategy> _botStrategies1;
 
     public async Task TryPlayBotTurnAsync(Guid gameId, bool singleTurnOnly = false)
     {
@@ -493,7 +492,27 @@ public class BotService
         foreach (var fleet in fleets)
         {
             if (!MapConnectivity.Adjacency.TryGetValue(fleet.TerritoryId, out var neighbors)) continue;
-            var seaNeighbors = neighbors.Where(n => TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)).ToList();
+            var seaNeighbors = neighbors.Where(n => {
+                if (!TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)) return false;
+                
+                var canal = MapConnectivity.CanalLinks.FirstOrDefault(c => 
+                    (c.Region1 == fleet.TerritoryId && c.Region2 == n) ||
+                    (c.Region1 == n && c.Region2 == fleet.TerritoryId));
+
+                if (canal != default)
+                {
+                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == canal.ControllerId);
+                    if (tState != null && tState.Controller != null && tState.Controller != nation)
+                    {
+                        var canalNationState = game.NationStates.FirstOrDefault(ns => ns.Nation == tState.Controller.Value);
+                        if (canalNationState == null || canalNationState.ControllerId != controller.Id)
+                        {
+                            return false; // Canal blocked
+                        }
+                    }
+                }
+                return true;
+            }).ToList();
             seaNeighbors.Add(fleet.TerritoryId); // Allow staying put
 
             var target = seaNeighbors.OrderByDescending(n => GetStrategy(controller).ScoreManeuverDestination(game, fleet, n, controller)).FirstOrDefault();

@@ -33,18 +33,23 @@ class EntCoefScheduleCallback(BaseCallback):
         return True
 
 if __name__ == "__main__":
-    env = Monitor(ImperialEnv())
-    
-    # Wrap in DummyVecEnv and VecNormalize
-    vec_env = DummyVecEnv([lambda: env])
     import os
     import argparse
 
     parser = argparse.ArgumentParser(description="Train the Imperial 2030 RL Bot.")
     parser.add_argument("--reset", action="store_true", help="Start training from scratch, ignoring any existing saved model.")
+    parser.add_argument("--bot-type", type=str, default="RL", help="The name of the bot to train (e.g. RL, RL-2).")
+    parser.add_argument("--opponents", type=str, help="Comma separated list of opponents to train against (e.g. Random,Default,RL).")
     args = parser.parse_args()
 
-    MODEL_BASENAME = "imperial_ppo_bot"
+    opponents_list = args.opponents.split(",") if args.opponents else []
+
+    env = Monitor(ImperialEnv(bot_type=args.bot_type, opponents=opponents_list))
+    
+    # Wrap in DummyVecEnv and VecNormalize
+    vec_env = DummyVecEnv([lambda: env])
+
+    MODEL_BASENAME = args.bot_type
     MODEL_PATH = f"{MODEL_BASENAME}.zip"
     VEC_NORM_PATH = "vec_normalize.pkl"
     BEST_VEC_NORM_PATH = "vec_normalize_best.pkl"
