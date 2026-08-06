@@ -9,6 +9,7 @@ public class GameDto
     public string Name { get; set; } = string.Empty;
     public GameStatus Status { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime? FinishedAt { get; set; }
     public int PlayerCount { get; set; }
     public int MaxPlayers { get; set; } = 6;
     public bool IsPrivate { get; set; } = false;

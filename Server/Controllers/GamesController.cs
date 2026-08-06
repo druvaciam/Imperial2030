@@ -50,6 +50,7 @@ public class GamesController : ControllerBase
                 Name = g.Name,
                 Status = g.Status,
                 CreatedAt = g.CreatedAt,
+                FinishedAt = g.FinishedAt,
                 PlayerCount = g.Players.Count,
                 MaxPlayers = g.MaxPlayers,
                 IsPrivate = g.IsPrivate,
@@ -95,6 +96,7 @@ public class GamesController : ControllerBase
             Name = game.Name,
             Status = game.Status,
             CreatedAt = game.CreatedAt,
+            FinishedAt = game.FinishedAt,
             PlayerCount = 1,
             MaxPlayers = game.MaxPlayers,
             IsPrivate = game.IsPrivate,
@@ -1664,7 +1666,7 @@ public class GamesController : ControllerBase
         _context.Entry(nationState).State = EntityState.Modified;
         _context.Entry(territoryState).State = EntityState.Modified;
 
-        LogAction(game, $"built a factory in {territoryDef.Name}", "Factory", nation);
+        GameLogger.LogFactoryBuild(_context, game, territoryDef.Name, nation, User.Identity?.Name ?? "System");
 
         await _context.SaveChangesAsync();
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -1767,6 +1769,7 @@ public class GamesController : ControllerBase
         if (nationState.Power >= 25)
         {
             game.Status = GameStatus.Finished;
+            game.FinishedAt = DateTime.UtcNow;
             _context.Entry(game).State = EntityState.Modified;
             await _context.SaveChangesAsync();
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); // Notify update FIRST so clients see 25 Power
@@ -1941,7 +1944,7 @@ public class GamesController : ControllerBase
             _context.Entry(nationState).State = EntityState.Modified;
 
             string responderName = responder.IsBot ? (responder.BotName ?? "Bot") : (User.Identity?.Name ?? "Human");
-            LogAction(game, $"chose to FORCE STOP {nationState.Nation} on Investor", "SwissBankResponse", nationState.Nation, responderName);
+            GameLogger.LogSwissBankForceStop(_context, game, nationState.Nation, responderName);
 
             string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (_context.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human");
             GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
@@ -1957,7 +1960,7 @@ public class GamesController : ControllerBase
         else
         {
             string responderName = responder.IsBot ? (responder.BotName ?? "Bot") : (User.Identity?.Name ?? "Human");
-            LogAction(game, $"chose to PASS on forcing {nationState.Nation} to stop", "SwissBankResponse", nationState.Nation, responderName);
+            GameLogger.LogSwissBankPass(_context, game, nationState.Nation, responderName);
 
             var responders = game.PendingSwissBankResponders;
             responders.Remove(responder.Id);

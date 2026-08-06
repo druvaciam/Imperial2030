@@ -22,6 +22,7 @@ public class Game
     public GameStatus Status { get; set; } = GameStatus.Lobby;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? FinishedAt { get; set; }
     public Nation CurrentTurnNation { get; set; } = Nation.Russia;
     public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;
 

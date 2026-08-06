@@ -811,6 +811,69 @@
         }
     </g>
 
+    <g id="battles-and-ghosts" style="pointer-events: none;">
+        @foreach (var battle in recentBattles)
+        {
+            if (Imperial2030.Client.Constants.MapCoordinates.TerritoryCenters.TryGetValue(battle.TerritoryId, out var coords))
+            {
+                // Draw Ghost Aggressor
+                string aggColor = GetNationColor(battle.AggressorNation);
+                double offsetX = -10;
+                if (battle.UnitType == Imperial2030.Shared.Models.UnitType.Army)
+                {
+                    <g opacity="0.6" class="new-unit-blink">
+                        <rect x="@Fmt(coords.X + offsetX - 8)" y="@Fmt(coords.Y - 8)" width="16" height="16" fill="@aggColor" stroke="white" stroke-width="1.5" />
+                        <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">A</text>
+                    </g>
+                }
+                else
+                {
+                    <g opacity="0.6" class="new-unit-blink">
+                        <circle cx="@Fmt(coords.X + offsetX)" cy="@Fmt(coords.Y)" r="8" fill="@aggColor" stroke="white" stroke-width="1.5" />
+                        <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">F</text>
+                    </g>
+                }
+
+                // Draw Ghost Defender
+                string defColor = GetNationColor(battle.DefenderNation);
+                double defOffsetX = 10;
+                if (battle.DefenderUnitType == Imperial2030.Shared.Models.UnitType.Army)
+                {
+                    <g opacity="0.6" class="new-unit-blink">
+                        <rect x="@Fmt(coords.X + defOffsetX - 8)" y="@Fmt(coords.Y - 8)" width="16" height="16" fill="@defColor" stroke="white" stroke-width="1.5" />
+                        <text x="@Fmt(coords.X + defOffsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">A</text>
+                    </g>
+                }
+                else
+                {
+                    <g opacity="0.6" class="new-unit-blink">
+                        <circle cx="@Fmt(coords.X + defOffsetX)" cy="@Fmt(coords.Y)" r="8" fill="@defColor" stroke="white" stroke-width="1.5" />
+                        <text x="@Fmt(coords.X + defOffsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">F</text>
+                    </g>
+                }
+
+                // Explosion Icon in center
+                <g>
+                    <text x="@Fmt(coords.X)" y="@Fmt(coords.Y + 2)" text-anchor="middle" font-size="20" class="explosion-flash">💥</text>
+                </g>
+            }
+        }
+    </g>
+    
+    <g id="recent-factory-destructions-effects" style="pointer-events: none;">
+        @foreach (var destruction in recentFactoryDestructions)
+        {
+            if (Imperial2030.Client.Constants.MapCoordinates.TerritoryCenters.TryGetValue(destruction.TerritoryId, out var coords))
+            {
+                // Explosion Icon where the factory used to be
+                <g>
+                    <text x="@Fmt(coords.X - 10)" y="@Fmt(coords.Y + 2)" text-anchor="middle" font-size="20" class="explosion-flash">💥</text>
+                    <rect x="@Fmt(coords.X - 18)" y="@Fmt(coords.Y - 14)" width="16" height="16" fill="transparent" stroke="gray" stroke-width="1.5" stroke-dasharray="2,2" class="new-unit-blink" />
+                </g>
+            }
+        }
+    </g>
+
     <g id="recent-moves-effects" style="pointer-events: none;">
         @foreach (var move in recentMoves)
         {
@@ -1146,14 +1209,32 @@
     public class RecentMove
     {
         public Guid UnitId { get; set; }
-        public UnitType UnitType { get; set; }
         public Imperial2030.Shared.Models.Nation Nation { get; set; }
+        public Imperial2030.Shared.Models.UnitType UnitType { get; set; }
         public string FromTerritoryId { get; set; } = string.Empty;
         public string ToTerritoryId { get; set; } = string.Empty;
         public DateTime TimestampUtc { get; set; }
     }
 
+    public class RecentBattle
+    {
+        public string TerritoryId { get; set; } = string.Empty;
+        public DateTime TimestampUtc { get; set; }
+        public Imperial2030.Shared.Models.Nation AggressorNation { get; set; }
+        public Imperial2030.Shared.Models.Nation DefenderNation { get; set; }
+        public Imperial2030.Shared.Models.UnitType UnitType { get; set; }
+        public Imperial2030.Shared.Models.UnitType DefenderUnitType { get; set; }
+    }
+    
+    public class RecentFactoryDestruction
+    {
+        public string TerritoryId { get; set; } = string.Empty;
+        public DateTime TimestampUtc { get; set; }
+    }
+
     private List<RecentMove> recentMoves = new();
+    private List<RecentBattle> recentBattles = new();
+    private List<RecentFactoryDestruction> recentFactoryDestructions = new();
     private List<Unit> previousUnits = new();
 
     protected override void OnParametersSet()
@@ -1194,6 +1275,134 @@
             
             recentMoves.RemoveAll(m => (DateTime.UtcNow - m.TimestampUtc).TotalSeconds > 11);
             
+            // Supplement recentMoves and recentBattles from GameActions (to catch destroyed units that disappear from Game.Units)
+            if (Game.Actions != null)
+            {
+                var recentLimit = DateTime.UtcNow.AddSeconds(-11);
+                
+                // Track battles
+                foreach (var action in Game.Actions.Where(a => a.ActionType == "Battle" && a.Timestamp >= recentLimit))
+                {
+                    if (!recentBattles.Any(b => b.TimestampUtc == action.Timestamp))
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(action.Message ?? "", @"(army|fleet) attacked (\w+) (army|fleet) in ([\w-]+)\.");
+                        if (match.Success && action.Nation.HasValue)
+                        {
+                            if (Enum.TryParse<Imperial2030.Shared.Models.Nation>(match.Groups[2].Value, out var targetNation))
+                            {
+                                var battle = new RecentBattle
+                                {
+                                    TimestampUtc = action.Timestamp,
+                                    TerritoryId = match.Groups[4].Value,
+                                    AggressorNation = action.Nation.Value,
+                                    DefenderNation = targetNation,
+                                    UnitType = match.Groups[1].Value == "fleet" ? Imperial2030.Shared.Models.UnitType.Fleet : Imperial2030.Shared.Models.UnitType.Army,
+                                    DefenderUnitType = match.Groups[3].Value == "fleet" ? Imperial2030.Shared.Models.UnitType.Fleet : Imperial2030.Shared.Models.UnitType.Army
+                                };
+                                recentBattles.Add(battle);
+                                
+                                _ = Task.Run(async () => {
+                                    await Task.Delay(10000);
+                                    if (recentBattles.Contains(battle)) {
+                                        recentBattles.Remove(battle);
+                                        await InvokeAsync(StateHasChanged);
+                                    }
+                                });
+                            }
+                        }
+                        else
+                        {
+                            var matchFight = System.Text.RegularExpressions.Regex.Match(action.Message ?? "", @"(\w+) (army|fleet) chose FIGHT against (\w+) (army|fleet) in ([\w-]+)\.");
+                            if (matchFight.Success && action.Nation.HasValue)
+                            {
+                                if (Enum.TryParse<Imperial2030.Shared.Models.Nation>(matchFight.Groups[3].Value, out var aggressorNation))
+                                {
+                                    var battle = new RecentBattle
+                                    {
+                                        TimestampUtc = action.Timestamp,
+                                        TerritoryId = matchFight.Groups[5].Value,
+                                        AggressorNation = aggressorNation,
+                                        DefenderNation = action.Nation.Value,
+                                        UnitType = matchFight.Groups[4].Value == "fleet" ? Imperial2030.Shared.Models.UnitType.Fleet : Imperial2030.Shared.Models.UnitType.Army,
+                                        DefenderUnitType = matchFight.Groups[2].Value == "fleet" ? Imperial2030.Shared.Models.UnitType.Fleet : Imperial2030.Shared.Models.UnitType.Army
+                                    };
+                                    recentBattles.Add(battle);
+                                    
+                                    _ = Task.Run(async () => {
+                                        await Task.Delay(10000);
+                                        if (recentBattles.Contains(battle)) {
+                                            recentBattles.Remove(battle);
+                                            await InvokeAsync(StateHasChanged);
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                recentBattles.RemoveAll(b => (DateTime.UtcNow - b.TimestampUtc).TotalSeconds > 11);
+                
+                // Track factory destructions
+                foreach (var action in Game.Actions.Where(a => a.ActionType == "DestroyFactory" && a.Timestamp >= recentLimit))
+                {
+                    if (!recentFactoryDestructions.Any(d => d.TimestampUtc == action.Timestamp))
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(action.Message ?? "", @"destroyed factory in ([\w-]+)");
+                        if (match.Success)
+                        {
+                            var destruction = new RecentFactoryDestruction
+                            {
+                                TimestampUtc = action.Timestamp,
+                                TerritoryId = match.Groups[1].Value
+                            };
+                            recentFactoryDestructions.Add(destruction);
+                            
+                            _ = Task.Run(async () => {
+                                await Task.Delay(10000);
+                                if (recentFactoryDestructions.Contains(destruction)) {
+                                    recentFactoryDestructions.Remove(destruction);
+                                    await InvokeAsync(StateHasChanged);
+                                }
+                            });
+                        }
+                    }
+                }
+                recentFactoryDestructions.RemoveAll(d => (DateTime.UtcNow - d.TimestampUtc).TotalSeconds > 11);
+                
+                // Track destroyed unit moves
+                foreach (var action in Game.Actions.Where(a => (a.ActionType == "MoveArmy" || a.ActionType == "MoveFleet") && a.Timestamp >= recentLimit))
+                {
+                    var match = System.Text.RegularExpressions.Regex.Match(action.Message ?? "", @"moved(?: \w+)? to ([\w-]+) from ([\w-]+)");
+                    if (match.Success && action.Nation.HasValue)
+                    {
+                        string toTerr = match.Groups[1].Value;
+                        string fromTerr = match.Groups[2].Value;
+                        
+                        if (!recentMoves.Any(m => m.FromTerritoryId == fromTerr && m.ToTerritoryId == toTerr && m.Nation == action.Nation.Value && Math.Abs((m.TimestampUtc - action.Timestamp).TotalSeconds) < 2))
+                        {
+                            var m = new RecentMove
+                            {
+                                UnitId = Guid.NewGuid(),
+                                Nation = action.Nation.Value,
+                                UnitType = action.ActionType == "MoveFleet" ? Imperial2030.Shared.Models.UnitType.Fleet : Imperial2030.Shared.Models.UnitType.Army,
+                                FromTerritoryId = fromTerr,
+                                ToTerritoryId = toTerr,
+                                TimestampUtc = action.Timestamp
+                            };
+                            recentMoves.Add(m);
+                            
+                            _ = Task.Run(async () => {
+                                await Task.Delay(10000);
+                                if (recentMoves.Contains(m)) {
+                                    recentMoves.Remove(m);
+                                    await InvokeAsync(StateHasChanged);
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+
             previousUnits = Game.Units.Select(u => new Unit 
             { 
                 Id = u.Id, 

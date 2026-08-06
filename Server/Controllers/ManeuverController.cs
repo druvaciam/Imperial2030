@@ -169,7 +169,7 @@ public class ManeuverController : ControllerBase
                 _context.Units.Remove(enemyFleet);
                 game.Units.Remove(unit);
                 game.Units.Remove(enemyFleet);
-                LogAction(game, $"fleet attacked {targetNation} in {request.DestinationId}. Both destroyed", "Battle", nation);
+                GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyFleet.UnitType, request.DestinationId, nation, User.Identity?.Name ?? "System");
             }
         }
         else
@@ -193,7 +193,7 @@ public class ManeuverController : ControllerBase
                         _context.Units.Remove(enemyFleet);
                         game.Units.Remove(unit);
                         game.Units.Remove(enemyFleet);
-                        LogAction(game, $"fleet attacked {targetNation} in {request.DestinationId}. Both destroyed", "Battle", nation);
+                        GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyFleet.UnitType, request.DestinationId, nation, User.Identity?.Name ?? "System");
                     }
                 }
                 else
@@ -279,7 +279,7 @@ public class ManeuverController : ControllerBase
         game.Units.Remove(unit);
         game.Units.Remove(enemyUnit);
 
-        LogAction(game, $"{unit.UnitType.ToString().ToLower()} attacked {targetNation} in {unit.TerritoryId}. Both destroyed", "Battle", nation);
+        GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyUnit.UnitType, unit.TerritoryId, nation, User.Identity?.Name ?? "System");
 
         await UpdateTerritoryControl(game);
         await TryAutoAdvanceManeuver(game, nation);
@@ -459,7 +459,7 @@ public class ManeuverController : ControllerBase
                 _context.Units.Remove(enemyUnit);
                 game.Units.Remove(unit);
                 game.Units.Remove(enemyUnit);
-                LogAction(game, $"army attacked {targetNation} in {request.DestinationId}. Both destroyed", "Battle", nation);
+                GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyUnit.UnitType, request.DestinationId, nation, User.Identity?.Name ?? "System");
             }
         }
         else
@@ -489,7 +489,7 @@ public class ManeuverController : ControllerBase
                         _context.Units.Remove(enemyUnit);
                         game.Units.Remove(unit);
                         game.Units.Remove(enemyUnit);
-                        LogAction(game, $"army attacked {targetNation} in {request.DestinationId}. Both destroyed", "Battle", nation);
+                        GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyUnit.UnitType, request.DestinationId, nation, User.Identity?.Name ?? "System");
                     }
                 }
                 else
@@ -554,7 +554,7 @@ public class ManeuverController : ControllerBase
 
         unit.IsHostile = !unit.IsHostile;
 
-        LogAction(game, $"toggled army in {unit.TerritoryId} to {(unit.IsHostile ? "Hostile" : "Friendly")}", "ToggleHostility", nation);
+        GameLogger.LogHostilityToggle(_context, game, unit.UnitType, unit.TerritoryId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
 
         await _context.SaveChangesAsync();
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -645,7 +645,7 @@ public class ManeuverController : ControllerBase
         // Remove Factory
         tState.HasFactory = false;
 
-        LogAction(game, $"destroyed factory in {tState.TerritoryId}", "DestroyFactory", nation);
+        GameLogger.LogFactoryDestruction(_context, game, tState.TerritoryId, nation, User.Identity?.Name ?? "System");
 
         await TryAutoAdvanceManeuver(game, nation);
 
@@ -774,7 +774,7 @@ public class ManeuverController : ControllerBase
                 game.Units.Remove(myUnit);
                 game.Units.Remove(aggUnit);
 
-                LogAction(game, $"{respondingNation} chose FIGHT against {aggressorNation} in {territoryId}. Both units destroyed.", "BattleResponse", respondingNation);
+                GameLogger.LogBattleResponseDestruction(_context, game, respondingNation, myUnit.UnitType, aggressorNation, aggUnit.UnitType, territoryId, User.Identity?.Name ?? "System");
                 await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} chose FIGHT against {aggressorNation}!", false);
             }
 
@@ -794,7 +794,7 @@ public class ManeuverController : ControllerBase
             defenders.Remove(respondingNation);
             game.PendingBattleDefenders = defenders;
             _context.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
-            LogAction(game, $"{respondingNation} agreed to PEACE with {game.PendingBattleAggressorNation} in {game.PendingBattleTerritoryId}.", "BattleResponse", respondingNation);
+            GameLogger.LogBattleResponsePeace(_context, game, respondingNation, game.PendingBattleAggressorNation.Value, game.PendingBattleTerritoryId, User.Identity?.Name ?? "System");
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} agreed to PEACE.", false);
 
             if (!game.PendingBattleDefenders.Any())
@@ -906,12 +906,7 @@ public class ManeuverController : ControllerBase
                     {
                         var oldController = tState.Controller;
                         tState.Controller = firstNation;
-
-                        string msg = oldController.HasValue
-                            ? $"took control of {territoryDef.Name} from {oldController.Value}"
-                            : $"took control of {territoryDef.Name}";
-
-                        LogAction(game, msg, "FlagPlacement", firstNation);
+                        GameLogger.LogTerritoryControlChange(_context, game, territoryDef.Name, oldController, firstNation, User.Identity?.Name ?? "System");
                     }
                 }
             }
