@@ -1944,7 +1944,7 @@ public class GamesController : ControllerBase
             LogAction(game, $"chose to FORCE STOP {nationState.Nation} on Investor", "SwissBankResponse", nationState.Nation, responderName);
 
             string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (_context.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human");
-            GameLogger.LogRondelMove(_context, game, targetSlot, null, cost, nationState.Nation, controllerName);
+            GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
 
             HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: true);
 

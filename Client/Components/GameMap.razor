@@ -783,7 +783,7 @@
                       double offsetX = col * 12.0 - rowWidth / 2.0;
                       double offsetY = row * rowHeight - totalGridHeight / 2.0;
 
-                      <circle cx="@Fmt(centerX + offsetX)" cy="@Fmt(centerY + offsetY)" r="5" 
+                      <circle class="@(PowerBlinkNations.Contains(ns.Nation) ? "new-unit-blink" : "")" cx="@Fmt(centerX + offsetX)" cy="@Fmt(centerY + offsetY)" r="5" 
                               fill="@GetNationColor(ns.Nation)" 
                               stroke="white" stroke-width="1.5" style="opacity:0.9;" />
                   }
@@ -802,7 +802,10 @@
                     var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tState.TerritoryId);
                     string fill = def?.CityType == CityType.LightBlue ? "#00BFFF" : "#8B4513"; // DeepSkyBlue or SaddleBrown
                     
-                    <use href="#factory-icon" x="@Fmt(coords.X - 15)" y="@Fmt(coords.Y - 15)" width="30" height="30" style="fill:@fill; opacity: 0.9; pointer-events: none;" />
+                    bool isNew = NewFactoryIds.Contains(tState.TerritoryId);
+                    string blinkClass = isNew ? "new-unit-blink" : "";
+                    
+                    <use class="@blinkClass" href="#factory-icon" x="@Fmt(coords.X - 15)" y="@Fmt(coords.Y - 15)" width="30" height="30" style="fill:@fill; opacity: 0.9; pointer-events: none;" />
                 }
             }
         }
@@ -884,9 +887,12 @@
                                         (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army && unit.HasMoved);
                         string dimmedOpacity = isDimmed && !isPendingBattleAggressor ? "0.4" : "1.0"; // Don't dim if involved in battle
 
+                        bool isNew = NewUnitIds.Contains(unit.Id);
+                        string newUnitClass = isNew ? "new-unit-blink" : "";
+
                         if (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army)
                         {
-                            <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "")">
+                            <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "") @newUnitClass">
                                 <rect x="@Fmt(coords.X + offsetX - 8)" y="@Fmt(coords.Y + offsetY - 8)" width="16" height="16" 
                                       fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
                                 <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y + offsetY)" 
@@ -895,7 +901,7 @@
                         }
                         else
                         {
-                            <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "")">
+                            <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "") @newUnitClass">
                                 <circle cx="@Fmt(coords.X + offsetX)" cy="@Fmt(coords.Y + offsetY)" r="8" 
                                         fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
                                 <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y + offsetY)" 
@@ -965,7 +971,7 @@
                     double offsetX = col * 12.0 - rowWidth / 2.0;
                     double offsetY = row * rowHeight - totalGridHeight / 2.0;
 
-                    <circle cx="@Fmt(centerX + offsetX)" cy="@Fmt(centerY + offsetY)" r="5" 
+                    <circle class="@(TaxBlinkNations.Contains(ns.Nation) ? "new-unit-blink" : "")" cx="@Fmt(centerX + offsetX)" cy="@Fmt(centerY + offsetY)" r="5" 
                             fill="@GetNationColor(ns.Nation)" 
                             stroke="white" stroke-width="1.5" style="opacity:0.9;" />
                 }
@@ -1124,6 +1130,18 @@
 
     [Parameter]
     public Action<string, bool>? ShowToastAction { get; set; }
+
+    [Parameter]
+    public HashSet<Guid> NewUnitIds { get; set; } = new();
+
+    [Parameter]
+    public HashSet<string> NewFactoryIds { get; set; } = new();
+
+    [Parameter]
+    public HashSet<Nation> PowerBlinkNations { get; set; } = new();
+
+    [Parameter]
+    public HashSet<Nation> TaxBlinkNations { get; set; } = new();
 
     public class RecentMove
     {
