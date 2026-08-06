@@ -92,8 +92,11 @@
                     <div class="card h-100 bg-dark text-white border-secondary shadow-sm">
                         <div class="card-body">
                             <h5 class="card-title text-warning">@game.Name</h5>
-                            <h6 class="card-subtitle mb-2 text-muted">Created: @game.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy h:mm tt")
-                            </h6>
+                            <h6 class="card-subtitle mb-2 text-muted">Created: @game.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy h:mm tt")</h6>
+                            @if (game.FinishedAt.HasValue)
+                            {
+                                <h6 class="card-subtitle mb-2 text-muted">Finished: @game.FinishedAt.Value.ToLocalTime().ToString("MMM dd, yyyy h:mm tt")</h6>
+                            }
                             <p class="card-text">
                                 Status: <span class="badge bg-@GetStatusColor(game.Status)">
                                     @if (game.Status == GameStatus.InProgress)

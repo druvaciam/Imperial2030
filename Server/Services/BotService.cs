@@ -441,7 +441,7 @@ public class BotService
                 ns.Treasury -= 5;
                 ts.HasFactory = true;
                 ns.HasBuiltThisTurn = true;
-                GameLogger.LogAction(ctx, game, $"built a factory in {city.Name}", "Factory", ns.Nation, controller.BotName ?? "Bot");
+                GameLogger.LogFactoryBuild(ctx, game, city.Name, ns.Nation, controller.BotName ?? "Bot");
             }
         }
     }
@@ -540,7 +540,7 @@ public class BotService
                         if (isFriendlyHome && fleet.IsHostile)
                         {
                             fleet.IsHostile = false;
-                            GameLogger.LogAction(ctx, game, $"fleet in {target} converted to friendly", "MoveFleet", nation, controller.BotName ?? "Bot");
+                            GameLogger.LogHostilityToggle(ctx, game, fleet.UnitType, target, fleet.IsHostile, nation, controller.BotName ?? "Bot");
                         }
                         else if (!isFriendlyHome && !fleet.IsHostile)
                         {
@@ -548,7 +548,7 @@ public class BotService
                             if (GetStrategy(controller).DetermineHostility(isEnemyPresent, true))
                             {
                                 fleet.IsHostile = true;
-                                GameLogger.LogAction(ctx, game, $"fleet in {target} converted to hostile", "MoveFleet", nation, controller.BotName ?? "Bot");
+                                GameLogger.LogHostilityToggle(ctx, game, fleet.UnitType, target, fleet.IsHostile, nation, controller.BotName ?? "Bot");
                             }
                         }
                         else
@@ -619,7 +619,7 @@ public class BotService
                             {
                                 RemoveUnit(ctx, game, fleet);
                                 RemoveUnit(ctx, game, enemyFleet);
-                                GameLogger.LogAction(ctx, game, $"fleet attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
+                                GameLogger.LogBattleDestruction(ctx, game, fleet.UnitType, targetNation, enemyFleet.UnitType, targetName, nation, controller.BotName ?? "Bot");
                                 await BotUnitActionDelay(ctx, game);
                                 continue;
                             }
@@ -683,7 +683,7 @@ public class BotService
                         if (isFriendlyHome && army.IsHostile)
                         {
                             army.IsHostile = false;
-                            GameLogger.LogAction(ctx, game, $"army in {best} converted to friendly", "MoveArmy", nation, controller.BotName ?? "Bot");
+                            GameLogger.LogHostilityToggle(ctx, game, army.UnitType, best, army.IsHostile, nation, controller.BotName ?? "Bot");
                         }
                         else if (!isFriendlyHome && !army.IsHostile)
                         {
@@ -691,7 +691,7 @@ public class BotService
                             if (GetStrategy(controller).DetermineHostility(isEnemyPresent, true))
                             {
                                 army.IsHostile = true;
-                                GameLogger.LogAction(ctx, game, $"army in {best} converted to hostile", "MoveArmy", nation, controller.BotName ?? "Bot");
+                                GameLogger.LogHostilityToggle(ctx, game, army.UnitType, best, army.IsHostile, nation, controller.BotName ?? "Bot");
                             }
                         }
                         else
@@ -771,7 +771,7 @@ public class BotService
                             {
                                 RemoveUnit(ctx, game, army);
                                 RemoveUnit(ctx, game, enemyUnit);
-                                GameLogger.LogAction(ctx, game, $"army attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
+                                GameLogger.LogBattleDestruction(ctx, game, army.UnitType, targetNation, enemyUnit.UnitType, targetName, nation, controller.BotName ?? "Bot");
                                 await BotUnitActionDelay(ctx, game);
                                 continue;
                             }
@@ -859,7 +859,7 @@ public class BotService
             }
             tState.HasFactory = false;
 
-            GameLogger.LogAction(ctx, game, $"destroyed factory in {territoryId}", "DestroyFactory", nation, controller.BotName ?? "Bot");
+            GameLogger.LogFactoryDestruction(ctx, game, territoryId, nation, controller.BotName ?? "Bot");
         }
     }
 
@@ -903,12 +903,7 @@ public class BotService
                     {
                         var oldController = tState.Controller;
                         tState.Controller = firstNation;
-
-                        string msg = oldController.HasValue
-                            ? $"took control of {territoryDef.Name} from {oldController.Value}"
-                            : $"took control of {territoryDef.Name}";
-
-                        GameLogger.LogAction(ctx, game, msg, "FlagPlacement", firstNation, botName);
+                        GameLogger.LogTerritoryControlChange(ctx, game, territoryDef.Name, oldController, firstNation, botName);
                     }
                 }
             }
@@ -1035,7 +1030,7 @@ public class BotService
                 defenders.Remove(defNation);
                 game.PendingBattleDefenders = defenders;
                 if (ctx != null) ctx.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
-                GameLogger.LogAction(ctx, game, $"{defNation} agreed to PEACE / RETREATED", "BattleResponse", defNation, defController.BotName ?? "Bot");
+                GameLogger.LogBattleResponsePeace(ctx, game, defNation, pendingBattle.AggressorNation, pendingBattle.TerritoryId, defController.BotName ?? "Bot");
             }
             else
             {
@@ -1049,7 +1044,7 @@ public class BotService
                 // Let's preserve the original behavior for now if they fight (we'll just log they fought, 
                 // but actually the actual battle logic needs to execute. Since original bot always accepted peace, 
                 // we'll just log "fought" and let the engine handle it).
-                GameLogger.LogAction(ctx, game, $"{defNation} chose to FIGHT", "BattleResponse", defNation, defController.BotName ?? "Bot");
+                // The battle destruction log will handle the logging
 
                 // Actual fight logic would remove units, etc. For simplicity, we just destroy 1 unit of each if they fight.
                 var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation);
@@ -1058,7 +1053,7 @@ public class BotService
                 {
                     RemoveUnit(ctx, game, enemyUnit);
                     RemoveUnit(ctx, game, friendlyUnit);
-                    GameLogger.LogAction(ctx, game, $"Battle in {pendingBattle.TerritoryId}: {defNation} vs {pendingBattle.AggressorNation}. Both destroyed 1 unit.", "Battle", defNation, "System");
+                    GameLogger.LogBattleResponseDestruction(ctx, game, defNation, friendlyUnit.UnitType, pendingBattle.AggressorNation, enemyUnit.UnitType, pendingBattle.TerritoryId, "System");
                 }
             }
         }
@@ -1114,11 +1109,11 @@ public class BotService
                 game.ResetStateForNewMove(nationState);
 
                 string botName = bot.BotName ?? "Bot";
-                GameLogger.LogAction(ctx, game, $"chose to FORCE STOP {nationState.Nation} on Investor.", "SwissBankResponse", nationState.Nation, botName);
+                GameLogger.LogSwissBankForceStop(ctx, game, nationState.Nation, botName);
 
                 string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (ctx != null ? (ctx.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human") : "Human");
 
-                GameLogger.LogRondelMove(ctx, game, targetSlot, null, cost, nationState.Nation, controllerName);
+                GameLogger.LogRondelMove(ctx, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
                 Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: true);
 
                 await SaveChangesAsync(ctx);
@@ -1129,7 +1124,7 @@ public class BotService
             else
             {
                 string botName = bot.BotName ?? "Bot";
-                GameLogger.LogAction(ctx, game, $"chose to PASS on forcing {nationState.Nation} to stop.", "SwissBankResponse", nationState.Nation, botName);
+                GameLogger.LogSwissBankPass(ctx, game, nationState.Nation, botName);
 
                 var responders = game.PendingSwissBankResponders;
                 responders.Remove(bot.Id);

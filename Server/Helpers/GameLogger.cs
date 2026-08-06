@@ -48,6 +48,57 @@ public static class GameLogger
 
         LogAction(context, game, $"{typeStr} moved {peaceOrHostile} to {targetName} from {originName}, awaiting response from {defendersStr}", actionType, nation, playerName);
     }
+
+    public static void LogBattleDestruction(ApplicationDbContext? context, Game game, UnitType attackerType, Nation targetNation, UnitType defenderType, string targetName, Nation nation, string playerName)
+    {
+        LogAction(context, game, $"{attackerType.ToString().ToLower()} attacked {targetNation} {defenderType.ToString().ToLower()} in {targetName}. Both destroyed", "Battle", nation, playerName);
+    }
+
+    public static void LogBattleResponseDestruction(ApplicationDbContext? context, Game game, Nation respondingNation, UnitType responderType, Nation aggressorNation, UnitType aggressorType, string targetName, string playerName)
+    {
+        LogAction(context, game, $"{respondingNation} {responderType.ToString().ToLower()} chose FIGHT against {aggressorNation} {aggressorType.ToString().ToLower()} in {targetName}. Both destroyed", "Battle", respondingNation, playerName);
+    }
+    
+    public static void LogTerritoryControlChange(ApplicationDbContext? context, Game game, string territoryName, Nation? oldController, Nation newController, string playerName)
+    {
+        string msg = oldController.HasValue
+            ? $"took control of {territoryName} from {oldController.Value}"
+            : $"took control of {territoryName}";
+
+        LogAction(context, game, msg, "FlagPlacement", newController, playerName);
+    }
+    
+    public static void LogFactoryBuild(ApplicationDbContext? context, Game game, string cityName, Nation nation, string playerName)
+    {
+        LogAction(context, game, $"built a factory in {cityName}", "Factory", nation, playerName);
+    }
+    
+    public static void LogFactoryDestruction(ApplicationDbContext? context, Game game, string territoryName, Nation nation, string playerName)
+    {
+        LogAction(context, game, $"destroyed {nation} factory in {territoryName}", "DestroyFactory", nation, playerName);
+    }
+
+    public static void LogSwissBankForceStop(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, $"chose to FORCE STOP {nation} on Investor", "SwissBankResponse", nation, playerName);
+    }
+
+    public static void LogSwissBankPass(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, $"chose to PASS on forcing {nation} to stop", "SwissBankResponse", nation, playerName);
+    }
+
+    public static void LogBattleResponsePeace(ApplicationDbContext? context, Game game, Nation respondingNation, Nation aggressorNation, string territoryName, string playerName)
+    {
+        LogAction(context, game, $"{respondingNation} agreed to PEACE with {aggressorNation} in {territoryName}", "BattleResponse", respondingNation, playerName);
+    }
+
+    public static void LogHostilityToggle(ApplicationDbContext? context, Game game, UnitType unitType, string territoryName, bool isHostile, Nation nation, string playerName)
+    {
+        string typeStr = unitType.ToString().ToLower();
+        string statusStr = isHostile ? "hostile" : "friendly";
+        LogAction(context, game, $"{typeStr} in {territoryName} converted to {statusStr}", "ToggleHostility", nation, playerName);
+    }
     
     public static void LogInvestmentBuy(ApplicationDbContext? context, Game game, Nation nation, int cost, string playerName, string? controlChangeMessage = null)
     {
