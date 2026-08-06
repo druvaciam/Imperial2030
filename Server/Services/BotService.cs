@@ -1,6 +1,7 @@
 using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
+using Imperial2030.Server.Helpers;
 using Imperial2030.Shared.Models;
 using Imperial2030.Server.Services.Bots;
 using Imperial2030.Server.Services.Bots.Strategies;
@@ -16,7 +17,7 @@ public class BotService
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
     private readonly IEnumerable<Bots.IBotStrategy> _botStrategies;
     private readonly ILogger<BotService> _logger;
-    public const int BotDelayMs = 6000;
+    public const int BotDelayMs = 5000;
     public bool SkipDelays { get; set; } = false;
 
     public BotService(IServiceScopeFactory scopeFactory, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, IEnumerable<Bots.IBotStrategy> botStrategies, ILogger<BotService> logger)
@@ -260,7 +261,7 @@ public class BotService
                 triggeredInvestor = true;
             }
 
-            LogAction(ctx, game, $"moved to {GetSlotName(targetSlot)} (Cost: {cost}M)", "Move", nation, controller.BotName ?? "Bot");
+            GameLogger.LogRondelMove(ctx, game, targetSlot, oldPos, cost, nation, controller.BotName ?? "Bot");
 
             if (triggeredInvestor)
             {
@@ -324,7 +325,7 @@ public class BotService
             // Advance turn
             game.AdvanceTurn();
 
-            LogAction(ctx, game, "ended their turn", "EndTurn", nation, controller.BotName ?? "Bot");
+            GameLogger.LogAction(ctx, game, "ended their turn", "EndTurn", nation, controller.BotName ?? "Bot");
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
         }
@@ -440,7 +441,7 @@ public class BotService
                 ns.Treasury -= 5;
                 ts.HasFactory = true;
                 ns.HasBuiltThisTurn = true;
-                LogAction(ctx, game, $"built a factory in {city.Name}", "Factory", ns.Nation, controller.BotName ?? "Bot");
+                GameLogger.LogAction(ctx, game, $"built a factory in {city.Name}", "Factory", ns.Nation, controller.BotName ?? "Bot");
             }
         }
     }
@@ -452,7 +453,7 @@ public class BotService
         int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
         int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
 
-        var locationNames = new List<string>();
+        var locationNames = new List<(UnitType UnitType, string TerritoryId)>();
         foreach (var ts in game.TerritoryStates.Where(t => t.HasFactory))
         {
             var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
@@ -468,11 +469,11 @@ public class BotService
             if (unitType == UnitType.Army) currentArmies++;
             else currentFleets++;
             produced++;
-            locationNames.Add($"{unitType} in {def.Name}");
+            locationNames.Add((unitType, ts.TerritoryId));
         }
         ns.HasProducedThisTurn = true;
         var botName = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId)?.BotName ?? "Bot";
-        LogAction(ctx, game, $"produced {produced} units ({string.Join(", ", locationNames)})", "Production", nation, botName);
+        GameLogger.LogProduction(ctx, game, produced, locationNames, nation, botName);
     }
 
     private async Task BotUnitActionDelay(ApplicationDbContext? ctx, Game game, int delayMs = 2000)
@@ -539,7 +540,7 @@ public class BotService
                         if (isFriendlyHome && fleet.IsHostile)
                         {
                             fleet.IsHostile = false;
-                            LogAction(ctx, game, $"fleet in {target} converted to friendly", "MoveFleet", nation, controller.BotName ?? "Bot");
+                            GameLogger.LogAction(ctx, game, $"fleet in {target} converted to friendly", "MoveFleet", nation, controller.BotName ?? "Bot");
                         }
                         else if (!isFriendlyHome && !fleet.IsHostile)
                         {
@@ -547,17 +548,17 @@ public class BotService
                             if (GetStrategy(controller).DetermineHostility(isEnemyPresent, true))
                             {
                                 fleet.IsHostile = true;
-                                LogAction(ctx, game, $"fleet in {target} converted to hostile", "MoveFleet", nation, controller.BotName ?? "Bot");
+                                GameLogger.LogAction(ctx, game, $"fleet in {target} converted to hostile", "MoveFleet", nation, controller.BotName ?? "Bot");
                             }
                         }
                         else
                         {
-                            LogAction(ctx, game, $"fleet stayed in {target}", "MoveFleet", nation, controller.BotName ?? "Bot");
+                            GameLogger.LogAction(ctx, game, $"fleet stayed in {target}", "MoveFleet", nation, controller.BotName ?? "Bot");
                         }
                     }
                     else
                     {
-                        LogAction(ctx, game, $"fleet stayed in {target}", "MoveFleet", nation, controller.BotName ?? "Bot");
+                        GameLogger.LogAction(ctx, game, $"fleet stayed in {target}", "MoveFleet", nation, controller.BotName ?? "Bot");
                     }
                     await BotUnitActionDelay(ctx, game);
                     continue;
@@ -618,7 +619,7 @@ public class BotService
                             {
                                 RemoveUnit(ctx, game, fleet);
                                 RemoveUnit(ctx, game, enemyFleet);
-                                LogAction(ctx, game, $"fleet attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
+                                GameLogger.LogAction(ctx, game, $"fleet attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
                                 await BotUnitActionDelay(ctx, game);
                                 continue;
                             }
@@ -631,7 +632,7 @@ public class BotService
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
                             string peaceOrHostile = isHostileMove ? "hostilely" : "peacefully";
-                            LogAction(ctx, game, $"fleet moved {peaceOrHostile} to {targetName} from {originName}, awaiting response from {string.Join(", ", foreignDefenders)}", "MoveFleet", nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, originName, targetName, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -641,13 +642,13 @@ public class BotService
                     }
                 }
 
-                LogAction(ctx, game, $"fleet moved to {targetName} from {originName} (Hostile: {isHostileMove})", "MoveFleet", nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Fleet, originName, targetName, isHostileMove, nation, controller.BotName ?? "Bot");
                 await BotUnitActionDelay(ctx, game);
             }
         }
 
         await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
-        LogAction(ctx, game, "auto-ended Fleets maneuver phase", "NextPhase", nation, controller.BotName ?? "Bot");
+        GameLogger.LogAction(ctx, game, "auto-ended Fleets maneuver phase", "NextPhase", nation, controller.BotName ?? "Bot");
         game.CurrentManeuverPhase = ManeuverPhase.Armies;
 
         // Move armies
@@ -682,7 +683,7 @@ public class BotService
                         if (isFriendlyHome && army.IsHostile)
                         {
                             army.IsHostile = false;
-                            LogAction(ctx, game, $"army in {best} converted to friendly", "MoveArmy", nation, controller.BotName ?? "Bot");
+                            GameLogger.LogAction(ctx, game, $"army in {best} converted to friendly", "MoveArmy", nation, controller.BotName ?? "Bot");
                         }
                         else if (!isFriendlyHome && !army.IsHostile)
                         {
@@ -690,17 +691,17 @@ public class BotService
                             if (GetStrategy(controller).DetermineHostility(isEnemyPresent, true))
                             {
                                 army.IsHostile = true;
-                                LogAction(ctx, game, $"army in {best} converted to hostile", "MoveArmy", nation, controller.BotName ?? "Bot");
+                                GameLogger.LogAction(ctx, game, $"army in {best} converted to hostile", "MoveArmy", nation, controller.BotName ?? "Bot");
                             }
                         }
                         else
                         {
-                            LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
+                            GameLogger.LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
                         }
                     }
                     else
                     {
-                        LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
+                        GameLogger.LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
                     }
                     await BotUnitActionDelay(ctx, game);
                     continue;
@@ -770,7 +771,7 @@ public class BotService
                             {
                                 RemoveUnit(ctx, game, army);
                                 RemoveUnit(ctx, game, enemyUnit);
-                                LogAction(ctx, game, $"army attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
+                                GameLogger.LogAction(ctx, game, $"army attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
                                 await BotUnitActionDelay(ctx, game);
                                 continue;
                             }
@@ -783,7 +784,7 @@ public class BotService
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
                             string peaceOrHostile = isHostileMove ? "hostilely" : "peacefully";
-                            LogAction(ctx, game, $"army moved {peaceOrHostile} to {targetName} from {originName}, awaiting response from {string.Join(", ", foreignDefenders)}", "MoveArmy", nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, originName, targetName, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -793,7 +794,7 @@ public class BotService
                     }
                 }
 
-                LogAction(ctx, game, $"army moved to {targetName} from {originName} (Hostile: {isHostileMove})", "MoveArmy", nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Army, originName, targetName, isHostileMove, nation, controller.BotName ?? "Bot");
                 await BotUnitActionDelay(ctx, game);
             }
         }
@@ -803,7 +804,7 @@ public class BotService
         // Factory Destruction: Check if bot has >= 3 armies on any foreign factory
         await BotTryDestroyFactories(ctx, game, ns.Nation, controller);
 
-        LogAction(ctx, game, "auto-ended Armies maneuver phase", "NextPhase", nation, controller.BotName ?? "Bot");
+        GameLogger.LogAction(ctx, game, "auto-ended Armies maneuver phase", "NextPhase", nation, controller.BotName ?? "Bot");
         game.CurrentManeuverPhase = ManeuverPhase.None;
     }
 
@@ -858,7 +859,7 @@ public class BotService
             }
             tState.HasFactory = false;
 
-            LogAction(ctx, game, $"destroyed factory in {territoryId}", "DestroyFactory", nation, controller.BotName ?? "Bot");
+            GameLogger.LogAction(ctx, game, $"destroyed factory in {territoryId}", "DestroyFactory", nation, controller.BotName ?? "Bot");
         }
     }
 
@@ -907,7 +908,7 @@ public class BotService
                             ? $"took control of {territoryDef.Name} from {oldController.Value}"
                             : $"took control of {territoryDef.Name}";
 
-                        LogAction(ctx, game, msg, "FlagPlacement", firstNation, botName);
+                        GameLogger.LogAction(ctx, game, msg, "FlagPlacement", firstNation, botName);
                     }
                 }
             }
@@ -919,15 +920,10 @@ public class BotService
         var nation = ns.Nation;
         int oldTreasury = ns.Treasury;
         // --- Apply Centralized Taxation Logic ---
-        var result = Imperial2030.Server.Helpers.TaxationHelper.ApplyTaxation(game, ns, controller);
+        var result = TaxationHelper.ApplyTaxation(game, ns, controller);
 
         int treasuryGain = ns.Treasury - oldTreasury;
-        string soldiersPayStr = result.SoldiersPay > 0 ? $"-{result.SoldiersPay}" : result.SoldiersPay.ToString();
-        string tGainStr = treasuryGain > 0 ? $"+{treasuryGain}" : treasuryGain.ToString();
-        string bonusStr = result.Bonus > 0 ? $"+{result.Bonus}" : result.Bonus.ToString();
-        string powerStr = result.PowerGain > 0 ? $"+{result.PowerGain}" : result.PowerGain.ToString();
-
-        LogAction(ctx, game, $"collected taxes: {result.TotalTaxRevenue}M (Soldiers' Pay: {soldiersPayStr}M, Treasury Gain: {tGainStr}M, Bonus: {bonusStr}M, Power: {powerStr})", "Taxation", nation, controller.BotName ?? "Bot");
+        GameLogger.LogTaxation(ctx, game, result.TotalTaxRevenue, result.SoldiersPay, treasuryGain, result.Bonus, result.PowerGain, nation, controller.BotName ?? "Bot");
 
         if (ns.Power >= 25)
         {
@@ -956,20 +952,19 @@ public class BotService
         var imports = GetStrategy(controller).ChooseImports(game, ns, maxImport, homeTerritories);
 
         int imported = 0;
-        var locationNames = new List<string>();
+        var locationNames = new List<(UnitType UnitType, string TerritoryId)>();
 
         foreach (var import in imports)
         {
             AddUnit(ctx, game, new Unit { GameId = game.Id, Nation = nation, TerritoryId = import.TerritoryId, UnitType = import.Type, IsHostile = false });
             imported++;
-            var tName = homeTerritories.FirstOrDefault(t => t.Id == import.TerritoryId)?.Name ?? import.TerritoryId;
-            locationNames.Add($"{import.Type} in {tName}");
+            locationNames.Add((import.Type, import.TerritoryId));
         }
 
         ns.Treasury -= imported;
         ns.HasImportedThisTurn = true;
         var botName = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId)?.BotName ?? "Bot";
-        LogAction(ctx, game, $"imported {imported} units ({string.Join(", ", locationNames)})", "Import", nation, botName);
+        GameLogger.LogImport(ctx, game, imported, locationNames, nation, botName);
     }
 
     public async Task BotInvestorAction(ApplicationDbContext? ctx, Game game, Player actor)
@@ -986,13 +981,13 @@ public class BotService
             game.NationStates.First(ns => ns.Nation == bondToBuy.Nation).Treasury += bondToBuy.Cost;
             string botName = actor.BotName ?? "Bot";
             string toastMsg = $"{botName} bought {bondToBuy.Nation} {bondToBuy.Cost}M bond";
-            LogAction(ctx, game, $"bought {bondToBuy.Nation} {bondToBuy.Cost}M bond", "Investor", null, botName);
+            GameLogger.LogInvestmentBuy(ctx, game, bondToBuy.Nation, bondToBuy.Cost, botName);
             Imperial2030.Server.Controllers.GamesController.UpdateNationController(ctx, game, bondToBuy.Nation);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", toastMsg, false);
         }
         else
         {
-            LogAction(ctx, game, "passed on buying a bond", "Investor", null, actor.BotName ?? "Bot");
+            GameLogger.LogInvestmentPass(ctx, game, actor.BotName ?? "Bot");
         }
 
         if (game.PendingInvestorIds != null && game.PendingInvestorIds.Any())
@@ -1040,7 +1035,7 @@ public class BotService
                 defenders.Remove(defNation);
                 game.PendingBattleDefenders = defenders;
                 if (ctx != null) ctx.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
-                LogAction(ctx, game, $"{defNation} agreed to PEACE / RETREATED", "BattleResponse", defNation, defController.BotName ?? "Bot");
+                GameLogger.LogAction(ctx, game, $"{defNation} agreed to PEACE / RETREATED", "BattleResponse", defNation, defController.BotName ?? "Bot");
             }
             else
             {
@@ -1054,7 +1049,7 @@ public class BotService
                 // Let's preserve the original behavior for now if they fight (we'll just log they fought, 
                 // but actually the actual battle logic needs to execute. Since original bot always accepted peace, 
                 // we'll just log "fought" and let the engine handle it).
-                LogAction(ctx, game, $"{defNation} chose to FIGHT", "BattleResponse", defNation, defController.BotName ?? "Bot");
+                GameLogger.LogAction(ctx, game, $"{defNation} chose to FIGHT", "BattleResponse", defNation, defController.BotName ?? "Bot");
 
                 // Actual fight logic would remove units, etc. For simplicity, we just destroy 1 unit of each if they fight.
                 var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation);
@@ -1063,7 +1058,7 @@ public class BotService
                 {
                     RemoveUnit(ctx, game, enemyUnit);
                     RemoveUnit(ctx, game, friendlyUnit);
-                    LogAction(ctx, game, $"Battle in {pendingBattle.TerritoryId}: {defNation} vs {pendingBattle.AggressorNation}. Both destroyed 1 unit.", "Battle", defNation, "System");
+                    GameLogger.LogAction(ctx, game, $"Battle in {pendingBattle.TerritoryId}: {defNation} vs {pendingBattle.AggressorNation}. Both destroyed 1 unit.", "Battle", defNation, "System");
                 }
             }
         }
@@ -1119,13 +1114,11 @@ public class BotService
                 game.ResetStateForNewMove(nationState);
 
                 string botName = bot.BotName ?? "Bot";
-                LogAction(ctx, game, $"chose to FORCE STOP {nationState.Nation} on Investor.", "SwissBankResponse", nationState.Nation, botName);
+                GameLogger.LogAction(ctx, game, $"chose to FORCE STOP {nationState.Nation} on Investor.", "SwissBankResponse", nationState.Nation, botName);
 
-                string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : "Human"; // In bot service, we might not have the username loaded, but let's try to get it if we can. Actually, we can just use controller.User?.UserName??
-                // To be safe without User loaded:
-                controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (ctx != null ? (ctx.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human") : "Human");
+                string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (ctx != null ? (ctx.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human") : "Human");
 
-                LogAction(ctx, game, $"was forced by Swiss Bank to stop on Investor", "Move", nationState.Nation, controllerName);
+                GameLogger.LogRondelMove(ctx, game, targetSlot, null, cost, nationState.Nation, controllerName);
                 Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: true);
 
                 await SaveChangesAsync(ctx);
@@ -1136,7 +1129,7 @@ public class BotService
             else
             {
                 string botName = bot.BotName ?? "Bot";
-                LogAction(ctx, game, $"chose to PASS on forcing {nationState.Nation} to stop.", "SwissBankResponse", nationState.Nation, botName);
+                GameLogger.LogAction(ctx, game, $"chose to PASS on forcing {nationState.Nation} to stop.", "SwissBankResponse", nationState.Nation, botName);
 
                 var responders = game.PendingSwissBankResponders;
                 responders.Remove(bot.Id);
@@ -1164,7 +1157,7 @@ public class BotService
                     game.ResetStateForNewMove(nationState);
 
                     string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (ctx != null ? (ctx.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human") : "Human");
-                    LogAction(ctx, game, $"moved to {GetSlotName(targetSlot)} (Cost: {cost}M)", "Move", nationState.Nation, controllerName);
+                    GameLogger.LogRondelMove(ctx, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
                     Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: false);
 
                     await SaveChangesAsync(ctx);
@@ -1191,32 +1184,6 @@ public class BotService
             .FirstOrDefaultAsync(g => g.Id == gameId);
     }
 
-    private void LogAction(ApplicationDbContext? ctx, Game game, string message, string type, Nation? nation, string playerName)
-    {
-        var action = new GameAction
-        {
-            GameId = game.Id,
-            ActionType = type,
-            Message = message,
-            Nation = nation,
-            PlayerName = playerName
-        };
-        game.Actions.Add(action);
-        if (ctx != null) ctx.Entry(action).State = Microsoft.EntityFrameworkCore.EntityState.Added;
-    }
-
-    private string GetSlotName(int slot) => slot switch
-    {
-        0 => "Taxation",
-        1 => "Factory",
-        2 => "Production",
-        3 => "Maneuver",
-        4 => "Investor",
-        5 => "Import",
-        6 => "Production",
-        7 => "Maneuver",
-        _ => $"Slot {slot}"
-    };
 
     private void AddUnit(ApplicationDbContext? ctx, Game game, Unit unit)
     {

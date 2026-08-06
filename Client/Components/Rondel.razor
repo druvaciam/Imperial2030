@@ -13,7 +13,7 @@
         @for (int i = 0; i < 8; i++)
         {
             var index = i; 
-            var segment = GetSegment(index);
+            var segment = Imperial2030.Shared.Constants.RondelData.GetSlotInfo(index);
             var isHoverable = CanMoveTo(index);
             var isCurrent = CurrentPosition == index;
             // Rotation centers the slice at the target angle.
@@ -130,7 +130,7 @@
 
     private string GetSliceTooltip(int index)
     {
-        var segment = GetSegment(index);
+        var segment = Imperial2030.Shared.Constants.RondelData.GetSlotInfo(index);
         string baseMsg = segment.Name switch
         {
             "Taxation" => "Collect taxes based on factories and flags, pay soldiers, and boost power.",
@@ -366,18 +366,6 @@
         _ => nation.ToString().Substring(0, 2).ToUpper()
     };
 
-    private (string Name, string Color) GetSegment(int index) => index switch
-    {
-        0 => ("Taxation", "#f1c40f"),
-        1 => ("Factory", "#1f3a93"),
-        2 => ("Production", "#7f8c8d"),
-        3 => ("Maneuver", "#2ecc71"),
-        4 => ("Investor", "#3498db"),
-        5 => ("Import", "#e67e22"),
-        6 => ("Production", "#7f8c8d"),
-        7 => ("Maneuver", "#2ecc71"),
-        _ => ("", "#000")
-    };
 
     private string GetNationColor(Nation nation) => Imperial2030.Shared.Constants.NationData.GetColor(nation);
 }

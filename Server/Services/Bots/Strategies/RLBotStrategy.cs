@@ -16,7 +16,7 @@ public class RLBotStrategy : BotStrategyBase
     public override string Name { get; }
     public static AsyncLocal<int?> TrainingActionOverride = new AsyncLocal<int?>();
     public static bool IsTraining = false;
-    public float Temperature { get; set; } = 0.5f;
+    public float Temperature { get; set; } = 0.1f;
 
     public override bool DetermineHostility(bool hasEnemy, bool isForeignHome)
     {
@@ -26,8 +26,6 @@ public class RLBotStrategy : BotStrategyBase
 
     public static int InvalidActionCount = 0;
     public static int TotalActionCount = 0;
-
-
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, InferenceSession> _sessionCache = new();
     private InferenceSession? _onnxSession;
@@ -487,10 +485,11 @@ public class RLBotStrategy : BotStrategyBase
             {
                 if (MapConnectivity.Adjacency.TryGetValue(unit.TerritoryId, out var neighbors))
                 {
-                    var validNeighbors = neighbors.Where(n => {
+                    var validNeighbors = neighbors.Where(n =>
+                    {
                         if (!TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)) return false;
-                        
-                        var canal = MapConnectivity.CanalLinks.FirstOrDefault(c => 
+
+                        var canal = MapConnectivity.CanalLinks.FirstOrDefault(c =>
                             (c.Region1 == unit.TerritoryId && c.Region2 == n) ||
                             (c.Region1 == n && c.Region2 == unit.TerritoryId));
 
@@ -508,7 +507,7 @@ public class RLBotStrategy : BotStrategyBase
                         }
                         return true;
                     }).ToList();
-                    
+
                     foreach (var dest in validNeighbors)
                     {
                         int mIdx = Array.IndexOf(AllManeuverTerritories, dest);
@@ -639,7 +638,7 @@ public class RLBotStrategy : BotStrategyBase
                 var exps = validLogits.Select(x => (float)Math.Exp((x.Logit - maxValidLogit) / Temperature)).ToList();
                 float sumExp = exps.Sum();
                 float randomVal = (float)Random.Shared.NextDouble() * sumExp;
-                
+
                 float cumulative = 0;
                 for (int i = 0; i < validLogits.Count; i++)
                 {

@@ -2,6 +2,7 @@ using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
+using Imperial2030.Server.Helpers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -203,7 +204,7 @@ public class ManeuverController : ControllerBase
                     game.PendingBattleDefenders = foreignFleets.ToList();
 
                     string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
-                    LogAction(game, $"fleet moved {peaceOrHostile} to {request.DestinationId}, awaiting response from {string.Join(", ", foreignFleets)}", "MoveFleet", nation);
+                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Fleet, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignFleets), nation, User.Identity?.Name ?? "System");
                 }
             }
         }
@@ -212,7 +213,7 @@ public class ManeuverController : ControllerBase
         {
             // Only log standard move and TryAutoAdvance if there's no pending battle blocking the phase.
             // If Pending, advancement and standard logging is delayed.
-            LogAction(game, $"fleet moved to {request.DestinationId} from {sourceTerritory} (Hostile: {unit.IsHostile})", "MoveFleet", nation);
+            GameLogger.LogUnitMove(_context, game, UnitType.Fleet, sourceTerritory, request.DestinationId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
         }
@@ -499,14 +500,14 @@ public class ManeuverController : ControllerBase
                     game.PendingBattleDefenders = foreignDefenders.ToList();
 
                     string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
-                    LogAction(game, $"army moved {peaceOrHostile} to {request.DestinationId}, awaiting response from {string.Join(", ", foreignDefenders)}", "MoveArmy", nation);
+                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Army, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignDefenders), nation, User.Identity?.Name ?? "System");
                 }
             }
         }
 
         if (!game.PendingBattleDefenders.Any())
         {
-            LogAction(game, $"army moved to {request.DestinationId} from {sourceTerritory} (Hostile: {unit.IsHostile})", "MoveArmy", nation);
+            GameLogger.LogUnitMove(_context, game, UnitType.Army, sourceTerritory, request.DestinationId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
         }
@@ -956,21 +957,8 @@ public class ManeuverController : ControllerBase
         }
     }
 
-
-
     private void LogAction(Game game, string message, string type, Nation? nation = null)
     {
-        var action = new GameAction
-        {
-            GameId = game.Id,
-            Timestamp = DateTime.UtcNow,
-            PlayerName = User.Identity?.Name ?? "System",
-            Message = message,
-            ActionType = type,
-            Nation = nation
-        };
-        _context.GameActions.Add(action);
-        // Note: Caller must SaveChanges
+        GameLogger.LogAction(_context, game, message, type, nation, User.Identity?.Name ?? "System");
     }
 }
-
