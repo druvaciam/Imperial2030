@@ -222,7 +222,7 @@ public class ManeuverController : ControllerBase
 
         if (game.PendingBattleDefenders.Any())
         {
-            _botService.TriggerBotTurn(gameId, 2500);
+            _botService.TriggerBotTurn(gameId);
         }
 
         return Ok();
@@ -516,7 +516,7 @@ public class ManeuverController : ControllerBase
 
         if (game.PendingBattleDefenders.Any())
         {
-            _botService.TriggerBotTurn(gameId, 2500);
+            _botService.TriggerBotTurn(gameId);
         }
 
         return Ok();
@@ -823,7 +823,7 @@ public class ManeuverController : ControllerBase
 
         if (game.PendingBattleDefenders.Any())
         {
-            _botService.TriggerBotTurn(gameId, 2500);
+            _botService.TriggerBotTurn(gameId);
         }
 
         return Ok();
