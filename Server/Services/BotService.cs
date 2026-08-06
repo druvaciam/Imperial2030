@@ -43,7 +43,7 @@ public class BotService
                ?? new Bots.Strategies.DefaultBotStrategy(); // Fallback if not registered
     }
 
-    public void TriggerBotTurn(Guid gameId, int delayMs = 3000)
+    public void TriggerBotTurn(Guid gameId, int delayMs = 10000)
     {
         _ = Task.Run(async () =>
         {

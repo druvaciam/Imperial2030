@@ -83,7 +83,8 @@ else
 
                         @if (amIDefender)
                         {
-                                        <p class="mb-3 small"><strong>@game.PendingBattleAggressorNation</strong> forces have entered your territory peacefully. Do you accept coexistence, or choose to fight?</p>
+                            var currentRespondingNation = myDefendingNations.First();
+                                        <p class="mb-3 small"><strong>@game.PendingBattleAggressorNation</strong> forces have encountered <strong>@currentRespondingNation's</strong> forces peacefully. Do you (as <strong>@currentRespondingNation</strong>) accept coexistence, or choose to fight?</p>
                                         <div class="d-flex flex-column gap-2 mt-2">
                                             <button class="btn btn-sm btn-success fw-bold" @onclick="() => RespondToBattle(false)">
                                                 <i class="oi oi-thumb-up"></i> Accept Peace
@@ -666,7 +667,13 @@ else
 
                 <!-- All Bonds Panel -->
                 <div class="panel mt-2">
-                    <h5 class="mb-2 border-bottom border-secondary pb-1">Global Bonds</h5>
+                    <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-1">
+                        <h5 class="mb-0">Global Bonds</h5>
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="showBoughtOnly" @bind="_showOnlyBoughtBonds">
+                            <label class="form-check-label small text-muted ms-1" for="showBoughtOnly">Bought only</label>
+                        </div>
+                    </div>
                     @if (game != null)
                     {
                         @foreach (var ns in game.NationStates.OrderBy(n => n.Nation))
@@ -680,6 +687,13 @@ else
                                                 .Concat(availableForNation.Select(a => new { a.Cost, a.Interest, Owner = (string?)null }))
                                                 .OrderBy(b => b.Cost)
                                                 .ToList();
+
+                            if (_showOnlyBoughtBonds)
+                            {
+                                combinedBonds = combinedBonds.Where(b => b.Owner != null).ToList();
+                            }
+
+                            if (!combinedBonds.Any()) continue;
 
                             <div class="mb-2">
                                 <h6 class="text-info mb-0">
@@ -1019,6 +1033,8 @@ else
 </style>
 
 @code {
+    private bool _showOnlyBoughtBonds = false;
+
     [Parameter]
     public Guid GameId { get; set; }
 

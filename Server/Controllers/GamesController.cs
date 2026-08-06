@@ -421,7 +421,7 @@ public class GamesController : ControllerBase
 
             if (botTurn)
             {
-                _botService.TriggerBotTurn(gameId, 1500);
+                _botService.TriggerBotTurn(gameId);
             }
         }
 
@@ -845,7 +845,7 @@ public class GamesController : ControllerBase
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameStarted", gameId);
 
             // Trigger bot if first nation is bot-controlled
-            _botService.TriggerBotTurn(gameId, 3000);
+            _botService.TriggerBotTurn(gameId);
 
             return Ok();
         }
@@ -1229,7 +1229,7 @@ public class GamesController : ControllerBase
 
                     await _context.SaveChangesAsync();
                     await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                    _botService.TriggerBotTurn(gameId, 2500);
+                    _botService.TriggerBotTurn(gameId);
                     return Ok();
                 }
             }
@@ -1269,7 +1269,8 @@ public class GamesController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        LogAction(game, $"moved to {GetRondelSlotName(targetSlot)} (Cost: {cost}M)", "Move", nation);
+        string fromStr = currentSlot.HasValue ? GetRondelSlotName(currentSlot.Value) : "Start";
+        LogAction(game, $"moved to {GetRondelSlotName(targetSlot)} from {fromStr} (Cost: {cost}M)", "Move", nation);
         await _context.SaveChangesAsync();
 
         // Check for Investor Slot (Index 4)
@@ -1338,7 +1339,7 @@ public class GamesController : ControllerBase
         // Trigger bot if Investor Phase was activated for a bot
         if (game.IsInvestorTurn)
         {
-            _botService.TriggerBotTurn(gameId, 2500);
+            _botService.TriggerBotTurn(gameId);
         }
 
         return Ok();
@@ -1453,6 +1454,15 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/investor-action")]
     public async Task<IActionResult> PerformInvestment(Guid gameId, [FromBody] InvestmentActionDto action)
     {
+        string GetPlayerName(Player p)
+        {
+            if (p == null) return "Unknown";
+            if (p.IsBot) return p.BotName ?? "Bot";
+            if (p.User != null) return p.User.UserName ?? "Player";
+            var user = _context.Users.FirstOrDefault(u => u.Id == p.UserId);
+            return user?.UserName ?? "Player";
+        }
+
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -1509,9 +1519,52 @@ public class GamesController : ControllerBase
             _context.Entry(actingPlayer).State = EntityState.Modified;
 
             // Update Controller Logic
+            var oldControllerId = ns.ControllerId;
             UpdateNationController(_context, game, ns.Nation);
+            var newControllerId = ns.ControllerId;
 
-            LogAction(game, $"bought {bond.Nation} {bond.Cost}M bond", "Investment");
+            string logMessage = $"bought {bond.Nation} {bond.Cost}M bond";
+            
+            if (oldControllerId != newControllerId)
+            {
+                if (newControllerId == actingPlayer.Id)
+                {
+                    logMessage += $" and took control of {bond.Nation}";
+                }
+                else if (newControllerId.HasValue)
+                {
+                    var newController = game.Players.FirstOrDefault(p => p.Id == newControllerId.Value);
+                    if (newController != null)
+                    {
+                        logMessage += $", giving control to {GetPlayerName(newController)}";
+                    }
+                }
+
+                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ReceiveNotification", new {
+                    Type = "ControlChange",
+                    Message = $"{GetPlayerName(actingPlayer)} bought a bond and {(newControllerId == actingPlayer.Id ? "took control of" : "changed control of")} {bond.Nation}!"
+                });
+
+                if (oldControllerId.HasValue)
+                {
+                    var oldControllerStillControlsNations = game.NationStates.Any(n => n.ControllerId == oldControllerId.Value);
+                    if (!oldControllerStillControlsNations)
+                    {
+                        var oldController = game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value);
+                        if (oldController != null)
+                        {
+                            var swissMsg = $"{GetPlayerName(oldController)} was kicked to Switzerland (Swiss Bank)!";
+                            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ReceiveNotification", new {
+                                Type = "SwissBank",
+                                Message = swissMsg
+                            });
+                            LogAction(game, "was kicked to Switzerland", "System", null, GetPlayerName(oldController));
+                        }
+                    }
+                }
+            }
+
+            LogAction(game, logMessage, "Investment");
         }
         else
         {
@@ -1541,7 +1594,7 @@ public class GamesController : ControllerBase
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
 
         // Trigger bot if next turn is bot-controlled
-        _botService.TriggerBotTurn(gameId, 2500);
+        _botService.TriggerBotTurn(gameId);
 
         return Ok();
     }
@@ -1666,7 +1719,7 @@ public class GamesController : ControllerBase
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
 
         // Trigger bot if next nation is bot-controlled
-        _botService.TriggerBotTurn(gameId, 2500);
+        _botService.TriggerBotTurn(gameId);
 
         return Ok();
     }
@@ -1744,7 +1797,7 @@ public class GamesController : ControllerBase
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
         // Trigger bot if next nation is bot-controlled
-        _botService.TriggerBotTurn(gameId, 2500);
+        _botService.TriggerBotTurn(gameId);
 
         return Ok(new
         {
@@ -1922,7 +1975,7 @@ public class GamesController : ControllerBase
             await _context.SaveChangesAsync();
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} forced {nationState.Nation} to stop on Investor.", false);
-            _botService.TriggerBotTurn(gameId, 2500);
+            _botService.TriggerBotTurn(gameId);
             return Ok();
         }
         else
@@ -1963,7 +2016,7 @@ public class GamesController : ControllerBase
                 await _context.SaveChangesAsync();
                 await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
                 await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} passed on forcing {nationState.Nation} to stop.", false);
-                _botService.TriggerBotTurn(gameId, 2500);
+                _botService.TriggerBotTurn(gameId);
                 return Ok();
             }
             else
@@ -1971,7 +2024,7 @@ public class GamesController : ControllerBase
                 await _context.SaveChangesAsync();
                 await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
                 await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} passed on forcing {nationState.Nation} to stop.", false);
-                _botService.TriggerBotTurn(gameId, 2500);
+                _botService.TriggerBotTurn(gameId);
                 return Ok();
             }
         }
