@@ -16,6 +16,7 @@ public class BotService
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
     private readonly IEnumerable<Bots.IBotStrategy> _botStrategies;
     private readonly ILogger<BotService> _logger;
+    public const int BotDelayMs = 6000;
     public bool SkipDelays { get; set; } = false;
 
     public BotService(IServiceScopeFactory scopeFactory, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, IEnumerable<Bots.IBotStrategy> botStrategies, ILogger<BotService> logger)
@@ -31,7 +32,7 @@ public class BotService
     public Bots.IBotStrategy GetStrategy(Player player)
     {
         var type = player.BotType ?? "Default";
-        
+
         // Handle RL bots dynamically
         if (type.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
         {
@@ -43,7 +44,7 @@ public class BotService
                ?? new Bots.Strategies.DefaultBotStrategy(); // Fallback if not registered
     }
 
-    public void TriggerBotTurn(Guid gameId, int delayMs = 10000)
+    public void TriggerBotTurn(Guid gameId, int delayMs = BotDelayMs)
     {
         _ = Task.Run(async () =>
         {
@@ -84,7 +85,7 @@ public class BotService
                             await BotInvestorAction(ctx, game, actor);
                             await SaveChangesAsync(ctx);
                             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                            if (!SkipDelays) await Task.Delay(2500);
+                            if (!SkipDelays) await Task.Delay(BotDelayMs);
                             botActed = true;
                         }
                         catch (Bots.Strategies.RlTrainingPauseException)
@@ -116,7 +117,7 @@ public class BotService
                     {
                         try
                         {
-                            if (!SkipDelays) await Task.Delay(3000); // add some delay before bot responds
+                            if (!SkipDelays) await Task.Delay(BotDelayMs); // add some delay before bot responds
                             await HandleBotSwissBankResponse(ctx, game, botResponders);
                             botActed = true;
                         }
@@ -282,7 +283,7 @@ public class BotService
                 return;
             }
 
-            if (!SkipDelays) await Task.Delay(3000);
+            if (!SkipDelays) await Task.Delay(BotDelayMs);
 
             // Reload game state since we might have waited
             game = await ReloadGameAsync(ctx, game);
@@ -315,7 +316,7 @@ public class BotService
         // If not taxation (which auto-advances) and not in maneuver, end turn
         if (targetSlot != 0 && game.Status == GameStatus.InProgress && game.CurrentManeuverPhase == ManeuverPhase.None)
         {
-            if (!SkipDelays) await Task.Delay(2000);
+            if (!SkipDelays) await Task.Delay(BotDelayMs);
             game = await ReloadGameAsync(ctx, game);
             if (game == null) return;
             nationState = game.NationStates.First(ns => ns.Nation == nation);
@@ -331,7 +332,7 @@ public class BotService
         // Check if next turn is also a bot
         if (!SkipDelays)
         {
-            await Task.Delay(3000);
+            await Task.Delay(BotDelayMs);
         }
     }
 
@@ -474,6 +475,14 @@ public class BotService
         LogAction(ctx, game, $"produced {produced} units ({string.Join(", ", locationNames)})", "Production", nation, botName);
     }
 
+    private async Task BotUnitActionDelay(ApplicationDbContext? ctx, Game game, int delayMs = 2000)
+    {
+        if (SkipDelays) return;
+        if (ctx != null) await SaveChangesAsync(ctx);
+        await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
+        await Task.Delay(delayMs);
+    }
+
     private async Task BotManeuver(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
     {
         var strategy = GetStrategy(controller);
@@ -492,10 +501,11 @@ public class BotService
         foreach (var fleet in fleets)
         {
             if (!MapConnectivity.Adjacency.TryGetValue(fleet.TerritoryId, out var neighbors)) continue;
-            var seaNeighbors = neighbors.Where(n => {
+            var seaNeighbors = neighbors.Where(n =>
+            {
                 if (!TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)) return false;
-                
-                var canal = MapConnectivity.CanalLinks.FirstOrDefault(c => 
+
+                var canal = MapConnectivity.CanalLinks.FirstOrDefault(c =>
                     (c.Region1 == fleet.TerritoryId && c.Region2 == n) ||
                     (c.Region1 == n && c.Region2 == fleet.TerritoryId));
 
@@ -549,6 +559,7 @@ public class BotService
                     {
                         LogAction(ctx, game, $"fleet stayed in {target}", "MoveFleet", nation, controller.BotName ?? "Bot");
                     }
+                    await BotUnitActionDelay(ctx, game);
                     continue;
                 }
                 bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
@@ -608,6 +619,7 @@ public class BotService
                                 RemoveUnit(ctx, game, fleet);
                                 RemoveUnit(ctx, game, enemyFleet);
                                 LogAction(ctx, game, $"fleet attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
+                                await BotUnitActionDelay(ctx, game);
                                 continue;
                             }
                         }
@@ -630,6 +642,7 @@ public class BotService
                 }
 
                 LogAction(ctx, game, $"fleet moved to {targetName} from {originName} (Hostile: {isHostileMove})", "MoveFleet", nation, controller.BotName ?? "Bot");
+                await BotUnitActionDelay(ctx, game);
             }
         }
 
@@ -689,6 +702,7 @@ public class BotService
                     {
                         LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
                     }
+                    await BotUnitActionDelay(ctx, game);
                     continue;
                 }
 
@@ -757,6 +771,7 @@ public class BotService
                                 RemoveUnit(ctx, game, army);
                                 RemoveUnit(ctx, game, enemyUnit);
                                 LogAction(ctx, game, $"army attacked {targetNation} in {targetName}. Both destroyed", "Battle", nation, controller.BotName ?? "Bot");
+                                await BotUnitActionDelay(ctx, game);
                                 continue;
                             }
                         }
@@ -779,6 +794,7 @@ public class BotService
                 }
 
                 LogAction(ctx, game, $"army moved to {targetName} from {originName} (Hostile: {isHostileMove})", "MoveArmy", nation, controller.BotName ?? "Bot");
+                await BotUnitActionDelay(ctx, game);
             }
         }
 
@@ -968,8 +984,11 @@ public class BotService
             bondToBuy.HolderId = actor.Id;
             actor.Cash -= bondToBuy.Cost;
             game.NationStates.First(ns => ns.Nation == bondToBuy.Nation).Treasury += bondToBuy.Cost;
-            LogAction(ctx, game, $"bought {bondToBuy.Nation} {bondToBuy.Cost}M bond", "Investor", null, actor.BotName ?? "Bot");
+            string botName = actor.BotName ?? "Bot";
+            string toastMsg = $"{botName} bought {bondToBuy.Nation} {bondToBuy.Cost}M bond";
+            LogAction(ctx, game, $"bought {bondToBuy.Nation} {bondToBuy.Cost}M bond", "Investor", null, botName);
             Imperial2030.Server.Controllers.GamesController.UpdateNationController(ctx, game, bondToBuy.Nation);
+            await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", toastMsg, false);
         }
         else
         {
@@ -1061,7 +1080,7 @@ public class BotService
         await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
         if (!SkipDelays)
         {
-            await Task.Delay(1500);
+            await Task.Delay(BotDelayMs);
         }
     }
 

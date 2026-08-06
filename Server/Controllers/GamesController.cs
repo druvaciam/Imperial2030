@@ -440,7 +440,7 @@ public class GamesController : ControllerBase
     private static List<string> GetAvailableBotTypes()
     {
         var botTypes = new List<string> { "Default", "Aggressive", "Friendly", "Greedy", "Random" };
-        
+
         try
         {
             var basePath = AppContext.BaseDirectory;
@@ -1524,7 +1524,7 @@ public class GamesController : ControllerBase
             var newControllerId = ns.ControllerId;
 
             string logMessage = $"bought {bond.Nation} {bond.Cost}M bond";
-            
+
             if (oldControllerId != newControllerId)
             {
                 if (newControllerId == actingPlayer.Id)
@@ -1540,7 +1540,8 @@ public class GamesController : ControllerBase
                     }
                 }
 
-                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ReceiveNotification", new {
+                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ReceiveNotification", new
+                {
                     Type = "ControlChange",
                     Message = $"{GetPlayerName(actingPlayer)} bought a bond and {(newControllerId == actingPlayer.Id ? "took control of" : "changed control of")} {bond.Nation}!"
                 });
@@ -1554,7 +1555,8 @@ public class GamesController : ControllerBase
                         if (oldController != null)
                         {
                             var swissMsg = $"{GetPlayerName(oldController)} was kicked to Switzerland (Swiss Bank)!";
-                            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ReceiveNotification", new {
+                            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ReceiveNotification", new
+                            {
                                 Type = "SwissBank",
                                 Message = swissMsg
                             });
@@ -1565,6 +1567,7 @@ public class GamesController : ControllerBase
             }
 
             LogAction(game, logMessage, "Investment");
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{GetPlayerName(actingPlayer)} {logMessage}", false);
         }
         else
         {
@@ -1844,7 +1847,7 @@ public class GamesController : ControllerBase
         // Validate placement
         foreach (var unitReq in request.Units)
         {
-            var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == unitReq.TerritoryId);
+            var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == unitReq.TerritoryId);
             if (territoryDef == null) return BadRequest($"Invalid territory: {unitReq.TerritoryId}");
 
             // Home Province Check
@@ -1867,11 +1870,11 @@ public class GamesController : ControllerBase
         int requestedArmies = request.Units.Count(u => u.UnitType == UnitType.Army);
         int requestedFleets = request.Units.Count(u => u.UnitType == UnitType.Fleet);
 
-        if (currentArmies + requestedArmies > Imperial2030.Shared.Constants.NationData.GetMaxArmies(game.CurrentTurnNation))
-            return BadRequest($"Cannot import. Maximum armies allowed is {Imperial2030.Shared.Constants.NationData.GetMaxArmies(game.CurrentTurnNation)}.");
+        if (currentArmies + requestedArmies > NationData.GetMaxArmies(game.CurrentTurnNation))
+            return BadRequest($"Cannot import {requestedArmies} armies. You already have {currentArmies} armies on the board, and the maximum allowed is {NationData.GetMaxArmies(game.CurrentTurnNation)}.");
 
-        if (currentFleets + requestedFleets > Imperial2030.Shared.Constants.NationData.GetMaxFleets(game.CurrentTurnNation))
-            return BadRequest($"Cannot import. Maximum fleets allowed is {Imperial2030.Shared.Constants.NationData.GetMaxFleets(game.CurrentTurnNation)}.");
+        if (currentFleets + requestedFleets > NationData.GetMaxFleets(game.CurrentTurnNation))
+            return BadRequest($"Cannot import {requestedFleets} fleets. You already have {currentFleets} fleets on the board, and the maximum allowed is {NationData.GetMaxFleets(game.CurrentTurnNation)}.");
 
         // Execute
         nationState.Treasury -= cost;

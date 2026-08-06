@@ -709,7 +709,8 @@ else
                                     {
                                         if (bond.Owner != null)
                                         {
-                                            <div class="d-flex justify-content-between text-white">
+                                            bool isRecent = IsBondRecentlyBought(nation, bond.Cost);
+                                            <div class="d-flex justify-content-between text-white @(isRecent ? "recent-bond-highlight" : "")">
                                                 <span>@bond.Cost M (+@bond.Interest)</span>
                                                 <span class="text-warning">@bond.Owner</span>
                                             </div>
@@ -847,6 +848,21 @@ else
         display: flex;
         align-items: center;
         gap: 10px;
+    }
+
+    .unit-tag {
+        font-size: 0.7em;
+        font-weight: bold;
+    }
+
+    .recent-bond-highlight {
+        animation: pulseHighlight 2s infinite;
+        font-weight: bold;
+    }
+    @@keyframes pulseHighlight {
+        0% { color: #fff; text-shadow: none; }
+        50% { color: #51ff00; text-shadow: 0 0 8px #51ff00; }
+        100% { color: #fff; text-shadow: none; }
     }
 
     .alert-content h3 {
@@ -1828,6 +1844,15 @@ else
         {
             isSubmitting = false;
         }
+    }
+
+    private bool IsBondRecentlyBought(Imperial2030.Shared.Models.Nation nation, int cost)
+    {
+        if (game == null) return false;
+        var threshold = DateTime.UtcNow.AddSeconds(-30);
+        return game.Actions.Any(a => a.ActionType == "Investment" 
+                                  && a.Timestamp >= threshold 
+                                  && a.Message.Contains($"bought {nation} {cost}M bond"));
     }
 
     // Wrapper to match Action<string, bool> signature (fire and forget)
