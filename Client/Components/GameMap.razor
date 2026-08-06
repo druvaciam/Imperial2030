@@ -783,7 +783,7 @@
                       double offsetX = col * 12.0 - rowWidth / 2.0;
                       double offsetY = row * rowHeight - totalGridHeight / 2.0;
 
-                      <circle cx="@Fmt(centerX + offsetX)" cy="@Fmt(centerY + offsetY)" r="5" 
+                      <circle class="@(PowerBlinkNations.Contains(ns.Nation) ? "new-unit-blink" : "")" cx="@Fmt(centerX + offsetX)" cy="@Fmt(centerY + offsetY)" r="5" 
                               fill="@GetNationColor(ns.Nation)" 
                               stroke="white" stroke-width="1.5" style="opacity:0.9;" />
                   }
@@ -802,7 +802,50 @@
                     var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tState.TerritoryId);
                     string fill = def?.CityType == CityType.LightBlue ? "#00BFFF" : "#8B4513"; // DeepSkyBlue or SaddleBrown
                     
-                    <use href="#factory-icon" x="@Fmt(coords.X - 15)" y="@Fmt(coords.Y - 15)" width="30" height="30" style="fill:@fill; opacity: 0.9; pointer-events: none;" />
+                    bool isNew = NewFactoryIds.Contains(tState.TerritoryId);
+                    string blinkClass = isNew ? "new-unit-blink" : "";
+                    
+                    <use class="@blinkClass" href="#factory-icon" x="@Fmt(coords.X - 15)" y="@Fmt(coords.Y - 15)" width="30" height="30" style="fill:@fill; opacity: 0.9; pointer-events: none;" />
+                }
+            }
+        }
+    </g>
+
+    <g id="recent-moves-effects" style="pointer-events: none;">
+        @foreach (var move in recentMoves)
+        {
+            if (Imperial2030.Client.Constants.MapCoordinates.TerritoryCenters.TryGetValue(move.FromTerritoryId, out var fromCoords) &&
+                Imperial2030.Client.Constants.MapCoordinates.TerritoryCenters.TryGetValue(move.ToTerritoryId, out var toCoords))
+            {
+                string color = GetNationColor(move.Nation);
+
+                <!-- Dotted Path -->
+                <line x1="@Fmt(fromCoords.X)" y1="@Fmt(fromCoords.Y)" 
+                      x2="@Fmt(toCoords.X)" y2="@Fmt(toCoords.Y)" 
+                      stroke="@color" stroke-width="3" class="move-path" />
+
+                <!-- Ghost Unit at Origin -->
+                if (move.UnitType == Imperial2030.Shared.Models.UnitType.Army)
+                {
+                    <rect x="@Fmt(fromCoords.X - 8)" y="@Fmt(fromCoords.Y - 8)" width="16" height="16" 
+                          fill="@color" stroke="#ffffff" stroke-width="2" class="ghost-unit" />
+                }
+                else
+                {
+                    <circle cx="@Fmt(fromCoords.X)" cy="@Fmt(fromCoords.Y)" r="8" 
+                            fill="@color" stroke="#ffffff" stroke-width="2" class="ghost-unit" />
+                }
+
+                <!-- Pulsing Effect at Destination -->
+                if (move.UnitType == Imperial2030.Shared.Models.UnitType.Army)
+                {
+                    <rect x="@Fmt(toCoords.X - 8)" y="@Fmt(toCoords.Y - 8)" width="16" height="16" 
+                          fill="none" stroke="@color" class="pulse-ring" />
+                }
+                else
+                {
+                    <circle cx="@Fmt(toCoords.X)" cy="@Fmt(toCoords.Y)" r="8" 
+                            fill="none" stroke="@color" class="pulse-ring" />
                 }
             }
         }
@@ -844,9 +887,12 @@
                                         (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army && unit.HasMoved);
                         string dimmedOpacity = isDimmed && !isPendingBattleAggressor ? "0.4" : "1.0"; // Don't dim if involved in battle
 
+                        bool isNew = NewUnitIds.Contains(unit.Id);
+                        string newUnitClass = isNew ? "new-unit-blink" : "";
+
                         if (unit.UnitType == Imperial2030.Shared.Models.UnitType.Army)
                         {
-                            <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "")">
+                            <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "") @newUnitClass">
                                 <rect x="@Fmt(coords.X + offsetX - 8)" y="@Fmt(coords.Y + offsetY - 8)" width="16" height="16" 
                                       fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
                                 <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y + offsetY)" 
@@ -855,7 +901,7 @@
                         }
                         else
                         {
-                            <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "")">
+                            <g style="pointer-events: none;" opacity="@dimmedOpacity" class="@(isPendingBattleAggressor ? "pending-battle" : "") @newUnitClass">
                                 <circle cx="@Fmt(coords.X + offsetX)" cy="@Fmt(coords.Y + offsetY)" r="8" 
                                         fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
                                 <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y + offsetY)" 
@@ -925,7 +971,7 @@
                     double offsetX = col * 12.0 - rowWidth / 2.0;
                     double offsetY = row * rowHeight - totalGridHeight / 2.0;
 
-                    <circle cx="@Fmt(centerX + offsetX)" cy="@Fmt(centerY + offsetY)" r="5" 
+                    <circle class="@(TaxBlinkNations.Contains(ns.Nation) ? "new-unit-blink" : "")" cx="@Fmt(centerX + offsetX)" cy="@Fmt(centerY + offsetY)" r="5" 
                             fill="@GetNationColor(ns.Nation)" 
                             stroke="white" stroke-width="1.5" style="opacity:0.9;" />
                 }
@@ -1006,11 +1052,43 @@
     }
 
     .selected-unit {
-        fill: #ff00ff !important;
-        stroke: #ffd700 !important;
-        stroke-width: 3px !important;
-        filter: drop-shadow(0 0 5px yellow);
+        stroke: #ffff00;
+        stroke-width: 3px;
     }
+
+    @@keyframes ghost-blink {
+        0%, 100% { opacity: 0.2; }
+        50% { opacity: 0.6; }
+    }
+
+    @@keyframes marching-ants {
+        to { stroke-dashoffset: -20; }
+    }
+
+    @@keyframes pulse-ring {
+        0% { transform: scale(0.8); opacity: 1; stroke-width: 2px; }
+        100% { transform: scale(2.5); opacity: 0; stroke-width: 10px; }
+    }
+
+    .ghost-unit {
+        animation: ghost-blink 1.5s infinite;
+        pointer-events: none;
+    }
+
+    .move-path {
+        stroke-dasharray: 5, 5;
+        animation: marching-ants 1s linear infinite;
+        pointer-events: none;
+    }
+
+    .pulse-ring {
+        animation: pulse-ring 2s ease-out infinite;
+        transform-origin: center;
+        transform-box: fill-box;
+        pointer-events: none;
+    }
+
+
 
     .pending-battle {
         stroke: #ffa500 !important; /* Orange */
@@ -1052,6 +1130,79 @@
 
     [Parameter]
     public Action<string, bool>? ShowToastAction { get; set; }
+
+    [Parameter]
+    public HashSet<Guid> NewUnitIds { get; set; } = new();
+
+    [Parameter]
+    public HashSet<string> NewFactoryIds { get; set; } = new();
+
+    [Parameter]
+    public HashSet<Nation> PowerBlinkNations { get; set; } = new();
+
+    [Parameter]
+    public HashSet<Nation> TaxBlinkNations { get; set; } = new();
+
+    public class RecentMove
+    {
+        public Guid UnitId { get; set; }
+        public UnitType UnitType { get; set; }
+        public Imperial2030.Shared.Models.Nation Nation { get; set; }
+        public string FromTerritoryId { get; set; } = string.Empty;
+        public string ToTerritoryId { get; set; } = string.Empty;
+        public DateTime TimestampUtc { get; set; }
+    }
+
+    private List<RecentMove> recentMoves = new();
+    private List<Unit> previousUnits = new();
+
+    protected override void OnParametersSet()
+    {
+        if (Game != null && Game.Units != null)
+        {
+            if (previousUnits.Count > 0)
+            {
+                var now = DateTime.UtcNow;
+                foreach (var newUnit in Game.Units)
+                {
+                    var oldUnit = previousUnits.FirstOrDefault(u => u.Id == newUnit.Id);
+                    if (oldUnit != null && oldUnit.TerritoryId != newUnit.TerritoryId)
+                    {
+                        var move = new RecentMove
+                        {
+                            UnitId = newUnit.Id,
+                            UnitType = newUnit.UnitType,
+                            Nation = newUnit.Nation,
+                            FromTerritoryId = oldUnit.TerritoryId,
+                            ToTerritoryId = newUnit.TerritoryId,
+                            TimestampUtc = now
+                        };
+                        recentMoves.Add(move);
+                        
+                        _ = Task.Run(async () => 
+                        {
+                            await Task.Delay(10000);
+                            if (recentMoves.Contains(move))
+                            {
+                                recentMoves.Remove(move);
+                                await InvokeAsync(StateHasChanged);
+                            }
+                        });
+                    }
+                }
+            }
+            
+            recentMoves.RemoveAll(m => (DateTime.UtcNow - m.TimestampUtc).TotalSeconds > 11);
+            
+            previousUnits = Game.Units.Select(u => new Unit 
+            { 
+                Id = u.Id, 
+                TerritoryId = u.TerritoryId, 
+                Nation = u.Nation, 
+                UnitType = u.UnitType 
+            }).ToList();
+        }
+    }
 
     private Guid? selectedUnitId;
     private List<string> validDestinations = new();

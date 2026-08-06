@@ -2,6 +2,7 @@ using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Models;
 using Imperial2030.Shared.Constants;
+using Imperial2030.Server.Helpers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -1269,8 +1270,7 @@ public class GamesController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        string fromStr = currentSlot.HasValue ? GetRondelSlotName(currentSlot.Value) : "Start";
-        LogAction(game, $"moved to {GetRondelSlotName(targetSlot)} from {fromStr} (Cost: {cost}M)", "Move", nation);
+        GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nation, User.Identity?.Name ?? "System");
         await _context.SaveChangesAsync();
 
         // Check for Investor Slot (Index 4)
@@ -1345,18 +1345,6 @@ public class GamesController : ControllerBase
         return Ok();
     }
 
-    private string GetRondelSlotName(int index) => index switch
-    {
-        0 => "Taxation",
-        1 => "Factory",
-        2 => "Production",
-        3 => "Maneuver",
-        4 => "Investor",
-        5 => "Import",
-        6 => "Production",
-        7 => "Maneuver",
-        _ => $"Slot {index}"
-    };
 
     [HttpPost("{gameId}/production")]
     public async Task<IActionResult> ExecuteProduction(Guid gameId)
@@ -1393,7 +1381,7 @@ public class GamesController : ControllerBase
             .ToList();
 
         var createdUnits = 0;
-        var producedDetails = new List<string>();
+        var producedDetails = new List<(UnitType UnitType, string TerritoryId)>();
 
         int createdArmies = 0;
         int createdFleets = 0;
@@ -1414,8 +1402,8 @@ public class GamesController : ControllerBase
 
             UnitType typeToProduce = def.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
 
-            if (typeToProduce == UnitType.Army && currentArmies + createdArmies >= Imperial2030.Shared.Constants.NationData.GetMaxArmies(currentNation)) continue;
-            if (typeToProduce == UnitType.Fleet && currentFleets + createdFleets >= Imperial2030.Shared.Constants.NationData.GetMaxFleets(currentNation)) continue;
+            if (typeToProduce == UnitType.Army && currentArmies + createdArmies >= NationData.GetMaxArmies(currentNation)) continue;
+            if (typeToProduce == UnitType.Fleet && currentFleets + createdFleets >= NationData.GetMaxFleets(currentNation)) continue;
 
             var newUnit = new Unit
             {
@@ -1431,7 +1419,7 @@ public class GamesController : ControllerBase
             if (typeToProduce == UnitType.Army) createdArmies++;
             else createdFleets++;
 
-            producedDetails.Add($"{typeToProduce} in {def.Name}");
+            producedDetails.Add((typeToProduce, tState.TerritoryId));
         }
 
         if (createdUnits > 0)
@@ -1439,11 +1427,11 @@ public class GamesController : ControllerBase
             nationState.HasProducedThisTurn = true;
             _context.Entry(nationState).State = EntityState.Modified;
 
-            LogAction(game, $"produced {createdUnits} units ({string.Join(", ", producedDetails)})", "Production", currentNation);
+            GameLogger.LogProduction(_context, game, createdUnits, producedDetails, currentNation, User.Identity?.Name ?? "System");
 
             await _context.SaveChangesAsync();
             await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
-            return Ok($"Produced {createdUnits} units ({string.Join(", ", producedDetails)}).");
+            return Ok($"Produced {createdUnits} units.");
         }
         else
         {
@@ -1523,20 +1511,20 @@ public class GamesController : ControllerBase
             UpdateNationController(_context, game, ns.Nation);
             var newControllerId = ns.ControllerId;
 
-            string logMessage = $"bought {bond.Nation} {bond.Cost}M bond";
+            string controlChangeMessage = "";
 
             if (oldControllerId != newControllerId)
             {
                 if (newControllerId == actingPlayer.Id)
                 {
-                    logMessage += $" and took control of {bond.Nation}";
+                    controlChangeMessage = $" and took control of {bond.Nation}";
                 }
                 else if (newControllerId.HasValue)
                 {
                     var newController = game.Players.FirstOrDefault(p => p.Id == newControllerId.Value);
                     if (newController != null)
                     {
-                        logMessage += $", giving control to {GetPlayerName(newController)}";
+                        controlChangeMessage = $", giving control to {GetPlayerName(newController)}";
                     }
                 }
 
@@ -1566,12 +1554,12 @@ public class GamesController : ControllerBase
                 }
             }
 
-            LogAction(game, logMessage, "Investment");
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{GetPlayerName(actingPlayer)} {logMessage}", false);
+            GameLogger.LogInvestmentBuy(_context, game, bond.Nation, bond.Cost, GetPlayerName(actingPlayer), controlChangeMessage);
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{GetPlayerName(actingPlayer)} bought {bond.Nation} {bond.Cost}M bond{controlChangeMessage}", false);
         }
         else
         {
-            LogAction(game, "passed on investment", "Investment");
+            GameLogger.LogInvestmentPass(_context, game, GetPlayerName(actingPlayer));
         }
 
         // Advance queue
@@ -1761,7 +1749,7 @@ public class GamesController : ControllerBase
 
         int oldTreasury = nationState.Treasury;
         // --- Apply Centralized Taxation Logic ---
-        var result = Imperial2030.Server.Helpers.TaxationHelper.ApplyTaxation(game, nationState, controller);
+        var result = TaxationHelper.ApplyTaxation(game, nationState, controller);
 
         // Mark Controller as modified if they gained cash
         if (result.Bonus > 0)
@@ -1772,11 +1760,7 @@ public class GamesController : ControllerBase
         // Save Changes
         _context.Entry(nationState).State = EntityState.Modified;
         int treasuryGain = nationState.Treasury - oldTreasury;
-        string soldiersPayStr = result.SoldiersPay > 0 ? $"-{result.SoldiersPay}" : result.SoldiersPay.ToString();
-        string tGainStr = treasuryGain > 0 ? $"+{treasuryGain}" : treasuryGain.ToString();
-        string bonusStr = result.Bonus > 0 ? $"+{result.Bonus}" : result.Bonus.ToString();
-        string powerStr = result.PowerGain > 0 ? $"+{result.PowerGain}" : result.PowerGain.ToString();
-        LogAction(game, $"collected taxes: {result.TotalTaxRevenue}M (Soldiers' Pay: {soldiersPayStr}M, Treasury Gain: {tGainStr}M, Bonus: {bonusStr}M, Power: {powerStr})", "Taxation", nation);
+        GameLogger.LogTaxation(_context, game, result.TotalTaxRevenue, result.SoldiersPay, treasuryGain, result.Bonus, result.PowerGain, nation, User.Identity?.Name ?? "System");
         await _context.SaveChangesAsync();
 
         // --- Game End Check ---
@@ -1896,29 +1880,18 @@ public class GamesController : ControllerBase
 
         _context.Entry(nationState).State = EntityState.Modified;
 
-        var locationNames = request.Units.Select(u => $"{u.UnitType} in " + (TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == u.TerritoryId)?.Name ?? u.TerritoryId)).ToList();
-        LogAction(game, $"imported {request.Units.Count} units ({string.Join(", ", locationNames)})", "Import", game.CurrentTurnNation);
+        var importTuples = request.Units.Select(u => (u.UnitType, u.TerritoryId)).ToList();
+        GameLogger.LogImport(_context, game, request.Units.Count, importTuples, game.CurrentTurnNation, User.Identity?.Name ?? "System");
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
 
-        return Ok($"Imported {request.Units.Count} units ({string.Join(", ", locationNames)}).");
+        return Ok();
     }
 
     private void LogAction(Game game, string message, string type, Nation? nation = null, string? playerNameOverride = null)
     {
-        var action = new GameAction
-        {
-            GameId = game.Id,
-            Timestamp = DateTime.UtcNow,
-            PlayerName = playerNameOverride ?? User.Identity?.Name ?? "System",
-            Message = message,
-            ActionType = type,
-            Nation = nation
-        };
-        game.Actions.Add(action);
-        _context.GameActions.Add(action);
-        // Note: Caller must SaveChanges
+        GameLogger.LogAction(_context, game, message, type, nation, playerNameOverride ?? User.Identity?.Name ?? "System");
     }
     [HttpPost("{gameId}/swissbank-response")]
     public async Task<IActionResult> SwissBankResponse(Guid gameId, [FromBody] SwissBankResponseRequest request)
@@ -1971,7 +1944,7 @@ public class GamesController : ControllerBase
             LogAction(game, $"chose to FORCE STOP {nationState.Nation} on Investor", "SwissBankResponse", nationState.Nation, responderName);
 
             string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (_context.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human");
-            LogAction(game, $"was forced by Swiss Bank to stop on {GetRondelSlotName(targetSlot)}", "Move", nationState.Nation, controllerName);
+            GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
 
             HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: true);
 
@@ -2012,7 +1985,7 @@ public class GamesController : ControllerBase
                 _context.Entry(nationState).State = EntityState.Modified;
 
                 string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (_context.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human");
-                LogAction(game, $"moved to {GetRondelSlotName(targetSlot)} (Cost: {cost}M)", "Move", nationState.Nation, controllerName);
+                GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
 
                 HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: false);
 

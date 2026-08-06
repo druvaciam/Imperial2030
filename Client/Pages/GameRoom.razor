@@ -179,7 +179,15 @@ else
                                         <span class="ms-1" style="font-size: 1.1em; white-space: nowrap;" title="Controlled Nations">@GetPlayerControlledNationsString(player)</span>
                                     </span>
                                     <div class="d-flex align-items-center flex-wrap justify-content-end gap-1">
-                                        <span class="badge bg-warning text-dark" title="Cash">$@(player.Cash)M</span>
+                                        <span class="badge bg-warning text-dark position-relative" title="Cash">
+                                            $@(player.Cash)M
+                                            @if (_playerCashEffects.TryGetValue(player.Id, out var effect) && (DateTime.Now - effect.Timestamp).TotalSeconds < 5.5)
+                                            {
+                                                <span @key="effect.TriggerId" class="floating-cash @(effect.Delta > 0 ? "positive" : "negative")">
+                                                    @(effect.Delta > 0 ? "+" : "")@(effect.Delta)M
+                                                </span>
+                                            }
+                                        </span>
                                         <span class="badge bg-success" title="Current Victory Points (Cash + Bond Value * Multiplier)">@GetPlayerScore(player) VP</span>
                                 @if (player.IsBot && IsHost && game.Status == GameStatus.Lobby)
                                 {
@@ -508,13 +516,13 @@ else
                             @toastMessage
                                       </div>
                     }
-                              <GameMap @ref="gameMap" Game="@game" IsMyTurn="@IsMyTurn()" IsObserver="@(MyPlayer == null)" ShowToastAction="OnShowToastAction" />
+                              <GameMap @ref="gameMap" Game="@game" IsMyTurn="@IsMyTurn()" IsObserver="@(MyPlayer == null)" ShowToastAction="OnShowToastAction" NewUnitIds="@(_newUnitTimestamps.Keys.ToHashSet())" NewFactoryIds="@(_newFactoryTimestamps.Keys.ToHashSet())" PowerBlinkNations="@(_nationPowerChanges.Keys.ToHashSet())" TaxBlinkNations="@(_nationTaxChanges.Keys.ToHashSet())" />
                           </div>
             }
             else if (game.Status == GameStatus.Finished)
             {
                          <div style="position: relative; width: 100%; height: 100%;">
-                             <GameMap Game="@game" IsMyTurn="@false" IsObserver="@(MyPlayer == null)" />
+                             <GameMap Game="@game" IsMyTurn="@false" IsObserver="@(MyPlayer == null)" NewUnitIds="@(_newUnitTimestamps.Keys.ToHashSet())" NewFactoryIds="@(_newFactoryTimestamps.Keys.ToHashSet())" PowerBlinkNations="@(_nationPowerChanges.Keys.ToHashSet())" TaxBlinkNations="@(_nationTaxChanges.Keys.ToHashSet())" />
                              @if (showGameOverPopup)
                              {
                                  <div class="game-over-overlay">
@@ -1063,6 +1071,12 @@ else
     private GameMap? gameMap;
     private bool showGameOverPopup = true;
     private List<string> availableBotTypes = new() { "Default", "Aggressive", "Friendly", "Greedy", "RL", "Random" };
+    private string commandInput = string.Empty;
+    private Dictionary<Guid, (int Delta, Guid TriggerId, DateTime Timestamp)> _playerCashEffects = new();
+    private Dictionary<Guid, DateTime> _newUnitTimestamps = new();
+    private Dictionary<string, DateTime> _newFactoryTimestamps = new();
+    private Dictionary<Nation, DateTime> _nationPowerChanges = new();
+    private Dictionary<Nation, DateTime> _nationTaxChanges = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -1168,7 +1182,77 @@ else
     {
         try
         {
-            game = await Http.GetFromJsonAsync<GameDetailDto>($"api/games/{GameId}");
+            var oldPlayers = game?.Players.ToDictionary(p => p.Id, p => p.Cash);
+            var oldUnitIds = game?.Units.Select(u => u.Id).ToHashSet();
+            var oldFactories = game?.Territories.Where(t => t.HasFactory).Select(t => t.TerritoryId).ToHashSet();
+            var oldNationStates = game?.NationStates.ToDictionary(ns => ns.Nation, ns => new { ns.Power, ns.TaxRevenue });
+            var newGame = await Http.GetFromJsonAsync<GameDetailDto>($"api/games/{GameId}");
+            
+            if (newGame != null)
+            {
+                if (oldPlayers != null)
+                {
+                    foreach (var p in newGame.Players)
+                    {
+                        if (oldPlayers.TryGetValue(p.Id, out var oldCash) && oldCash != p.Cash)
+                        {
+                            var delta = p.Cash - oldCash;
+                            _playerCashEffects[p.Id] = (delta, Guid.NewGuid(), DateTime.Now);
+                        }
+                    }
+                }
+                
+                if (oldUnitIds != null)
+                {
+                    foreach (var u in newGame.Units)
+                    {
+                        if (!oldUnitIds.Contains(u.Id))
+                        {
+                            _newUnitTimestamps[u.Id] = DateTime.Now;
+                        }
+                    }
+                    var expired = _newUnitTimestamps.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 10).Select(kv => kv.Key).ToList();
+                    foreach (var e in expired) _newUnitTimestamps.Remove(e);
+                }
+                
+                if (oldFactories != null)
+                {
+                    foreach (var ts in newGame.Territories.Where(t => t.HasFactory))
+                    {
+                        if (!oldFactories.Contains(ts.TerritoryId))
+                        {
+                            _newFactoryTimestamps[ts.TerritoryId] = DateTime.Now;
+                        }
+                    }
+                    var expiredFacs = _newFactoryTimestamps.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 10).Select(kv => kv.Key).ToList();
+                    foreach (var e in expiredFacs) _newFactoryTimestamps.Remove(e);
+                }
+                
+                if (oldNationStates != null)
+                {
+                    foreach (var ns in newGame.NationStates)
+                    {
+                        if (oldNationStates.TryGetValue(ns.Nation, out var oldNs))
+                        {
+                            if (oldNs.Power != ns.Power)
+                            {
+                                _nationPowerChanges[ns.Nation] = DateTime.Now;
+                            }
+                            if (oldNs.TaxRevenue != ns.TaxRevenue)
+                            {
+                                _nationTaxChanges[ns.Nation] = DateTime.Now;
+                            }
+                        }
+                    }
+                    var expiredPower = _nationPowerChanges.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 30).Select(kv => kv.Key).ToList();
+                    foreach (var e in expiredPower) _nationPowerChanges.Remove(e);
+                    
+                    var expiredTax = _nationTaxChanges.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 30).Select(kv => kv.Key).ToList();
+                    foreach (var e in expiredTax) _nationTaxChanges.Remove(e);
+                }
+            }
+            game = newGame;
+
             if (game != null && currentUserId != null)
             {
                 var me = game.Players.FirstOrDefault(p => p.UserId == currentUserId);
