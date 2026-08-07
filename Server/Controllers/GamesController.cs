@@ -1,5 +1,6 @@
 using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
+using Imperial2030.Server.Helpers;
 using Imperial2030.Shared.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Server.Helpers;
@@ -382,7 +383,8 @@ public class GamesController : ControllerBase
                 PlayerName = a.PlayerName,
                 Nation = a.Nation,
                 ActionType = a.ActionType,
-                Message = a.Message
+                Message = a.Message,
+                Metadata = a.Metadata ?? string.Empty
             }).ToList()
         };
 
@@ -879,16 +881,7 @@ public class GamesController : ControllerBase
 
     public static void HandleInvestorPhase(ApplicationDbContext? context, Game game, NationState nationState, Player controller, bool isLandedOn)
     {
-        string GetPlayerName(Player p)
-        {
-            if (p == null) return "Unknown";
-            if (p.IsBot) return p.BotName ?? "Bot";
-            if (p.User != null) return p.User.UserName ?? "Player";
-            var user = context?.Users.FirstOrDefault(u => u.Id == p.UserId);
-            return user?.UserName ?? "Player";
-        }
-
-        var controllerName = GetPlayerName(controller);
+        var controllerName = controller.GetPlayerName(context);
 
         // 1. Paying out interest (ONLY if landed on)
         if (isLandedOn)
@@ -916,7 +909,7 @@ public class GamesController : ControllerBase
                     var holder = game.Players.First(p => p.Id == bond.HolderId);
                     holder.Cash += bond.Interest;
                     if (context != null) context.Entry(holder).State = EntityState.Modified;
-                    var holderName = GetPlayerName(holder);
+                    var holderName = holder.GetPlayerName(context);
                     if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
                 }
 
@@ -967,7 +960,7 @@ public class GamesController : ControllerBase
                         var holder = game.Players.First(p => p.Id == bond.HolderId);
                         holder.Cash += bond.Interest;
                         if (context != null) context.Entry(holder).State = EntityState.Modified;
-                        var holderName = GetPlayerName(holder);
+                        var holderName = holder.GetPlayerName(context);
                         if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
                     }
                 }
@@ -984,7 +977,7 @@ public class GamesController : ControllerBase
                             var holder = game.Players.First(p => p.Id == bond.HolderId);
                             holder.Cash += bond.Interest;
                             if (context != null) context.Entry(holder).State = EntityState.Modified;
-                            var holderName = GetPlayerName(holder);
+                            var holderName = holder.GetPlayerName(context);
                             if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
                             remainingFunds -= bond.Interest;
                         }
@@ -996,7 +989,7 @@ public class GamesController : ControllerBase
                                 var holder = game.Players.First(p => p.Id == bond.HolderId);
                                 holder.Cash += remainingFunds;
                                 if (context != null) context.Entry(holder).State = EntityState.Modified;
-                                var holderName = GetPlayerName(holder);
+                                var holderName = holder.GetPlayerName(context);
                                 if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {remainingFunds}M interest to {holderName} (insufficient funds for full {bond.Interest}M)" });
                                 remainingFunds = 0;
                             }
@@ -1004,7 +997,7 @@ public class GamesController : ControllerBase
                             {
                                 // No funds left at all
                                 var holder = game.Players.First(p => p.Id == bond.HolderId);
-                                var holderName = GetPlayerName(holder);
+                                var holderName = holder.GetPlayerName(context);
                                 if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay {bond.Interest}M interest to {holderName} (insufficient funds)" });
                             }
                         }
@@ -1031,7 +1024,7 @@ public class GamesController : ControllerBase
             {
                 investor.Cash += 2;
                 if (context != null) context.Entry(investor).State = EntityState.Modified;
-                var investorName = GetPlayerName(investor);
+                var investorName = investor.GetPlayerName(context);
                 if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = investorName, ActionType = "InvestorBonus", Message = "received 2M Investor bonus" });
             }
         }
@@ -1444,14 +1437,6 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/investor-action")]
     public async Task<IActionResult> PerformInvestment(Guid gameId, [FromBody] InvestmentActionDto action)
     {
-        string GetPlayerName(Player p)
-        {
-            if (p == null) return "Unknown";
-            if (p.IsBot) return p.BotName ?? "Bot";
-            if (p.User != null) return p.User.UserName ?? "Player";
-            var user = _context.Users.FirstOrDefault(u => u.Id == p.UserId);
-            return user?.UserName ?? "Player";
-        }
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
@@ -1514,54 +1499,50 @@ public class GamesController : ControllerBase
             var newControllerId = ns.ControllerId;
 
             string controlChangeMessage = "";
+            string? newControllerName = null;
+            string? oldControllerName = null;
 
             if (oldControllerId != newControllerId)
             {
-                if (newControllerId == actingPlayer.Id)
+                if (newControllerId.HasValue)
                 {
-                    controlChangeMessage = $" and took control of {bond.Nation}";
+                    newControllerName = game.Players.FirstOrDefault(p => p.Id == newControllerId.Value)?.GetPlayerName(_context);
                 }
-                else if (newControllerId.HasValue)
-                {
-                    var newController = game.Players.FirstOrDefault(p => p.Id == newControllerId.Value);
-                    if (newController != null)
-                    {
-                        controlChangeMessage = $", giving control to {GetPlayerName(newController)}";
-                    }
-                }
-
-                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ReceiveNotification", new
-                {
-                    Type = "ControlChange",
-                    Message = $"{GetPlayerName(actingPlayer)} bought a bond and {(newControllerId == actingPlayer.Id ? "took control of" : "changed control of")} {bond.Nation}!"
-                });
 
                 if (oldControllerId.HasValue)
                 {
-                    var oldControllerStillControlsNations = game.NationStates.Any(n => n.ControllerId == oldControllerId.Value);
-                    if (!oldControllerStillControlsNations)
+                    var oldController = game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value);
+                    if (oldController != null)
                     {
-                        var oldController = game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value);
-                        if (oldController != null)
-                        {
-                            var swissMsg = $"{GetPlayerName(oldController)} was kicked to Switzerland (Swiss Bank)!";
-                            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ReceiveNotification", new
-                            {
-                                Type = "SwissBank",
-                                Message = swissMsg
-                            });
-                            LogAction(game, "was kicked to Switzerland", "System", null, GetPlayerName(oldController));
-                        }
+                        oldControllerName = oldController.GetPlayerName(_context);
                     }
                 }
+
+                controlChangeMessage = $" and took control of {bond.Nation}";
+                if (oldControllerName != null)
+                {
+                    controlChangeMessage += $" from {oldControllerName}";
+                }
+
+
+
+
             }
 
-            GameLogger.LogInvestmentBuy(_context, game, bond.Nation, bond.Cost, GetPlayerName(actingPlayer), controlChangeMessage);
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{GetPlayerName(actingPlayer)} bought {bond.Nation} {bond.Cost}M bond{controlChangeMessage}", false);
+            var metadata = new InvestmentMetadata
+            {
+                NewControllerName = newControllerName,
+                OldControllerName = oldControllerName,
+                IsSwissBankKicked = oldControllerId.HasValue && !game.NationStates.Any(n => n.ControllerId == oldControllerId.Value),
+                Nation = bond.Nation.ToString()
+            };
+
+            GameLogger.LogInvestmentBuy(_context, game, bond.Nation, bond.Cost, actingPlayer.GetPlayerName(_context), metadata);
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{actingPlayer.GetPlayerName(_context)} bought {bond.Nation} {bond.Cost}M bond{controlChangeMessage}", false);
         }
         else
         {
-            GameLogger.LogInvestmentPass(_context, game, GetPlayerName(actingPlayer));
+            GameLogger.LogInvestmentPass(_context, game, actingPlayer.GetPlayerName(_context));
         }
 
         // Advance queue

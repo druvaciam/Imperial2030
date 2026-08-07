@@ -23,6 +23,29 @@
                         <span class="nation-tag nation-@action.Nation.ToString()?.ToLower()">@action.Nation</span>
                     }
                     <span class="message">@action.Message</span>
+                    @if (action.ActionType == "Investment" && !string.IsNullOrEmpty(action.Metadata))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<InvestmentMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null)
+                            {
+                                if (meta.NewControllerName != null)
+                                {
+                                    <span class="text-info"> and took control of @meta.Nation@(meta.OldControllerName != null ? $" from {meta.OldControllerName}" : "")</span>
+                                }
+                                
+                                if (meta.IsSwissBankKicked)
+                                {
+                                    <div class="terminal-line text-warning">
+                                        <span class="timestamp">[@action.Timestamp.ToLocalTime().ToString("HH:mm:ss")]</span>
+                                        <span class="message">System: @meta.OldControllerName was kicked to Switzerland (Swiss Bank)!</span>
+                                    </div>
+                                }
+                            }
+                        }
+                        catch { /* ignore parsing errors for older logs */ }
+                    }
                 </div>
             }
         }
@@ -34,6 +57,8 @@
     public List<GameActionDto> Actions { get; set; } = new();
 
     private ElementReference terminalBodyRef;
+
+
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {

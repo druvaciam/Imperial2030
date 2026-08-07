@@ -1438,6 +1438,8 @@ else
     private bool isSubmitting = false;
     private string? toastMessage;
     private bool isToastError;
+    private Queue<(string Message, bool IsError)> toastQueue = new();
+    private bool isDisplayingToast = false;
     // Reset state when game updates (if it's a new turn for me)
 
     private Guid? selectedPlayerId;
@@ -1945,15 +1947,35 @@ else
         _ = ShowToast(message, isError);
     }
 
-    private async Task ShowToast(string message, bool isError)
+    private Task ShowToast(string message, bool isError)
     {
-        toastMessage = message;
-        isToastError = isError;
-        StateHasChanged();
-        Console.WriteLine($"Toast: {message}");
-        await Task.Delay(4000);
-        toastMessage = null;
-        StateHasChanged();
+        toastQueue.Enqueue((message, isError));
+        _ = ProcessToastQueueAsync();
+        return Task.CompletedTask;
+    }
+
+    private async Task ProcessToastQueueAsync()
+    {
+        if (isDisplayingToast) return;
+        isDisplayingToast = true;
+
+        while (toastQueue.Count > 0)
+        {
+            var (message, isError) = toastQueue.Dequeue();
+            toastMessage = message;
+            isToastError = isError;
+            StateHasChanged();
+            
+            await Task.Delay(7000);
+            
+            toastMessage = null;
+            StateHasChanged();
+            
+            // Brief pause between toasts to distinguish them
+            await Task.Delay(200);
+        }
+
+        isDisplayingToast = false;
     }
 
     private async Task ExitGame()
