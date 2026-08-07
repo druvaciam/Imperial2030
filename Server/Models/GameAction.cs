@@ -22,4 +22,6 @@ public class GameAction
 
     [MaxLength(500)]
     public string Message { get; set; } = string.Empty;
+
+    public string Metadata { get; set; } = string.Empty;
 }

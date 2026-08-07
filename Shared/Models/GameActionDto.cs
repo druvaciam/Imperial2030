@@ -8,4 +8,5 @@ public class GameActionDto
     public Nation? Nation { get; set; }
     public string ActionType { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
+    public string Metadata { get; set; } = string.Empty;
 }

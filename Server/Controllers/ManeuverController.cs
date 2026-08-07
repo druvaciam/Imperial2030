@@ -1,5 +1,6 @@
 using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
+using Imperial2030.Server.Helpers;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 using Imperial2030.Server.Helpers;
@@ -711,7 +712,8 @@ public class ManeuverController : ControllerBase
                     return BadRequest("Invalid phase transition.");
             }
 
-            LogAction(game, $"ended {oldPhase} maneuver phase", "NextPhase", nation);
+            string playerName = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId).GetPlayerName(_context);
+            GameLogger.LogEndManeuverPhase(_context, game, oldPhase.ToString(), nation, playerName);
 
             await _context.SaveChangesAsync();
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -843,7 +845,8 @@ public class ManeuverController : ControllerBase
             {
                 await UpdateTerritoryControl(game);
                 game.CurrentManeuverPhase = ManeuverPhase.Armies;
-                LogAction(game, "auto-ended Fleets maneuver phase", "NextPhase", nation);
+                string playerName = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId).GetPlayerName(_context);
+                GameLogger.LogAutoEndManeuverPhase(_context, game, "Fleets", nation, playerName);
             }
         }
 
@@ -854,7 +857,8 @@ public class ManeuverController : ControllerBase
             {
                 await UpdateTerritoryControl(game);
                 game.CurrentManeuverPhase = ManeuverPhase.None;
-                LogAction(game, "auto-ended Armies maneuver phase", "NextPhase", nation);
+                string playerName = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId).GetPlayerName(_context);
+                GameLogger.LogAutoEndManeuverPhase(_context, game, "Armies", nation, playerName);
             }
         }
 

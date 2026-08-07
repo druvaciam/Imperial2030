@@ -248,3 +248,12 @@ a:hover {
     0% { transform: scale(0.8); opacity: 0.8; filter: drop-shadow(0 0 2px orange); }
     100% { transform: scale(1.4); opacity: 1; filter: drop-shadow(0 0 10px red); }
 }
+
+.ready-to-move-blink {
+    animation: readyMoveGlow 1.5s ease-in-out infinite alternate !important;
+}
+
+@keyframes readyMoveGlow {
+    0% { filter: drop-shadow(0 0 2px #ffff00); }
+    100% { filter: drop-shadow(0 0 8px #ffff00) brightness(1.3); }
+}
