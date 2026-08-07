@@ -164,6 +164,7 @@ public class ManeuverController : ControllerBase
 
             if (enemyFleet != null)
             {
+                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
                 // Destroy Both
                 _context.Units.Remove(unit);
                 _context.Units.Remove(enemyFleet);
@@ -188,6 +189,7 @@ public class ManeuverController : ControllerBase
 
                     if (enemyFleet != null)
                     {
+                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
                         // Destroy Both
                         _context.Units.Remove(unit);
                         _context.Units.Remove(enemyFleet);
@@ -454,6 +456,7 @@ public class ManeuverController : ControllerBase
 
             if (enemyUnit != null)
             {
+                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
                 // Destroy Both
                 _context.Units.Remove(unit);
                 _context.Units.Remove(enemyUnit);
@@ -484,6 +487,7 @@ public class ManeuverController : ControllerBase
 
                     if (enemyUnit != null)
                     {
+                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
                         // Destroy Both
                         _context.Units.Remove(unit);
                         _context.Units.Remove(enemyUnit);

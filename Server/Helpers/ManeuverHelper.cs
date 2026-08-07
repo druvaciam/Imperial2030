@@ -17,7 +17,7 @@ namespace Imperial2030.Server.Helpers
 
     public static class ManeuverHelper
     {
-        public static List<string> GetRailReachableTerritories(Game game, string startId, Nation nation, bool includeExitPoints = true)
+        public static List<string> GetRailReachableTerritories(Game game, string startId, Nation nation, bool includeExitPoints = true, bool pureRailOnly = false)
         {
             var reachable = new HashSet<string>();
             var queue = new Queue<(string id, int cost)>();
@@ -44,20 +44,21 @@ namespace Imperial2030.Server.Helpers
                         if (neighborDef == null || neighborDef.Type != TerritoryType.Land) continue;
 
                         bool isNeighborHome = neighborDef.Nation == nation;
-                        
-                        var tState = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == neighborId);
-                        var effectiveController = tState?.Controller ?? neighborDef.Nation;
-                        bool isControlledByUs = effectiveController == nation;
                         bool hasHostileUnits = game.Units.Any(u => u.TerritoryId == neighborId && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile);
 
                         bool isRailStep = false;
-                        if (isCurrentHome && isNeighborHome && isControlledByUs && !hasHostileUnits)
+                        if (isCurrentHome && isNeighborHome && !hasHostileUnits)
                         {
                             isRailStep = true;
                         }
 
                         int edgeCost = isRailStep ? 0 : 1;
                         int newCost = currentCost + edgeCost;
+
+                        if (pureRailOnly && newCost > 0)
+                        {
+                            continue;
+                        }
 
                         if (!includeExitPoints && !isNeighborHome)
                         {
@@ -125,14 +126,11 @@ namespace Imperial2030.Server.Helpers
             if (startDef != null && startDef.Type == TerritoryType.Land)
             {
                 bool isStartHome = startDef.Nation == armyNation;
-                var startState = game.TerritoryStates?.FirstOrDefault(ts => ts.TerritoryId == startId);
-                bool isStartControlled = (isStartHome && (startState == null || startState.Controller == armyNation)) ||
-                                         (startState != null && startState.Controller == armyNation);
                 bool startHasHostiles = game.Units.Any(u => u.TerritoryId == startId && u.Nation != armyNation && u.IsHostile);
 
-                if ((isStartHome || isStartControlled) && !startHasHostiles)
+                if (isStartHome && !startHasHostiles)
                 {
-                    var railOnly = GetRailReachableTerritories(game, startId, armyNation, includeExitPoints: false);
+                    var railOnly = GetRailReachableTerritories(game, startId, armyNation, includeExitPoints: false, pureRailOnly: true);
                     foreach (var r in railOnly) launchPoints.Add(r);
                 }
             }
