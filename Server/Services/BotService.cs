@@ -617,6 +617,7 @@ public class BotService
 
                             if (enemyFleet != null)
                             {
+                                GameLogger.LogUnitMove(ctx, game, fleet.UnitType, originName, targetName, true, nation, controller.BotName ?? "Bot");
                                 RemoveUnit(ctx, game, fleet);
                                 RemoveUnit(ctx, game, enemyFleet);
                                 GameLogger.LogBattleDestruction(ctx, game, fleet.UnitType, targetNation, enemyFleet.UnitType, targetName, nation, controller.BotName ?? "Bot");
@@ -769,6 +770,7 @@ public class BotService
 
                             if (enemyUnit != null)
                             {
+                                GameLogger.LogUnitMove(ctx, game, army.UnitType, originName, targetName, true, nation, controller.BotName ?? "Bot");
                                 RemoveUnit(ctx, game, army);
                                 RemoveUnit(ctx, game, enemyUnit);
                                 GameLogger.LogBattleDestruction(ctx, game, army.UnitType, targetNation, enemyUnit.UnitType, targetName, nation, controller.BotName ?? "Bot");
