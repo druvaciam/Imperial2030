@@ -150,6 +150,7 @@ using (var scope = app.Services.CreateScope())
     try
     {
         await Imperial2030.Server.Data.DbSeeder.SeedAsync(services);
+        var logger = services.GetRequiredService<ILogger<Program>>();
 
         var dbContext = services.GetRequiredService<Imperial2030.Server.Data.ApplicationDbContext>();
         var twoWeeksAgo = DateTime.UtcNow.AddDays(-14);
@@ -162,8 +163,22 @@ using (var scope = app.Services.CreateScope())
         {
             dbContext.Games.RemoveRange(oldGames);
             await dbContext.SaveChangesAsync();
-            var logger = services.GetRequiredService<ILogger<Program>>();
             logger.LogInformation($"Cleaned up {oldGames.Count} old in-progress/lobby games created before {twoWeeksAgo}.");
+        }
+
+        var finishedGamesWithoutWinner = await dbContext.Games
+            .Where(g => g.Status == GameStatus.Finished && (g.WinnerName == null || g.WinnerName == ""))
+            .ToListAsync();
+
+        if (finishedGamesWithoutWinner.Any())
+        {
+            logger.LogInformation($"Backfilling WinnerName for {finishedGamesWithoutWinner.Count} finished games...");
+            
+            foreach (var g in finishedGamesWithoutWinner)
+            {
+                await Imperial2030.Server.Helpers.GameHelper.SetWinnerNameAsync(g, dbContext);
+            }
+            await dbContext.SaveChangesAsync();
         }
     }
     catch (Exception ex)

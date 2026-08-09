@@ -925,7 +925,14 @@ public class BotService
         if (ns.Power >= 25)
         {
             game.Status = GameStatus.Finished;
-            if (ctx != null) ctx.Entry(game).State = EntityState.Modified;
+            game.FinishedAt = DateTime.UtcNow;
+
+            if (ctx != null)
+            {
+                await game.SetWinnerNameAsync(ctx);
+                ctx.Entry(game).State = EntityState.Modified;
+            }
+
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameEnded", game.Id);

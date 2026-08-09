@@ -97,6 +97,10 @@
                             {
                                 <h6 class="card-subtitle mb-2 text-muted">Finished: @game.FinishedAt.Value.ToLocalTime().ToString("MMM dd, yyyy h:mm tt")</h6>
                             }
+                            @if (!string.IsNullOrEmpty(game.WinnerName))
+                            {
+                                <p class="text-success fw-bold mb-1"><i class="bi bi-trophy-fill me-1"></i> Winner: @game.WinnerName</p>
+                            }
                             <p class="card-text">
                                 Status: <span class="badge bg-@GetStatusColor(game.Status)">
                                     @if (game.Status == GameStatus.InProgress)
