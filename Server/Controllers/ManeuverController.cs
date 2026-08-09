@@ -913,8 +913,21 @@ public class ManeuverController : ControllerBase
                     if (!isHomeProvince && tState.Controller != firstNation)
                     {
                         var oldController = tState.Controller;
-                        tState.Controller = firstNation;
-                        GameLogger.LogTerritoryControlChange(_context, game, territoryDef.Name, oldController, firstNation, User.Identity?.Name ?? "System");
+                        int flagCount = game.TerritoryStates.Count(ts => ts.Controller == firstNation);
+
+                        if (flagCount >= 15)
+                        {
+                            if (oldController != null)
+                            {
+                                tState.Controller = null;
+                                GameLogger.LogTerritoryControlChange(_context, game, territoryDef.Name, oldController, null, User.Identity?.Name ?? "System");
+                            }
+                        }
+                        else
+                        {
+                            tState.Controller = firstNation;
+                            GameLogger.LogTerritoryControlChange(_context, game, territoryDef.Name, oldController, firstNation, User.Identity?.Name ?? "System");
+                        }
                     }
                 }
             }

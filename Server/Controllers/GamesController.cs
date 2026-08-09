@@ -314,6 +314,8 @@ public class GamesController : ControllerBase
             Name = game.Name,
             Status = game.Status,
             CreatedAt = game.CreatedAt,
+            FinishedAt = game.FinishedAt,
+            WinnerName = game.WinnerName,
             IsPrivate = game.IsPrivate,
             VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
             HostId = game.Players.FirstOrDefault(p => p.IsHost)?.UserId,

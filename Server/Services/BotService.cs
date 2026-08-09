@@ -157,6 +157,10 @@ public class BotService
                 if (!botActed || singleTurnOnly) break;
             }
         }
+        catch (ObjectDisposedException)
+        {
+            // Ignore during application shutdown or test teardown
+        }
         catch (Exception ex)
         {
             Console.WriteLine($"[TryPlayBotTurnAsync] ERROR: {ex.Message}\n{ex.StackTrace}");
@@ -904,8 +908,21 @@ public class BotService
                     if (!isHomeProvince && tState.Controller != firstNation)
                     {
                         var oldController = tState.Controller;
-                        tState.Controller = firstNation;
-                        GameLogger.LogTerritoryControlChange(ctx, game, territoryDef.Name, oldController, firstNation, botName);
+                        int flagCount = game.TerritoryStates.Count(ts => ts.Controller == firstNation);
+
+                        if (flagCount >= 15)
+                        {
+                            if (oldController != null)
+                            {
+                                tState.Controller = null;
+                                GameLogger.LogTerritoryControlChange(ctx, game, territoryDef.Name, oldController, null, botName);
+                            }
+                        }
+                        else
+                        {
+                            tState.Controller = firstNation;
+                            GameLogger.LogTerritoryControlChange(ctx, game, territoryDef.Name, oldController, firstNation, botName);
+                        }
                     }
                 }
             }
