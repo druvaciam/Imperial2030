@@ -29,17 +29,16 @@ namespace Imperial2030.Tests
                 Status = GameStatus.InProgress
             };
 
-            // Pass the actual metadata object used in BotService or GamesController
-            var metadata = new InvestmentMetadata
-            {
-                NewControllerName = "Bot Bravo (RL-2)",
-                OldControllerName = (string?)null,
-                IsSwissBankKicked = false,
-                Nation = Nation.India.ToString()
-            };
-
             // Act
-            GameLogger.LogInvestmentBuy(context, game, Nation.India, 20, "Bot Bravo (RL-2)", metadata);
+            GameLogger.LogInvestmentBuy(
+                context, 
+                game, 
+                Nation.India, 
+                20, 
+                "Bot Bravo (RL-2)", 
+                newControllerName: "Bot Bravo (RL-2)", 
+                oldControllerName: null, 
+                isSwissBankKicked: false);
 
             context.SaveChanges();
 

@@ -325,7 +325,7 @@ public class BotService
             // Advance turn
             game.AdvanceTurn();
 
-            GameLogger.LogAction(ctx, game, "ended their turn", "EndTurn", nation, controller.BotName ?? "Bot");
+            GameLogger.LogAction(ctx, game, "", "EndTurn", nation, controller.BotName ?? "Bot");
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
         }
@@ -553,12 +553,12 @@ public class BotService
                         }
                         else
                         {
-                            GameLogger.LogAction(ctx, game, $"fleet stayed in {target}", "MoveFleet", nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, target, nation, controller.BotName ?? "Bot");
                         }
                     }
                     else
                     {
-                        GameLogger.LogAction(ctx, game, $"fleet stayed in {target}", "MoveFleet", nation, controller.BotName ?? "Bot");
+                        GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, target, nation, controller.BotName ?? "Bot");
                     }
                     await BotUnitActionDelay(ctx, game);
                     continue;
@@ -697,12 +697,12 @@ public class BotService
                         }
                         else
                         {
-                            GameLogger.LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitStay(ctx, game, UnitType.Army, best, nation, controller.BotName ?? "Bot");
                         }
                     }
                     else
                     {
-                        GameLogger.LogAction(ctx, game, $"army stayed in {best}", "MoveArmy", nation, controller.BotName ?? "Bot");
+                        GameLogger.LogUnitStay(ctx, game, UnitType.Army, best, nation, controller.BotName ?? "Bot");
                     }
                     await BotUnitActionDelay(ctx, game);
                     continue;
@@ -987,33 +987,37 @@ public class BotService
             string? oldControllerName = null;
             bool isSwissBankKicked = false;
 
+            if (newControllerId == actor.Id)
+            {
+                newControllerName = actor.GetPlayerName(ctx);
+            }
+            else if (newControllerId.HasValue)
+            {
+                var newController = game.Players.FirstOrDefault(p => p.Id == newControllerId.Value);
+                if (newController != null)
+                {
+                    newControllerName = newController.GetPlayerName(ctx);
+                }
+            }
+
+            if (oldControllerId.HasValue)
+            {
+                var oldController = game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value);
+                if (oldController != null)
+                {
+                    oldControllerName = oldController.GetPlayerName(ctx);
+                }
+            }
+
             if (oldControllerId != newControllerId)
             {
-                if (newControllerId == actor.Id)
-                {
-                    newControllerName = actor.BotName ?? "Bot";
-                }
-                else if (newControllerId.HasValue)
-                {
-                    var newController = game.Players.FirstOrDefault(p => p.Id == newControllerId.Value);
-                    if (newController != null)
-                    {
-                        newControllerName = newController.BotName ?? newController.UserId ?? "Player";
-                    }
-                }
-
                 if (oldControllerId.HasValue)
                 {
-                    var oldController = game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value);
-                    if (oldController != null)
-                    {
-                        oldControllerName = oldController.BotName ?? oldController.UserId ?? "Player";
-                    }
-
                     var oldControllerStillControlsNations = game.NationStates.Any(n => n.ControllerId == oldControllerId.Value);
                     if (!oldControllerStillControlsNations)
                     {
-                        if (oldController != null)
+                        var oldControllerEntity = game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value);
+                        if (oldControllerEntity != null)
                         {
                             isSwissBankKicked = true;
                         }
@@ -1021,16 +1025,8 @@ public class BotService
                 }
             }
 
-            var metadata = new InvestmentMetadata
-            {
-                NewControllerName = newControllerName,
-                OldControllerName = oldControllerName,
-                IsSwissBankKicked = isSwissBankKicked,
-                Nation = bondToBuy.Nation.ToString()
-            };
-
             string toastMsg = $"{botName} bought {bondToBuy.Nation} {bondToBuy.Cost}M bond";
-            if (newControllerName != null)
+            if (newControllerName != null && newControllerName != oldControllerName)
             {
                 toastMsg += $" and took control of {bondToBuy.Nation}";
                 if (oldControllerName != null)
@@ -1039,7 +1035,16 @@ public class BotService
                 }
             }
 
-            GameLogger.LogInvestmentBuy(ctx, game, bondToBuy.Nation, bondToBuy.Cost, botName, metadata);
+            GameLogger.LogInvestmentBuy(
+                ctx, 
+                game, 
+                bondToBuy.Nation, 
+                bondToBuy.Cost, 
+                botName, 
+                newControllerName, 
+                oldControllerName, 
+                isSwissBankKicked, 
+                null);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", toastMsg, false);
         }
         else

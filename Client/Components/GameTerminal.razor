@@ -1,4 +1,5 @@
 @using Imperial2030.Shared.Models
+@using Imperial2030.Shared.Constants
 @inject IJSRuntime JSRuntime
 
 <div class="game-terminal-container">
@@ -22,7 +23,14 @@
                     {
                         <span class="nation-tag nation-@action.Nation.ToString()?.ToLower()">@action.Nation</span>
                     }
-                    <span class="message">@action.Message</span>
+                    @if (!string.IsNullOrEmpty(action.Message))
+                    {
+                        <span class="message">@action.Message</span>
+                    }
+                    else if (action.ActionType == "Investment" && string.IsNullOrEmpty(action.Metadata))
+                    {
+                        <span class="message">passed on investment</span>
+                    }
                     @if (action.ActionType == "Investment" && !string.IsNullOrEmpty(action.Metadata))
                     {
                         try
@@ -30,7 +38,16 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<InvestmentMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null)
                             {
-                                if (meta.NewControllerName != null)
+                                if (meta.TradeInCost.HasValue && meta.Cost.HasValue)
+                                {
+                                    <span class="message">upgraded @meta.Nation @(meta.TradeInCost)M to @(meta.Cost)M bond</span>
+                                }
+                                else if (meta.Cost.HasValue)
+                                {
+                                    <span class="message">bought @meta.Nation @(meta.Cost)M bond</span>
+                                }
+
+                                if (meta.NewControllerName != null && meta.NewControllerName != meta.OldControllerName)
                                 {
                                     <span class="text-info"> and took control of @meta.Nation@(meta.OldControllerName != null ? $" from {meta.OldControllerName}" : "")</span>
                                 }
@@ -45,6 +62,257 @@
                             }
                         }
                         catch { /* ignore parsing errors for older logs */ }
+                    }
+                    @if (action.ActionType == "Taxation" && !string.IsNullOrEmpty(action.Metadata))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<TaxationMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null)
+                            {
+                                string soldiersPayStr = meta.SoldiersPay > 0 ? $"-{meta.SoldiersPay}" : meta.SoldiersPay.ToString();
+                                string tGainStr = meta.TreasuryGain > 0 ? $"+{meta.TreasuryGain}" : meta.TreasuryGain.ToString();
+                                string bonusStr = meta.Bonus > 0 ? $"+{meta.Bonus}" : meta.Bonus.ToString();
+                                string powerStr = meta.PowerGain > 0 ? $"+{meta.PowerGain}" : meta.PowerGain.ToString();
+                                <span class="message">collected taxes: @(meta.TotalRevenue)M (Soldiers' Pay: @(soldiersPayStr)M, Treasury Gain: @(tGainStr)M, Bonus: @(bonusStr)M, Power: @(powerStr))</span>
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "Import" && !string.IsNullOrEmpty(action.Metadata))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<ImportMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null)
+                            {
+                                var locationNames = meta.Units.Select(u => $"{u.UnitType} in {u.TerritoryName}");
+                                <span class="message">imported @(meta.ImportedCount) units (@string.Join(", ", locationNames))</span>
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "EndTurn")
+                    {
+                        <span class="message">ended their turn</span>
+                    }
+                    @if ((action.ActionType == "AutoSkipPhase" || action.ActionType == "AutoEndPhase" || action.ActionType == "EndPhase") && !string.IsNullOrEmpty(action.Metadata))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<PhaseMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null)
+                            {
+                                if (action.ActionType == "AutoSkipPhase")
+                                {
+                                    <span class="message">auto-skipped @(meta.PhaseName) maneuver phase</span>
+                                }
+                                else if (action.ActionType == "AutoEndPhase")
+                                {
+                                    <span class="message">auto-ended @(meta.PhaseName) maneuver phase</span>
+                                }
+                                else if (action.ActionType == "EndPhase")
+                                {
+                                    <span class="message">ended @(meta.PhaseName) maneuver phase</span>
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "AllPartiesPeace" && !string.IsNullOrEmpty(action.Metadata))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null && meta.TerritoryId != null)
+                            {
+                                <span class="message">All parties agreed to PEACE in @meta.TerritoryId.</span>
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "Move" && !string.IsNullOrEmpty(action.Metadata))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<RondelMoveMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null)
+                            {
+                                string targetStr = RondelData.GetSlotName(meta.TargetSlot);
+                                string fromStr = meta.CurrentSlot.HasValue ? RondelData.GetSlotName(meta.CurrentSlot.Value) : "Start";
+                                <span class="message">moved to @targetStr from @fromStr (Cost: @(meta.Cost)M)</span>
+                            }
+                        }
+                        catch { }
+                    }
+                    @if ((action.ActionType == "MoveFleet" || action.ActionType == "MoveArmy") && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null && meta.FromTerritoryId != null && meta.ToTerritoryId != null)
+                            {
+                                string typeStr = action.ActionType == "MoveFleet" ? "fleet" : "army";
+                                if (meta.FromTerritoryId == meta.ToTerritoryId)
+                                {
+                                    <span class="message">@typeStr stayed in @meta.ToTerritoryId</span>
+                                }
+                                else
+                                {
+                                    string originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.FromTerritoryId)?.Name ?? meta.FromTerritoryId;
+                                    string targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.ToTerritoryId)?.Name ?? meta.ToTerritoryId;
+                                    
+                                    if (!string.IsNullOrEmpty(meta.DefendersStr))
+                                    {
+                                        string peaceOrHostile = meta.IsHostileMove == true ? "hostilely" : "peacefully";
+                                        <span class="message">@typeStr moved @peaceOrHostile to @targetName from @originName, awaiting response from @meta.DefendersStr</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="message">@typeStr moved to @targetName from @originName (Hostile: @meta.IsHostileMove)</span>
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "Battle" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null && meta.TerritoryId != null)
+                            {
+                                string targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
+                                if (meta.IsResponse == true)
+                                {
+                                    <span class="message">@meta.DefenderNation @meta.DefenderUnitType?.ToString().ToLower() chose FIGHT against @meta.AggressorNation @meta.UnitType?.ToString().ToLower() in @targetName. Both destroyed</span>
+                                }
+                                else
+                                {
+                                    <span class="message">@meta.UnitType?.ToString().ToLower() attacked @meta.DefenderNation @meta.DefenderUnitType?.ToString().ToLower() in @targetName. Both destroyed</span>
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "FlagPlacement" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<FlagPlacementMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null && meta.TerritoryId != null)
+                            {
+                                string territoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
+                                if (meta.OldController.HasValue)
+                                {
+                                    <span class="message">took control of @territoryName from @meta.OldController.Value</span>
+                                }
+                                else
+                                {
+                                    <span class="message">took control of @territoryName</span>
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "Factory" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null && meta.TerritoryId != null)
+                            {
+                                string territoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
+                                <span class="message">built a factory in @territoryName</span>
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "DestroyFactory" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null && meta.TerritoryId != null)
+                            {
+                                string territoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
+                                <span class="message">destroyed @action.Nation factory in @territoryName</span>
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "SwissBankResponse" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<SwissBankResponseMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null)
+                            {
+                                if (meta.IsForceStop)
+                                {
+                                    <span class="message">chose to FORCE STOP @meta.Nation on Investor</span>
+                                }
+                                else
+                                {
+                                    <span class="message">chose to PASS on forcing @meta.Nation to stop</span>
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "BattleResponse" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null && meta.TerritoryId != null)
+                            {
+                                string territoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
+                                <span class="message">@meta.RespondingNationStr agreed to PEACE with @meta.AggressorNation in @territoryName</span>
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "ToggleHostility" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<HostilityMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null && meta.TerritoryId != null)
+                            {
+                                string typeStr = meta.UnitType.ToString().ToLower();
+                                string statusStr = meta.IsHostile ? "hostile" : "friendly";
+                                string territoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
+                                <span class="message">@typeStr in @territoryName converted to @statusStr</span>
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "Production" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<ProductionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null)
+                            {
+                                var locationNames = meta.Units.Select(u => $"{u.UnitType} in {u.TerritoryName}");
+                                <span class="message">produced @meta.ProducedCount units (@string.Join(", ", locationNames))</span>
+                            }
+                        }
+                        catch { }
+                    }
+                    @if (action.ActionType == "JoinGame")
+                    {
+                        <span class="message">joined the game</span>
+                    }
+                    else if (action.ActionType == "LeaveGame")
+                    {
+                        <span class="message">left the game</span>
+                    }
+                    else if (action.ActionType == "StartGame")
+                    {
+                        <span class="message">started the game</span>
                     }
                 </div>
             }

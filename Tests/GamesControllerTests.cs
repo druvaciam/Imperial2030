@@ -311,6 +311,69 @@ namespace Imperial2030.Tests
         }
 
         [Fact]
+        public async Task PerformInvestment_TradeInBond_UpgradesCorrectly()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var gameId = Guid.NewGuid();
+                var p1UserId = "p1-user";
+                var p1Id = Guid.NewGuid();
+
+                var game = new Game
+                {
+                    Id = gameId,
+                    CurrentTurnNation = Nation.Russia,
+                    Status = GameStatus.InProgress,
+                    InvestorCardHolderId = p1Id,
+                    IsInvestorTurn = true,
+                    ActingPlayerId = p1Id
+                };
+
+                // P1 has 10M cash and owns 4M Russia bond. They want to buy 9M Russia bond.
+                var p1 = new Player { Id = p1Id, GameId = gameId, UserId = p1UserId, Cash = 10 };
+
+                var nsRussia = new NationState
+                {
+                    Nation = Nation.Russia,
+                    ControllerId = p1Id,
+                    GameId = gameId,
+                    Treasury = 0
+                };
+
+                var bond9M = new Bond { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, Cost = 9, Interest = 3, HolderId = null };
+                var bond4M = new Bond { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, Cost = 4, Interest = 2, HolderId = p1Id };
+
+                context.Games.Add(game);
+                context.Players.Add(p1);
+                context.NationStates.Add(nsRussia);
+                context.Bonds.AddRange(bond9M, bond4M);
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, p1UserId);
+
+                // Act: P1 trades in 4M bond for 9M bond (costing 5M)
+                var investRequest = new GamesController.InvestmentActionDto { ActionType = "Buy", BondId = bond9M.Id, TradeInBondId = bond4M.Id };
+                var result = await controller.PerformInvestment(gameId, investRequest);
+
+                // Assert
+                Assert.IsType<OkResult>(result);
+
+                var updatedP1 = await context.Players.FirstAsync(p => p.Id == p1Id);
+                Assert.Equal(5, updatedP1.Cash); // 10M - (9M - 4M) = 5M
+
+                var updatedNsRussia = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
+                Assert.Equal(5, updatedNsRussia.Treasury); // Russia gains 5M
+
+                var updatedBond9M = await context.Bonds.FirstAsync(b => b.Id == bond9M.Id);
+                Assert.Equal(p1Id, updatedBond9M.HolderId); // P1 owns 9M bond
+
+                var updatedBond4M = await context.Bonds.FirstAsync(b => b.Id == bond4M.Id);
+                Assert.Null(updatedBond4M.HolderId); // 4M bond returned to bank
+            }
+        }
+
+        [Fact]
         public async Task BuildFactory_GameNotInProgress_ReturnsBadRequest()
         {
             var dbName = Guid.NewGuid().ToString();

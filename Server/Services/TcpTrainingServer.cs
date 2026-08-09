@@ -608,10 +608,51 @@ public class TcpTrainingServer : BackgroundService
         else
         {
             // Base Actions (0-63)
+            bool isInvestorTurn = game.IsInvestorTurn;
+            var oldMask = isInvestorTurn ? GetActionMask(game, session) : null;
+
             RLBotStrategy.TrainingActionOverride.Value = req.Action;
             _botService.SkipDelays = true;
             await TryPlayBotTurnAsync(game);
             RLBotStrategy.TrainingActionOverride.Value = null;
+
+            if (isInvestorTurn && oldMask != null)
+            {
+                var winningNations = game.NationStates.Where(n => n.Power >= 15).Select(n => n.Nation).ToList();
+                if (winningNations.Any())
+                {
+                    bool passed = req.Action == 63;
+                    bool boughtWinningBond = false;
+                    bool couldBuyWinningBond = false;
+
+                    var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
+                    for (int i = 9; i <= 62; i++)
+                    {
+                        if (oldMask[i])
+                        {
+                            int bondIdx = i - 9;
+                            int nationIdx = bondIdx / 9;
+                            var n = imperial2030Nations[nationIdx];
+                            if (winningNations.Contains(n))
+                            {
+                                couldBuyWinningBond = true;
+                                if (req.Action == i) boughtWinningBond = true;
+                            }
+                        }
+                    }
+
+                    if (passed && couldBuyWinningBond)
+                    {
+                        explicitBonusReward -= 50.0f;
+                        _logger.LogWarning($"[RL PENALTY] Passed on investment when a nation was close to winning (Power >= 15). Penalty: -50");
+                    }
+                    else if (boughtWinningBond)
+                    {
+                        explicitBonusReward += 20.0f;
+                        _logger.LogInformation($"[RL REWARD] Invested in a winning nation (Power >= 15). Reward: +20");
+                    }
+                }
+            }
         }
 
         // Auto-advance maneuver phase logic

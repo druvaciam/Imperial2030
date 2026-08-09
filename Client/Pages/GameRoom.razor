@@ -1698,8 +1698,7 @@ else
             }
             else
             {
-                await ShowToast("Factory built successfully!", false);
-                // State update handled by SignalR refresh, hasBuilt is server-side now
+                // Action logged by terminal
             }
         }
         catch (Exception ex)
@@ -1733,11 +1732,7 @@ else
             }
             else
             {
-                // Create a formatted message from result if possible, but minimal for now
-                var result = await response.Content.ReadFromJsonAsync<TaxationResultDto>(); // Need DTO? Or just dynamic/anonymous?
-                                                                                            // Let's just toast success for now or parse generic object
-
-                await ShowToast("Taxation executed successfully!", false);
+                // Action logged by terminal
             }
         }
         catch (Exception ex)
@@ -1780,8 +1775,7 @@ else
             }
             else
             {
-                var msg = await response.Content.ReadAsStringAsync();
-                await ShowToast(msg, false);
+                // Action logged by terminal
             }
         }
         catch (Exception ex)
@@ -1917,8 +1911,6 @@ else
             }
             else
             {
-                var msg = await response.Content.ReadAsStringAsync();
-                await ShowToast(msg, false);
                 pendingImports.Clear();
             }
         }
@@ -1936,9 +1928,15 @@ else
     {
         if (game == null) return false;
         var threshold = DateTime.UtcNow.AddSeconds(-30);
-        return game.Actions.Any(a => a.ActionType == "Investment" 
-                                  && a.Timestamp >= threshold 
-                                  && a.Message.Contains($"bought {nation} {cost}M bond"));
+        return game.Actions.Any(a => {
+            if (a.ActionType != "Investment" || a.Timestamp < threshold || string.IsNullOrEmpty(a.Metadata)) return false;
+            try
+            {
+                var meta = System.Text.Json.JsonSerializer.Deserialize<Imperial2030.Shared.Models.InvestmentMetadata>(a.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                return meta != null && meta.Nation == nation.ToString() && meta.Cost == cost;
+            }
+            catch { return false; }
+        });
     }
 
     // Wrapper to match Action<string, bool> signature (fire and forget)

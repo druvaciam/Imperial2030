@@ -806,7 +806,7 @@ public class ManeuverController : ControllerBase
             if (!game.PendingBattleDefenders.Any())
             {
                 // Everyone agreed to peace
-                LogAction(game, $"All parties agreed to PEACE in {game.PendingBattleTerritoryId}.", "BattleResponse");
+                GameLogger.LogAllPartiesPeace(_context, game, game.PendingBattleTerritoryId, "System");
                 var aggressorNation = game.PendingBattleAggressorNation.Value;
 
                 // Mark all units in the territory as peaceful
@@ -924,7 +924,6 @@ public class ManeuverController : ControllerBase
     private void ResolveBattles(Game game, ApplicationDbContext context)
     {
         var activeNation = game.CurrentTurnNation;
-        Console.WriteLine($"[Battle] Resolving for {activeNation}");
 
         var potentialBattlegrounds = game.Units
             .Where(u => u.Nation == activeNation)
@@ -939,8 +938,6 @@ public class ManeuverController : ControllerBase
             var activeUnits = unitsInTerritory.Where(u => u.Nation == activeNation).ToList();
             var hostileUnits = unitsInTerritory.Where(u => u.Nation != activeNation && u.IsHostile).ToList();
 
-            Console.WriteLine($"[Battle] Territory {tId}: {activeUnits.Count} Active vs {hostileUnits.Count} Hostile");
-
             if (!hostileUnits.Any()) continue;
 
             while (activeUnits.Count > 0 && hostileUnits.Count > 0)
@@ -954,14 +951,7 @@ public class ManeuverController : ControllerBase
                 context.Units.Remove(enemyUnit);
                 hostileUnits.Remove(enemyUnit);
                 game.Units.Remove(enemyUnit);
-
-                Console.WriteLine($"[Battle] Resolved 1:1 in {tId}");
             }
         }
-    }
-
-    private void LogAction(Game game, string message, string type, Nation? nation = null)
-    {
-        GameLogger.LogAction(_context, game, message, type, nation, User.Identity?.Name ?? "System");
     }
 }
