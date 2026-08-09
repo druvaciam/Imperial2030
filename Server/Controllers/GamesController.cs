@@ -146,7 +146,7 @@ public class GamesController : ControllerBase
             IsHost = false
         };
         _context.Players.Add(player);
-        LogAction(game, $"{User.Identity?.Name} joined the game", "JoinGame");
+        LogAction(game, "", "JoinGame");
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -236,7 +236,7 @@ public class GamesController : ControllerBase
                 }
             }
 
-            LogAction(game, $"{User.Identity?.Name} left the game", "LeaveGame");
+            LogAction(game, "", "LeaveGame");
             await _context.SaveChangesAsync();
         }
 
@@ -842,7 +842,7 @@ public class GamesController : ControllerBase
             var startedGame = await _context.Games.FindAsync(gameId);
             if (startedGame != null)
             {
-                LogAction(startedGame, "Game Started", "StartGame");
+                LogAction(startedGame, "", "StartGame");
                 await _context.SaveChangesAsync();
             }
 
@@ -1310,7 +1310,7 @@ public class GamesController : ControllerBase
             if (!hasFleets)
             {
                 game.CurrentManeuverPhase = ManeuverPhase.Armies;
-                LogAction(game, "auto-skipped Fleets maneuver phase", "Maneuver", nation);
+                GameLogger.LogAutoSkipManeuverPhase(_context, game, "Fleets", nation, controller.GetPlayerName(_context));
             }
             if (game.CurrentManeuverPhase == ManeuverPhase.Armies)
             {
@@ -1318,7 +1318,7 @@ public class GamesController : ControllerBase
                 if (!hasArmies)
                 {
                     game.CurrentManeuverPhase = ManeuverPhase.None;
-                    LogAction(game, "auto-skipped Armies maneuver phase", "Maneuver", nation);
+                    GameLogger.LogAutoSkipManeuverPhase(_context, game, "Armies", nation, controller.GetPlayerName(_context));
                 }
             }
         }
@@ -1462,6 +1462,7 @@ public class GamesController : ControllerBase
             if (bond.HolderId != null) return BadRequest("Bond already owned.");
 
             int cost = bond.Cost;
+            int? tradeInCost = null;
 
             // Trade In Logic
             if (action.TradeInBondId.HasValue)
@@ -1472,6 +1473,7 @@ public class GamesController : ControllerBase
                 if (tradeIn.Nation != bond.Nation) return BadRequest("Trade-in must be for same nation.");
                 if (tradeIn.Cost >= bond.Cost) return BadRequest("New bond must be higher value.");
 
+                tradeInCost = tradeIn.Cost;
                 cost = bond.Cost - tradeIn.Cost;
 
                 // Return old bond to bank
@@ -1502,43 +1504,43 @@ public class GamesController : ControllerBase
             string? newControllerName = null;
             string? oldControllerName = null;
 
+            if (newControllerId.HasValue)
+            {
+                newControllerName = game.Players.FirstOrDefault(p => p.Id == newControllerId.Value)?.GetPlayerName(_context);
+            }
+
+            if (oldControllerId.HasValue)
+            {
+                oldControllerName = game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value)?.GetPlayerName(_context);
+            }
+
             if (oldControllerId != newControllerId)
             {
-                if (newControllerId.HasValue)
-                {
-                    newControllerName = game.Players.FirstOrDefault(p => p.Id == newControllerId.Value)?.GetPlayerName(_context);
-                }
-
-                if (oldControllerId.HasValue)
-                {
-                    var oldController = game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value);
-                    if (oldController != null)
-                    {
-                        oldControllerName = oldController.GetPlayerName(_context);
-                    }
-                }
-
                 controlChangeMessage = $" and took control of {bond.Nation}";
                 if (oldControllerName != null)
                 {
                     controlChangeMessage += $" from {oldControllerName}";
                 }
-
-
-
-
             }
 
-            var metadata = new InvestmentMetadata
-            {
-                NewControllerName = newControllerName,
-                OldControllerName = oldControllerName,
-                IsSwissBankKicked = oldControllerId.HasValue && !game.NationStates.Any(n => n.ControllerId == oldControllerId.Value),
-                Nation = bond.Nation.ToString()
-            };
+            bool isSwissBankKicked = oldControllerId.HasValue && !game.NationStates.Any(n => n.ControllerId == oldControllerId.Value);
 
-            GameLogger.LogInvestmentBuy(_context, game, bond.Nation, bond.Cost, actingPlayer.GetPlayerName(_context), metadata);
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{actingPlayer.GetPlayerName(_context)} bought {bond.Nation} {bond.Cost}M bond{controlChangeMessage}", false);
+            GameLogger.LogInvestmentBuy(
+                _context,
+                game,
+                bond.Nation,
+                bond.Cost,
+                actingPlayer.GetPlayerName(_context),
+                newControllerName,
+                oldControllerName,
+                isSwissBankKicked,
+                tradeInCost);
+
+            string baseToastMessage = tradeInCost.HasValue
+                ? $"{actingPlayer.GetPlayerName(_context)} upgraded {bond.Nation} {tradeInCost.Value}M to {bond.Cost}M bond"
+                : $"{actingPlayer.GetPlayerName(_context)} bought {bond.Nation} {bond.Cost}M bond";
+
+            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{baseToastMessage}{controlChangeMessage}", false);
         }
         else
         {
@@ -1687,7 +1689,7 @@ public class GamesController : ControllerBase
 
         _context.Entry(game).State = EntityState.Modified;
 
-        LogAction(game, $"ended their turn", "EndTurn", nation);
+        LogAction(game, "", "EndTurn", nation);
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -1873,10 +1875,11 @@ public class GamesController : ControllerBase
         return Ok();
     }
 
-    private void LogAction(Game game, string message, string type, Nation? nation = null, string? playerNameOverride = null)
+    private void LogAction(Game game, string message, string type, Nation? nation = null)
     {
-        GameLogger.LogAction(_context, game, message, type, nation, playerNameOverride ?? User.Identity?.Name ?? "System");
+        GameLogger.LogAction(_context, game, message, type, nation, User.Identity?.Name ?? "System");
     }
+
     [HttpPost("{gameId}/swissbank-response")]
     public async Task<IActionResult> SwissBankResponse(Guid gameId, [FromBody] SwissBankResponseRequest request)
     {

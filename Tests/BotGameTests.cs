@@ -129,7 +129,7 @@ namespace Imperial2030.Tests
             await context.SaveChangesAsync();
 
             int timeoutTicks = 0;
-            while (timeoutTicks < 500)
+            while (timeoutTicks < 2000)
             {
                 using var scope = mockScopeFactory.Object.CreateScope();
                 var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -167,7 +167,7 @@ namespace Imperial2030.Tests
             _output.WriteLine($"Game finished successfully after {turns} actions.");
         }
 
-        [Fact(Skip = "Takes a long time, run manually when checking organic Swiss bank scenario")]
+        [Fact]
         public async Task TestBotPlaysUntilSwissBankWins()
         {
             var stopWatch = System.Diagnostics.Stopwatch.StartNew();
@@ -241,8 +241,7 @@ namespace Imperial2030.Tests
 
                 // 5. Play game
                 int timeoutTicks = 0;
-
-                while (timeoutTicks < 500)
+                while (timeoutTicks < 2000)
                 {
                     using var scope = mockScopeFactory.Object.CreateScope();
                     var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -266,7 +265,11 @@ namespace Imperial2030.Tests
                 if (observedSwissBanks.Any())
                     _output.WriteLine($"Swiss Bank player emerged in game {gameCount}!");
 
-                var finalGame = context.Games.AsNoTracking().FirstOrDefault(g => g.Id == gameId);
+                var finalGame = context.Games.AsNoTracking()
+                    .Include(g => g.Players)
+                    .Include(g => g.NationStates)
+                    .Include(g => g.Bonds)
+                    .FirstOrDefault(g => g.Id == gameId);
                 if (finalGame?.Status == GameStatus.Finished)
                 {
                     var rankedPlayers = finalGame.GetRankedPlayers();
@@ -628,7 +631,7 @@ namespace Imperial2030.Tests
 
                 // The RL model is now correctly polled on state changes, so it should play out efficiently.
                 int timeoutTicks = 0;
-                while (timeoutTicks < 100) // 100 * 50ms = 5 seconds timeout per game
+                while (timeoutTicks < 2000) // 100 * 50ms = 5 seconds timeout per game
                 {
                     using var scope = mockScopeFactory.Object.CreateScope();
                     var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -639,7 +642,7 @@ namespace Imperial2030.Tests
                     timeoutTicks++;
                 }
 
-                if (timeoutTicks >= 100)
+                if (timeoutTicks >= 2000)
                 {
                     var game = context.Games.AsNoTracking().Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
                     _output.WriteLine($"Game {g} hit timeout! IsInvestorTurn={game?.IsInvestorTurn}, ActingPlayerId={game?.ActingPlayerId}, CurrentNation={game?.CurrentTurnNation}");

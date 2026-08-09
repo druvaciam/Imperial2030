@@ -9,5 +9,9 @@ namespace Imperial2030.Shared.Models
         public Nation? DefenderNation { get; set; }
         public UnitType? UnitType { get; set; }
         public UnitType? DefenderUnitType { get; set; }
+        public bool? IsHostileMove { get; set; }
+        public string? DefendersStr { get; set; }
+        public bool? IsResponse { get; set; }
+        public string? RespondingNationStr { get; set; }
     }
 }
