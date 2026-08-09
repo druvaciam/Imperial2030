@@ -850,7 +850,7 @@ namespace Imperial2030.Tests
 
                 var russianArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = "Moscow" };
                 var chineseArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.China, UnitType = UnitType.Army, TerritoryId = "Vladivostok", IsHostile = true };
-                
+
                 game.Units.Add(russianArmy);
                 game.Units.Add(chineseArmy);
                 context.Games.Add(game);
@@ -886,6 +886,53 @@ namespace Imperial2030.Tests
                 // It should NOT enter a PendingBattle phase awaiting a "peace" response.
                 Assert.Null(updatedGame.PendingBattleTerritoryId);
                 Assert.Empty(updatedGame.Units); // Both Russian and Chinese armies are destroyed
+            }
+        }
+
+        [Fact]
+        public async Task Max15Flags_FlagRemovedWithoutReplacement()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context);
+
+                // Setup 15 existing flags for Russia
+                for (int i = 0; i < 15; i++)
+                {
+                    context.TerritoryStates.Add(new TerritoryState
+                    {
+                        TerritoryId = $"T{i}",
+                        GameId = gameId,
+                        Controller = Nation.Russia
+                    });
+                }
+
+                // Territory controlled by Europe initially
+                var targetTerritoryId = "Colombia";
+                context.TerritoryStates.Add(new TerritoryState
+                {
+                    TerritoryId = targetTerritoryId,
+                    GameId = gameId,
+                    Controller = Nation.Europe
+                });
+
+                // Move 1 Russian army to this territory
+                var army1 = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = targetTerritoryId };
+                context.Units.Add(army1);
+
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+
+                // End maneuver phase triggers UpdateTerritoryControl
+                var result = await controller.NextPhase(gameId);
+
+                Assert.IsType<OkResult>(result);
+
+                var targetState = await context.TerritoryStates.FirstAsync(t => t.TerritoryId == targetTerritoryId);
+                // The old flag (Europe) should be removed, and no new flag (Russia) should be placed
+                Assert.Null(targetState.Controller);
             }
         }
     }

@@ -15,19 +15,16 @@
         <div class="col">
             <h1 class="display-4 text-white">Game Lobby</h1>
         </div>
-        <div class="col-auto">
+        <div class="col-auto d-flex gap-2">
+            <div class="input-group">
+                <span class="input-group-text bg-dark text-white border-secondary"><span class="oi oi-magnifying-glass"></span></span>
+                <input type="text" class="form-control" placeholder="Search Game Name" @bind="newGameName" @bind:event="oninput" />
+            </div>
             @if (!isGuest)
             {
-                <div class="input-group">
-                    <input type="text" class="form-control" placeholder="Search Game Name" @bind="newGameName" @bind:event="oninput" />
-                    <button class="btn btn-success" @onclick="ShowCreateGameModal">Create Game</button>
-                </div>
-            }
-            else
-            {
-                <div class="input-group">
-                    <input type="text" class="form-control" placeholder="Search Game Name" @bind="newGameName" @bind:event="oninput" />
-                </div>
+                <button class="btn btn-success text-nowrap" @onclick="ShowCreateGameModal">
+                    <span class="oi oi-plus me-1"></span>Create Game
+                </button>
             }
         </div>
     </div>

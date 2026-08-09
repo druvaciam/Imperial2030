@@ -4,6 +4,6 @@ namespace Imperial2030.Shared.Models
     {
         public string TerritoryId { get; set; } = string.Empty;
         public Nation? OldController { get; set; }
-        public Nation NewController { get; set; }
+        public Nation? NewController { get; set; }
     }
 }

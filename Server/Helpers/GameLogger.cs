@@ -59,7 +59,7 @@ public static class GameLogger
         LogAction(context, game, "", "Battle", respondingNation, playerName, new ActionMetadata { TerritoryId = territoryId, AggressorNation = aggressorNation, DefenderNation = respondingNation, UnitType = aggressorType, DefenderUnitType = responderType, IsResponse = true });
     }
 
-    public static void LogTerritoryControlChange(ApplicationDbContext? context, Game game, string territoryName, Nation? oldController, Nation newController, string playerName)
+    public static void LogTerritoryControlChange(ApplicationDbContext? context, Game game, string territoryName, Nation? oldController, Nation? newController, string playerName)
     {
         string territoryId = TerritoryData.AllTerritories.FirstOrDefault(t => t.Name == territoryName)?.Id ?? territoryName;
         LogAction(context, game, "", "FlagPlacement", newController, playerName, new FlagPlacementMetadata { TerritoryId = territoryId, OldController = oldController, NewController = newController });

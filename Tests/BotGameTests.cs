@@ -827,5 +827,73 @@ namespace Imperial2030.Tests
             Assert.NotNull(updatedTs);
             Assert.Equal(Nation.Europe, updatedTs.Controller);
         }
+
+        [Fact]
+        public async Task Max15Flags_Bot_FlagRemovedWithoutReplacement()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using var context = GetDbContext(dbName);
+
+            var gameId = Guid.NewGuid();
+            var userId = Guid.NewGuid().ToString();
+            var player = new Player { Id = Guid.NewGuid(), UserId = userId, IsHost = true };
+            var gameObj = new Game
+            {
+                Id = gameId,
+                Name = "Test Game",
+                Status = GameStatus.InProgress,
+                CurrentTurnNation = Nation.Russia,
+                Players = new List<Player> { player },
+                NationStates = new List<NationState>
+                {
+                    new NationState { Nation = Nation.Russia, ControllerId = player.Id }
+                }
+            };
+            context.Games.Add(gameObj);
+
+            for (int i = 0; i < 15; i++)
+            {
+                context.TerritoryStates.Add(new TerritoryState 
+                { 
+                    TerritoryId = $"T{i}", 
+                    GameId = gameId, 
+                    Controller = Nation.Russia 
+                });
+            }
+
+            var targetTerritoryId = "Colombia";
+            context.TerritoryStates.Add(new TerritoryState 
+            { 
+                TerritoryId = targetTerritoryId, 
+                GameId = gameId, 
+                Controller = Nation.Europe 
+            });
+
+            var army1 = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = targetTerritoryId };
+            context.Units.Add(army1);
+            await context.SaveChangesAsync();
+
+            var game = await context.Games
+                .Include(g => g.TerritoryStates)
+                .Include(g => g.Units)
+                .Include(g => g.NationStates)
+                .Include(g => g.Players)
+                .FirstAsync(g => g.Id == gameId);
+
+            var botService = new Imperial2030.Server.Services.BotService(
+                new Mock<IServiceScopeFactory>().Object, 
+                new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>().Object, 
+                new List<Imperial2030.Server.Services.Bots.IBotStrategy>(), 
+                new Mock<ILogger<Imperial2030.Server.Services.BotService>>().Object);
+
+            var methodInfo = typeof(Imperial2030.Server.Services.BotService).GetMethod("BotUpdateTerritoryControl", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var task = (Task)methodInfo!.Invoke(botService, new object[] { context, game, "Bot" })!;
+            await task;
+
+            var targetState = context.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == targetTerritoryId);
+            Assert.NotNull(targetState);
+            Assert.Null(targetState.Controller);
+            Assert.Equal(15, context.TerritoryStates.Count(ts => ts.Controller == Nation.Russia));
+        }
     }
 }
