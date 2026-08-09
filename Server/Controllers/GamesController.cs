@@ -59,7 +59,8 @@ public class GamesController : ControllerBase
                 JoinCode = g.Players.Any(p => p.UserId == currentUserId && p.IsHost) ? g.JoinCode : null,
                 UserIds = g.Players.Select(p => p.UserId).ToList(),
                 HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault(),
-                MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0
+                MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0,
+                WinnerName = g.WinnerName
             })
             .ToListAsync();
     }
@@ -98,6 +99,7 @@ public class GamesController : ControllerBase
             Status = game.Status,
             CreatedAt = game.CreatedAt,
             FinishedAt = game.FinishedAt,
+            WinnerName = game.WinnerName,
             PlayerCount = 1,
             MaxPlayers = game.MaxPlayers,
             IsPrivate = game.IsPrivate,
@@ -1753,6 +1755,9 @@ public class GamesController : ControllerBase
         {
             game.Status = GameStatus.Finished;
             game.FinishedAt = DateTime.UtcNow;
+
+            await game.SetWinnerNameAsync(_context);
+
             _context.Entry(game).State = EntityState.Modified;
             await _context.SaveChangesAsync();
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); // Notify update FIRST so clients see 25 Power

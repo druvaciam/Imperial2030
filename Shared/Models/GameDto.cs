@@ -19,4 +19,5 @@ public class GameDto
     public string? HostId { get; set; }
     public int MaxPower { get; set; }
     public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;
+    public string? WinnerName { get; set; }
 }

@@ -25,6 +25,9 @@ public class Game
     public DateTime? FinishedAt { get; set; }
     public Nation CurrentTurnNation { get; set; } = Nation.Russia;
     public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;
+    
+    [MaxLength(50)]
+    public string? WinnerName { get; set; }
 
     // Investor Logic
     public Guid? InvestorCardHolderId { get; set; }
