@@ -9,7 +9,9 @@ using Imperial2030.Shared.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Host.UseWindowsService();
+// Only register Windows Service hosting on Windows (skipped on Linux VPS deployments)
+if (OperatingSystem.IsWindows())
+    builder.Host.UseWindowsService();
 
 // Add services to the container.
 
@@ -73,7 +75,9 @@ builder.Services.AddAuthentication(options =>
             ValidateIssuerSigningKey = true,
             ValidIssuer = "Imperial2030Server",
             ValidAudience = "Imperial2030Client",
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("ThisIsASecretKeyForImperial2030GameOnly!"))
+            // JWT key can be overridden via config/env var (e.g. Jwt__Key on Linux VPS)
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(
+                builder.Configuration["Jwt:Key"] ?? "ThisIsASecretKeyForImperial2030GameOnly!"))
         };
         options.Events = new JwtBearerEvents
         {
