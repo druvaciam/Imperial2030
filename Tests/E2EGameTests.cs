@@ -8,19 +8,14 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using Xunit.Abstractions;
+using Imperial2030.Shared.Constants;
 
 namespace Imperial2030.Tests
 {
-    public class E2EGameTests : IClassFixture<CustomWebApplicationFactory<Program>>
+    public class E2EGameTests(CustomWebApplicationFactory<Program> factory, ITestOutputHelper output) : IClassFixture<CustomWebApplicationFactory<Program>>
     {
-        private readonly CustomWebApplicationFactory<Program> _factory;
-        private readonly ITestOutputHelper _output;
-
-        public E2EGameTests(CustomWebApplicationFactory<Program> factory, ITestOutputHelper output)
-        {
-            _factory = factory;
-            _output = output;
-        }
+        private readonly CustomWebApplicationFactory<Program> _factory = factory;
+        private readonly ITestOutputHelper _output = output;
 
         [Fact]
         public async Task TestFullGameViaUrls()
@@ -29,12 +24,21 @@ namespace Imperial2030.Tests
             var p1Id = Guid.NewGuid().ToString();
             var p2Id = Guid.NewGuid().ToString();
 
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                db.Users.Add(new ApplicationUser { Id = p1Id, UserName = "e2etest1", Email = "e2etest1@test.com" });
+                db.Users.Add(new ApplicationUser { Id = p2Id, UserName = "e2etest2", Email = "e2etest2@test.com" });
+                await db.SaveChangesAsync();
+            }
+
             // 1. Create Game as Player 1
             client.DefaultRequestHeaders.Add("X-Test-User", p1Id);
             var gameName = "E2E_Test_Game";
             var createReq = new { Name = gameName, IsVariantActive = true };
             var createRes = await client.PostAsJsonAsync("/api/games", createReq);
             createRes.EnsureSuccessStatusCode();
+
             var gameDto = await createRes.Content.ReadFromJsonAsync<GameDto>();
             var gameId = gameDto.Id;
 
@@ -133,7 +137,7 @@ namespace Imperial2030.Tests
                     int currentSlot = ns.RondelPosition ?? -1;
 
                     var validSlots = new List<int>();
-                    if (currentSlot == -1) validSlots.AddRange(new[] { 0, 1, 2, 3, 4, 5, 6, 7 });
+                    if (currentSlot == -1) validSlots.AddRange([0, 1, 2, 3, 4, 5, 6, 7]);
                     else
                     {
                         for (int i = 1; i <= 3; i++) validSlots.Add((currentSlot + i) % 8);
@@ -142,7 +146,7 @@ namespace Imperial2030.Tests
                     foreach (var slot in validSlots)
                     {
                         var score = strategy.ScoreRondelSlot(slot, game, ns, controller,
-                            game.TerritoryStates.Count(t => t.HasFactory && Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == currentNation),
+                            game.TerritoryStates.Count(t => t.HasFactory && TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == currentNation),
                             game.Units.Count(u => u.Nation == currentNation));
 
                         if (score > bestScore)
@@ -164,7 +168,7 @@ namespace Imperial2030.Tests
                         if (!ns.HasImportedThisTurn)
                         {
                             int maxImport = Math.Min(3, ns.Treasury);
-                            var homeTerritories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.Where(t => t.Nation == currentNation).ToList();
+                            var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == currentNation).ToList();
                             var imports = strategy.ChooseImports(game, ns, maxImport, homeTerritories);
 
                             if (imports.Count > 0)
@@ -195,7 +199,7 @@ namespace Imperial2030.Tests
                     {
                         if (!ns.HasBuiltThisTurn)
                         {
-                            var validCities = game.TerritoryStates.Where(t => !t.HasFactory && Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == currentNation).Select(t => new Territory { Id = t.TerritoryId, Name = t.TerritoryId }).ToList();
+                            var validCities = game.TerritoryStates.Where(t => !t.HasFactory && TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation == currentNation).Select(t => new Territory { Id = t.TerritoryId, Name = t.TerritoryId }).ToList();
                             var chosenCity = strategy.ChooseCityForFactory(game, currentNation, validCities);
                             var res = await client.PostAsync($"/api/games/{gameId}/build-factory/{chosenCity}", null);
                             res.EnsureSuccessStatusCode();
@@ -245,7 +249,7 @@ namespace Imperial2030.Tests
             Assert.NotNull(finalState.FinishedAt);
             Assert.True(finalState.CreatedAt < finalState.FinishedAt);
             Assert.False(string.IsNullOrEmpty(finalState.WinnerName));
-            Assert.Contains(finalState.WinnerName, new[] { p1Id.ToString(), p2Id.ToString() });
+            Assert.Contains(finalState.WinnerName, new[] { "e2etest1", "e2etest2" });
         }
     }
 }

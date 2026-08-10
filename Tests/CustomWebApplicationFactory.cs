@@ -43,7 +43,7 @@ namespace Imperial2030.Tests
 
                     db.Database.EnsureCreated();
                 }
-                
+
                 // Add mock authentication
                 services.AddAuthentication(options =>
                 {
@@ -52,7 +52,7 @@ namespace Imperial2030.Tests
                 })
                 .AddScheme<AuthenticationSchemeOptions, IntegrationTestAuthHandler>(
                     "Test", options => { });
-                        
+
                 // We don't remove other auth schemes because they might be registered,
                 // but setting default scheme to "Test" isn't strictly necessary if we use policies that don't hardcode schemes,
                 // however we will configure authorization globally to allow any authenticated user in the test.

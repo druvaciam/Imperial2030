@@ -5,7 +5,7 @@ namespace Imperial2030.Shared.Models;
 public class CreateGameRequest
 {
     [Required]
-    [MaxLength(50)]
+    [StringLength(50, ErrorMessage = "Game name cannot exceed 50 characters.")]
     public string Name { get; set; } = string.Empty;
 
     [Range(2, 6)]

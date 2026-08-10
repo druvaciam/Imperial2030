@@ -102,7 +102,11 @@
                                 Status: <span class="badge bg-@GetStatusColor(game.Status)">
                                     @if (game.Status == GameStatus.InProgress)
                                     {
-                                        @($"In Progress ({(int)(game.MaxPower / 25.0 * 100)}%)")
+                                        @($"In Progress ({(int)(game.MaxPower < 10 ? (game.TurnCount / 800.0 * 100.0) : (game.MaxPower / 25.0 * 100.0))}%)")
+                                    }
+                                    else if (game.Status == GameStatus.Finished && game.TurnCount > 0)
+                                    {
+                                        @($"Finished ({game.TurnCount} turns)")
                                     }
                                     else
                                     {
@@ -175,6 +179,10 @@
                     <button type="button" class="btn-close btn-close-white" @onclick="CloseCreateGameModal"></button>
                 </div>
                 <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(createErrorMessage))
+                    {
+                        <div class="alert alert-danger">@createErrorMessage</div>
+                    }
                     <div class="mb-3">
                         <label class="form-label">Game Name</label>
                         <input type="text" class="form-control" @bind="newGameRequest.Name" @bind:event="oninput" />
@@ -253,6 +261,7 @@
 
     private bool isCreateModalOpen = false;
     private CreateGameRequest newGameRequest = new CreateGameRequest();
+    private string createErrorMessage = string.Empty;
 
     private bool isJoinModalOpen = false;
     private GameDto? gameToJoin = null;
@@ -348,6 +357,7 @@
     private void ShowCreateGameModal()
     {
         newGameRequest = new CreateGameRequest { MaxPlayers = 6, IsPrivate = false, Name = "" };
+        createErrorMessage = string.Empty;
         isCreateModalOpen = true;
     }
 
@@ -359,6 +369,7 @@
     private async Task CreateGame()
     {
         if (string.IsNullOrWhiteSpace(newGameRequest.Name)) return;
+        createErrorMessage = string.Empty;
 
         var response = await Http.PostAsJsonAsync("api/games", newGameRequest);
         if (response.IsSuccessStatusCode)
@@ -368,6 +379,35 @@
             if (game != null)
             {
                 NavigationManager.NavigateTo($"/game/{game.Id}");
+            }
+        }
+        else
+        {
+            // Try to extract problem details if available, otherwise generic message
+            try 
+            {
+                var problemStr = await response.Content.ReadAsStringAsync();
+                var doc = System.Text.Json.JsonDocument.Parse(problemStr);
+                if (doc.RootElement.TryGetProperty("errors", out var errorsProp) && errorsProp.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    var errors = new List<string>();
+                    foreach (var error in errorsProp.EnumerateObject())
+                    {
+                        foreach (var msg in error.Value.EnumerateArray())
+                        {
+                            errors.Add(msg.GetString() ?? "");
+                        }
+                    }
+                    createErrorMessage = string.Join(" ", errors);
+                }
+                else
+                {
+                    createErrorMessage = "Failed to create game. Please check your inputs.";
+                }
+            }
+            catch
+            {
+                createErrorMessage = "Failed to create game. Please check your inputs.";
             }
         }
     }

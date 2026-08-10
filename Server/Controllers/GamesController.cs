@@ -60,6 +60,7 @@ public class GamesController : ControllerBase
                 UserIds = g.Players.Select(p => p.UserId).ToList(),
                 HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault(),
                 MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0,
+                TurnCount = g.TurnCount,
                 WinnerName = g.WinnerName
             })
             .ToListAsync();
@@ -104,6 +105,8 @@ public class GamesController : ControllerBase
             MaxPlayers = game.MaxPlayers,
             IsPrivate = game.IsPrivate,
             JoinCode = game.JoinCode,
+            MaxPower = game.NationStates.Any() ? game.NationStates.Max(ns => ns.Power) : 0,
+            TurnCount = game.TurnCount,
             VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
             UserIds = new List<string> { userId },
             HostId = userId
@@ -148,7 +151,7 @@ public class GamesController : ControllerBase
             IsHost = false
         };
         _context.Players.Add(player);
-        LogAction(game, "", "JoinGame");
+        GameLogger.LogJoinGame(_context, game, User.Identity?.Name ?? "System");
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -238,7 +241,7 @@ public class GamesController : ControllerBase
                 }
             }
 
-            LogAction(game, "", "LeaveGame");
+            GameLogger.LogLeaveGame(_context, game, User.Identity?.Name ?? "System");
             await _context.SaveChangesAsync();
         }
 
@@ -437,7 +440,7 @@ public class GamesController : ControllerBase
         return dto;
     }
 
-    private static readonly string[] BotNames = { "Bot Alpha", "Bot Bravo", "Bot Charlie", "Bot Delta", "Bot Echo" };
+    private static readonly string[] BotNames = { "Bot Alpha", "Bot Bravo", "Bot Charlie", "Bot Delta", "Bot Echo", "Bot Foxtrot" };
 
     [HttpGet("available-bots")]
     public IActionResult GetAvailableBots()
@@ -491,8 +494,16 @@ public class GamesController : ControllerBase
         if (host == null || !host.IsHost) return Forbid();
         if (game.Players.Count >= game.MaxPlayers) return BadRequest("Game is full.");
 
-        int botIndex = game.Players.Count(p => p.IsBot);
-        var botName = botIndex < BotNames.Length ? BotNames[botIndex] : $"Bot {botIndex + 1}";
+        var existingNames = game.Players.Where(p => p.IsBot).Select(p => p.BotName ?? "").ToList();
+        string botName = $"Bot {game.Players.Count + 1}";
+        foreach (var name in BotNames)
+        {
+            if (!existingNames.Any(en => en.StartsWith(name)))
+            {
+                botName = name;
+                break;
+            }
+        }
 
         var botTypes = GetAvailableBotTypes();
         var randomBotType = botTypes[Random.Shared.Next(botTypes.Count)];
@@ -846,7 +857,7 @@ public class GamesController : ControllerBase
             var startedGame = await _context.Games.FindAsync(gameId);
             if (startedGame != null)
             {
-                LogAction(startedGame, "", "StartGame");
+                GameLogger.LogStartGame(_context, startedGame, User.Identity?.Name ?? "System");
                 await _context.SaveChangesAsync();
             }
 
@@ -914,7 +925,7 @@ public class GamesController : ControllerBase
                     holder.Cash += bond.Interest;
                     if (context != null) context.Entry(holder).State = EntityState.Modified;
                     var holderName = holder.GetPlayerName(context);
-                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
+                    GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, bond.Interest, holderName);
                 }
 
                 // Pay Controller
@@ -922,18 +933,18 @@ public class GamesController : ControllerBase
                 {
                     nationState.Treasury -= owedToController;
                     controller.Cash += owedToController;
-                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {owedToController}M interest to {controllerName}" });
+                    GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, owedToController, controllerName);
                 }
                 else if (nationState.Treasury > 0 && owedToController > 0)
                 {
                     // Partial payment to controller
                     controller.Cash += nationState.Treasury;
-                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {nationState.Treasury}M interest to {controllerName}" });
+                    GameLogger.LogInvestorInterestPartial(context, game, nationState.Nation, controllerName, nationState.Treasury, owedToController, controllerName);
                     nationState.Treasury = 0;
                 }
                 else if (owedToController > 0)
                 {
-                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay interest to {controllerName} (treasury empty)" });
+                    GameLogger.LogInvestorUnableToPay(context, game, nationState.Nation, controllerName, owedToController, controllerName, true, true);
                 }
             }
             else
@@ -949,7 +960,7 @@ public class GamesController : ControllerBase
                 controller.Cash -= paymentFromController;
                 if (paymentFromController > 0)
                 {
-                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"personally contributed {paymentFromController}M to cover interest deficit" });
+                    GameLogger.LogInvestorPersonallyContributed(context, game, nationState.Nation, controllerName, paymentFromController);
                 }
 
                 // Total funds available for others
@@ -965,7 +976,7 @@ public class GamesController : ControllerBase
                         holder.Cash += bond.Interest;
                         if (context != null) context.Entry(holder).State = EntityState.Modified;
                         var holderName = holder.GetPlayerName(context);
-                        if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
+                        GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, bond.Interest, holderName);
                     }
                 }
                 else
@@ -982,7 +993,7 @@ public class GamesController : ControllerBase
                             holder.Cash += bond.Interest;
                             if (context != null) context.Entry(holder).State = EntityState.Modified;
                             var holderName = holder.GetPlayerName(context);
-                            if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid {bond.Interest}M interest to {holderName}" });
+                            GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, bond.Interest, holderName);
                             remainingFunds -= bond.Interest;
                         }
                         else
@@ -994,7 +1005,7 @@ public class GamesController : ControllerBase
                                 holder.Cash += remainingFunds;
                                 if (context != null) context.Entry(holder).State = EntityState.Modified;
                                 var holderName = holder.GetPlayerName(context);
-                                if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"paid partial {remainingFunds}M interest to {holderName} (insufficient funds for full {bond.Interest}M)" });
+                                GameLogger.LogInvestorInterestPartial(context, game, nationState.Nation, controllerName, remainingFunds, bond.Interest, holderName);
                                 remainingFunds = 0;
                             }
                             else
@@ -1002,7 +1013,7 @@ public class GamesController : ControllerBase
                                 // No funds left at all
                                 var holder = game.Players.First(p => p.Id == bond.HolderId);
                                 var holderName = holder.GetPlayerName(context);
-                                if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay {bond.Interest}M interest to {holderName} (insufficient funds)" });
+                                GameLogger.LogInvestorUnableToPay(context, game, nationState.Nation, controllerName, bond.Interest, holderName, false, holderName == controllerName);
                             }
                         }
                     }
@@ -1014,7 +1025,7 @@ public class GamesController : ControllerBase
 
                 if (owedToController > 0)
                 {
-                    if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = controllerName, Nation = nationState.Nation, ActionType = "Investor", Message = $"unable to pay interest to {controllerName} (treasury empty)" });
+                    GameLogger.LogInvestorUnableToPay(context, game, nationState.Nation, controllerName, owedToController, controllerName, true, true);
                 }
             }
         }
@@ -1029,7 +1040,7 @@ public class GamesController : ControllerBase
                 investor.Cash += 2;
                 if (context != null) context.Entry(investor).State = EntityState.Modified;
                 var investorName = investor.GetPlayerName(context);
-                if (context != null) context.GameActions.Add(new GameAction { GameId = game.Id, Timestamp = DateTime.UtcNow, PlayerName = investorName, ActionType = "InvestorBonus", Message = "received 2M Investor bonus" });
+                GameLogger.LogInvestorBonus(context, game, investorName, 2);
             }
         }
 
@@ -1693,7 +1704,7 @@ public class GamesController : ControllerBase
 
         _context.Entry(game).State = EntityState.Modified;
 
-        LogAction(game, "", "EndTurn", nation);
+        GameLogger.LogEndTurn(_context, game, nation, User.Identity?.Name ?? "System");
         await _context.SaveChangesAsync();
 
         await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
@@ -1882,10 +1893,7 @@ public class GamesController : ControllerBase
         return Ok();
     }
 
-    private void LogAction(Game game, string message, string type, Nation? nation = null)
-    {
-        GameLogger.LogAction(_context, game, message, type, nation, User.Identity?.Name ?? "System");
-    }
+
 
     [HttpPost("{gameId}/swissbank-response")]
     public async Task<IActionResult> SwissBankResponse(Guid gameId, [FromBody] SwissBankResponseRequest request)

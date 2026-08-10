@@ -119,6 +119,15 @@ public class BotService
                         try
                         {
                             if (!SkipDelays) await Task.Delay(BotDelayMs); // add some delay before bot responds
+
+                            game = await ReloadGameAsync(ctx, game);
+                            if (game == null) break;
+
+                            botResponders = game.PendingSwissBankResponders
+                                .Select(id => game.Players.FirstOrDefault(p => p.Id == id))
+                                .Where(p => p != null && p.IsBot)
+                                .ToList()!;
+
                             await HandleBotSwissBankResponse(ctx, game, botResponders);
                             botActed = true;
                         }
@@ -329,7 +338,7 @@ public class BotService
             // Advance turn
             game.AdvanceTurn();
 
-            GameLogger.LogAction(ctx, game, "", "EndTurn", nation, controller.BotName ?? "Bot");
+            GameLogger.LogEndTurn(ctx, game, nation, controller.BotName ?? "Bot");
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
         }
@@ -598,6 +607,7 @@ public class BotService
                 var originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == fleet.TerritoryId)?.Name ?? fleet.TerritoryId;
                 var targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target)?.Name ?? target;
 
+                var originalTerritoryId = fleet.TerritoryId;
                 fleet.TerritoryId = target;
                 fleet.HasMoved = true;
                 fleet.IsHostile = isHostileMove;
@@ -621,7 +631,7 @@ public class BotService
 
                             if (enemyFleet != null)
                             {
-                                GameLogger.LogUnitMove(ctx, game, fleet.UnitType, fleet.TerritoryId, target, true, nation, controller.BotName ?? "Bot");
+                                GameLogger.LogUnitMove(ctx, game, fleet.UnitType, originalTerritoryId, target, true, nation, controller.BotName ?? "Bot");
                                 RemoveUnit(ctx, game, fleet);
                                 RemoveUnit(ctx, game, enemyFleet);
                                 GameLogger.LogBattleDestruction(ctx, game, fleet.UnitType, targetNation, enemyFleet.UnitType, target, nation, controller.BotName ?? "Bot");
@@ -636,8 +646,7 @@ public class BotService
                             game.PendingBattleAggressorNation = nation;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
-                            string peaceOrHostile = isHostileMove ? "hostilely" : "peacefully";
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, fleet.TerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, originalTerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -647,7 +656,7 @@ public class BotService
                     }
                 }
 
-                GameLogger.LogUnitMove(ctx, game, UnitType.Fleet, fleet.TerritoryId, target, isHostileMove, nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Fleet, originalTerritoryId, target, isHostileMove, nation, controller.BotName ?? "Bot");
                 await BotUnitActionDelay(ctx, game);
             }
         }
@@ -743,6 +752,7 @@ public class BotService
                 var originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == army.TerritoryId)?.Name ?? army.TerritoryId;
                 var targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best)?.Name ?? best;
 
+                var originalTerritoryId = army.TerritoryId;
                 army.TerritoryId = best;
                 army.HasMoved = true;
                 army.IsHostile = isHostileMove;
@@ -774,7 +784,7 @@ public class BotService
 
                             if (enemyUnit != null)
                             {
-                                GameLogger.LogUnitMove(ctx, game, army.UnitType, army.TerritoryId, best, true, nation, controller.BotName ?? "Bot");
+                                GameLogger.LogUnitMove(ctx, game, army.UnitType, originalTerritoryId, best, true, nation, controller.BotName ?? "Bot");
                                 RemoveUnit(ctx, game, army);
                                 RemoveUnit(ctx, game, enemyUnit);
                                 GameLogger.LogBattleDestruction(ctx, game, army.UnitType, targetNation, enemyUnit.UnitType, best, nation, controller.BotName ?? "Bot");
@@ -789,8 +799,7 @@ public class BotService
                             game.PendingBattleAggressorNation = nation;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
-                            string peaceOrHostile = isHostileMove ? "hostilely" : "peacefully";
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, army.TerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -800,7 +809,7 @@ public class BotService
                     }
                 }
 
-                GameLogger.LogUnitMove(ctx, game, UnitType.Army, army.TerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Army, originalTerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot");
                 await BotUnitActionDelay(ctx, game);
             }
         }
@@ -1060,14 +1069,14 @@ public class BotService
             }
 
             GameLogger.LogInvestmentBuy(
-                ctx, 
-                game, 
-                bondToBuy.Nation, 
-                bondToBuy.Cost, 
-                botName, 
-                newControllerName, 
-                oldControllerName, 
-                isSwissBankKicked, 
+                ctx,
+                game,
+                bondToBuy.Nation,
+                bondToBuy.Cost,
+                botName,
+                newControllerName,
+                oldControllerName,
+                isSwissBankKicked,
                 null);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", toastMsg, false);
         }
@@ -1273,26 +1282,35 @@ public class BotService
 
     private void AddUnit(ApplicationDbContext? ctx, Game game, Unit unit)
     {
+        // Add to the in-memory collection (necessary when operating on a disconnected game state like in RL training)
         game.Units.Add(unit);
-        if (ctx != null) ctx.Entry(unit).State = Microsoft.EntityFrameworkCore.EntityState.Added;
+        
+        // Explicitly notify EF Core to track this as a new entity. 
+        // Using ctx.Add() is the consistent best practice in EF Core over manually setting the EntityState.
+        if (ctx != null) ctx.Add(unit);
     }
 
     private void RemoveUnit(ApplicationDbContext? ctx, Game game, Unit unit)
     {
+        // Remove from the in-memory collection
         game.Units.Remove(unit);
-        if (ctx != null) ctx.Units.Remove(unit);
+        
+        // Explicitly notify EF Core to mark this entity for deletion from the database.
+        // Simply removing it from game.Units might just orphan the record (setting foreign key to null)
+        // depending on cascade settings, so ctx.Remove() safely ensures it is actually deleted.
+        if (ctx != null) ctx.Remove(unit);
     }
 
     private void AddTerritoryState(ApplicationDbContext? ctx, Game game, TerritoryState ts)
     {
         game.TerritoryStates.Add(ts);
-        if (ctx != null) ctx.Entry(ts).State = Microsoft.EntityFrameworkCore.EntityState.Added;
+        if (ctx != null) ctx.Add(ts);
     }
 
     private void RemoveTerritoryState(ApplicationDbContext? ctx, Game game, TerritoryState ts)
     {
         game.TerritoryStates.Remove(ts);
-        if (ctx != null) ctx.TerritoryStates.Remove(ts);
+        if (ctx != null) ctx.Remove(ts);
     }
 
     private async Task SaveChangesAsync(ApplicationDbContext? ctx)
@@ -1304,6 +1322,7 @@ public class BotService
     {
         if (ctx == null) return game;
         if (game == null) return null;
+        ctx.ChangeTracker.Clear();
         var reloaded = await LoadGame(ctx, game.Id);
         return reloaded ?? game;
     }
