@@ -119,6 +119,15 @@ public class BotService
                         try
                         {
                             if (!SkipDelays) await Task.Delay(BotDelayMs); // add some delay before bot responds
+
+                            game = await ReloadGameAsync(ctx, game);
+                            if (game == null) break;
+
+                            botResponders = game.PendingSwissBankResponders
+                                .Select(id => game.Players.FirstOrDefault(p => p.Id == id))
+                                .Where(p => p != null && p.IsBot)
+                                .ToList()!;
+
                             await HandleBotSwissBankResponse(ctx, game, botResponders);
                             botActed = true;
                         }
@@ -1273,26 +1282,35 @@ public class BotService
 
     private void AddUnit(ApplicationDbContext? ctx, Game game, Unit unit)
     {
+        // Add to the in-memory collection (necessary when operating on a disconnected game state like in RL training)
         game.Units.Add(unit);
-        if (ctx != null) ctx.Entry(unit).State = Microsoft.EntityFrameworkCore.EntityState.Added;
+        
+        // Explicitly notify EF Core to track this as a new entity. 
+        // Using ctx.Add() is the consistent best practice in EF Core over manually setting the EntityState.
+        if (ctx != null) ctx.Add(unit);
     }
 
     private void RemoveUnit(ApplicationDbContext? ctx, Game game, Unit unit)
     {
+        // Remove from the in-memory collection
         game.Units.Remove(unit);
-        if (ctx != null) ctx.Units.Remove(unit);
+        
+        // Explicitly notify EF Core to mark this entity for deletion from the database.
+        // Simply removing it from game.Units might just orphan the record (setting foreign key to null)
+        // depending on cascade settings, so ctx.Remove() safely ensures it is actually deleted.
+        if (ctx != null) ctx.Remove(unit);
     }
 
     private void AddTerritoryState(ApplicationDbContext? ctx, Game game, TerritoryState ts)
     {
         game.TerritoryStates.Add(ts);
-        if (ctx != null) ctx.Entry(ts).State = Microsoft.EntityFrameworkCore.EntityState.Added;
+        if (ctx != null) ctx.Add(ts);
     }
 
     private void RemoveTerritoryState(ApplicationDbContext? ctx, Game game, TerritoryState ts)
     {
         game.TerritoryStates.Remove(ts);
-        if (ctx != null) ctx.TerritoryStates.Remove(ts);
+        if (ctx != null) ctx.Remove(ts);
     }
 
     private async Task SaveChangesAsync(ApplicationDbContext? ctx)
@@ -1304,6 +1322,7 @@ public class BotService
     {
         if (ctx == null) return game;
         if (game == null) return null;
+        ctx.ChangeTracker.Clear();
         var reloaded = await LoadGame(ctx, game.Id);
         return reloaded ?? game;
     }

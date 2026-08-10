@@ -29,12 +29,24 @@ namespace Imperial2030.Tests
             var p1Id = Guid.NewGuid().ToString();
             var p2Id = Guid.NewGuid().ToString();
 
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                db.Users.Add(new ApplicationUser { Id = p1Id, UserName = "e2etest1", Email = "e2etest1@test.com" });
+                db.Users.Add(new ApplicationUser { Id = p2Id, UserName = "e2etest2", Email = "e2etest2@test.com" });
+                await db.SaveChangesAsync();
+            }
+
             // 1. Create Game as Player 1
             client.DefaultRequestHeaders.Add("X-Test-User", p1Id);
             var gameName = "E2E_Test_Game";
             var createReq = new { Name = gameName, IsVariantActive = true };
             var createRes = await client.PostAsJsonAsync("/api/games", createReq);
-            createRes.EnsureSuccessStatusCode();
+            if (!createRes.IsSuccessStatusCode)
+            {
+                var error = await createRes.Content.ReadAsStringAsync();
+                throw new Exception($"CreateGame failed: {createRes.StatusCode} - {error}");
+            }
             var gameDto = await createRes.Content.ReadFromJsonAsync<GameDto>();
             var gameId = gameDto.Id;
 
@@ -245,7 +257,7 @@ namespace Imperial2030.Tests
             Assert.NotNull(finalState.FinishedAt);
             Assert.True(finalState.CreatedAt < finalState.FinishedAt);
             Assert.False(string.IsNullOrEmpty(finalState.WinnerName));
-            Assert.Contains(finalState.WinnerName, new[] { p1Id.ToString(), p2Id.ToString() });
+            Assert.Contains(finalState.WinnerName, new[] { "e2etest1", "e2etest2" });
         }
     }
 }
