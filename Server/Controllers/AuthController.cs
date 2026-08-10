@@ -15,11 +15,13 @@ public class AuthController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
+    private readonly string _jwtKey;
 
-    public AuthController(UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager)
+    public AuthController(UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager, IConfiguration configuration)
     {
         _userManager = userManager;
         _signInManager = signInManager;
+        _jwtKey = configuration["Jwt:Key"] ?? "ThisIsASecretKeyForImperial2030GameOnly!";
     }
 
     [HttpPost("register")]
@@ -68,7 +70,7 @@ public class AuthController : ControllerBase
             new Claim(ClaimTypes.Role, "Guest")
         };
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("ThisIsASecretKeyForImperial2030GameOnly!"));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var token = new JwtSecurityToken(
@@ -93,7 +95,7 @@ public class AuthController : ControllerBase
             new Claim(ClaimTypes.Name, user.UserName ?? "")
         };
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("ThisIsASecretKeyForImperial2030GameOnly!"));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var token = new JwtSecurityToken(
