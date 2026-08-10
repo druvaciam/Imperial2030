@@ -426,8 +426,10 @@ public class TcpTrainingServer : BackgroundService
         if (game == null) return null;
 
         var player = game.Players.First(p => p.Id == session.RLPlayerId);
+        string rlPlayerName = player.BotName ?? "Bot";
 
         float prevVP = CalculateRelativeVP(game, session.RLPlayerId);
+        int preActionCount = game.Actions.Count;
 
         // Snapshot pre-turn state to detect wasted actions
         var preNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
@@ -780,6 +782,33 @@ public class TcpTrainingServer : BackgroundService
             }
         }
 
+        // Apply Investor penalties based on recorded actions
+        for (int i = preActionCount; i < game.Actions.Count; i++)
+        {
+            var action = game.Actions.ElementAt(i);
+            if (action.ActionType == "Investor" && action.PlayerName == rlPlayerName && !string.IsNullOrEmpty(action.Metadata))
+            {
+                try
+                {
+                    var meta = System.Text.Json.JsonSerializer.Deserialize<Imperial2030.Shared.Models.InvestorMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (meta != null)
+                    {
+                        if (meta.PersonalContribution > 0)
+                        {
+                            explicitBonusReward -= 40.0f; // Heavy penalty for paying out of pocket
+                            _logger.LogWarning($"[RL PENALTY] {rlPlayerName} personally contributed {meta.PersonalContribution}M to interest. Penalty: -40");
+                        }
+                        if (meta.MissedInterest == true)
+                        {
+                            explicitBonusReward -= 20.0f; // Heavy penalty for missing own interest
+                            _logger.LogWarning($"[RL PENALTY] {rlPlayerName} missed interest payment due to empty treasury. Penalty: -30");
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
         // Continuous reward for leading the game (or penalty for trailing)
         // This gives the agent a dense gradient to always try and increase its relative score, even if it's currently losing
         reward += newVP * 0.05f;
@@ -795,6 +824,14 @@ public class TcpTrainingServer : BackgroundService
             {
                 int pf = preNs.Power / 5;
                 moveCost = (dist - 3) * (1 + pf);
+            }
+
+            // Heavy penalty for paying for a long move to first Prod/Man when the second one was closer
+            if (dist >= 5 && (targetSlot == 2 || targetSlot == 3))
+            {
+                string targetName = targetSlot == 2 ? "Production" : "Maneuver";
+                _logger.LogWarning($"[RL PENALTY] {preNs?.Nation} paid for long move ({dist} steps) to {targetName} 1, skipping a closer {targetName} 2. Cost: {moveCost}M");
+                reward -= 40.0f; // Heavy penalty
             }
 
             // Factory (slot 1) wasted: not enough treasury OR no valid cities to build in
@@ -1369,10 +1406,11 @@ public class TcpTrainingServer : BackgroundService
 
                         if (unitType == UnitType.Fleet)
                         {
-                            validNeighbors = validNeighbors.Where(n => {
+                            validNeighbors = validNeighbors.Where(n =>
+                            {
                                 if (!TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)) return false;
-                                
-                                var canal = MapConnectivity.CanalLinks.FirstOrDefault(c => 
+
+                                var canal = MapConnectivity.CanalLinks.FirstOrDefault(c =>
                                     (c.Region1 == selectedUnit.TerritoryId && c.Region2 == n) ||
                                     (c.Region1 == n && c.Region2 == selectedUnit.TerritoryId));
 

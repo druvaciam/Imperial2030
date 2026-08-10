@@ -18,6 +18,7 @@ public class GameDto
     public List<string> UserIds { get; set; } = [];
     public string? HostId { get; set; }
     public int MaxPower { get; set; }
+    public int TurnCount { get; set; }
     public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;
     public string? WinnerName { get; set; }
 }

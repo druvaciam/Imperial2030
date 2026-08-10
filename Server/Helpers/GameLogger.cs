@@ -8,14 +8,14 @@ namespace Imperial2030.Server.Helpers;
 
 public static class GameLogger
 {
-    public static void LogAction(ApplicationDbContext? context, Game game, string message, string type, Nation? nation, string playerName, object? metadata = null)
+    private static void LogAction(ApplicationDbContext? context, Game game, string type, Nation? nation, string playerName, object? metadata = null)
     {
         var action = new GameAction
         {
             GameId = game.Id,
             Timestamp = DateTime.UtcNow,
             PlayerName = playerName,
-            Message = message,
+            Message = string.Empty,
             ActionType = type,
             Nation = nation,
             Metadata = metadata != null ? System.Text.Json.JsonSerializer.Serialize(metadata) : string.Empty
@@ -29,78 +29,102 @@ public static class GameLogger
 
     public static void LogRondelMove(ApplicationDbContext? context, Game game, int targetSlot, int? currentSlot, int cost, Nation nation, string playerName)
     {
-        LogAction(context, game, "", "Move", nation, playerName, new RondelMoveMetadata { TargetSlot = targetSlot, CurrentSlot = currentSlot, Cost = cost });
+        LogAction(context, game, "Move", nation, playerName, new RondelMoveMetadata { TargetSlot = targetSlot, CurrentSlot = currentSlot, Cost = cost });
     }
 
     public static void LogUnitMove(ApplicationDbContext? context, Game game, UnitType unitType, string originId, string targetId, bool isHostileMove, Nation nation, string playerName)
     {
         string actionType = unitType == UnitType.Fleet ? "MoveFleet" : "MoveArmy";
-        LogAction(context, game, "", actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove });
+        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove });
     }
 
     public static void LogUnitStay(ApplicationDbContext? context, Game game, UnitType unitType, string territoryId, Nation nation, string playerName)
     {
         string actionType = unitType == UnitType.Fleet ? "MoveFleet" : "MoveArmy";
-        LogAction(context, game, "", actionType, nation, playerName, new ActionMetadata { FromTerritoryId = territoryId, ToTerritoryId = territoryId });
+        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = territoryId, ToTerritoryId = territoryId });
     }
     public static void LogUnitMoveAwaitingResponse(ApplicationDbContext? context, Game game, UnitType unitType, string originId, string targetId, bool isHostileMove, string defendersStr, Nation nation, string playerName)
     {
         string actionType = unitType == UnitType.Fleet ? "MoveFleet" : "MoveArmy";
-        LogAction(context, game, "", actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove, DefendersStr = defendersStr });
+        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove, DefendersStr = defendersStr });
     }
 
     public static void LogBattleDestruction(ApplicationDbContext? context, Game game, UnitType attackerType, Nation targetNation, UnitType defenderType, string territoryId, Nation nation, string playerName)
     {
-        LogAction(context, game, "", "Battle", nation, playerName, new ActionMetadata { TerritoryId = territoryId, AggressorNation = nation, DefenderNation = targetNation, UnitType = attackerType, DefenderUnitType = defenderType, IsResponse = false });
+        LogAction(context, game, "Battle", nation, playerName, new ActionMetadata { TerritoryId = territoryId, AggressorNation = nation, DefenderNation = targetNation, UnitType = attackerType, DefenderUnitType = defenderType, IsResponse = false });
     }
 
     public static void LogBattleResponseDestruction(ApplicationDbContext? context, Game game, Nation respondingNation, UnitType responderType, Nation aggressorNation, UnitType aggressorType, string territoryId, string playerName)
     {
-        LogAction(context, game, "", "Battle", respondingNation, playerName, new ActionMetadata { TerritoryId = territoryId, AggressorNation = aggressorNation, DefenderNation = respondingNation, UnitType = aggressorType, DefenderUnitType = responderType, IsResponse = true });
+        LogAction(context, game, "Battle", respondingNation, playerName, new ActionMetadata { TerritoryId = territoryId, AggressorNation = aggressorNation, DefenderNation = respondingNation, UnitType = aggressorType, DefenderUnitType = responderType, IsResponse = true });
     }
 
     public static void LogTerritoryControlChange(ApplicationDbContext? context, Game game, string territoryName, Nation? oldController, Nation? newController, string playerName)
     {
         string territoryId = TerritoryData.AllTerritories.FirstOrDefault(t => t.Name == territoryName)?.Id ?? territoryName;
-        LogAction(context, game, "", "FlagPlacement", newController, playerName, new FlagPlacementMetadata { TerritoryId = territoryId, OldController = oldController, NewController = newController });
+        Nation? affectedNation = newController ?? oldController;
+        string actualPlayerName = playerName;
+
+        if (affectedNation.HasValue)
+        {
+            var controllerId = game.NationStates.FirstOrDefault(ns => ns.Nation == affectedNation.Value)?.ControllerId;
+            var controller = game.Players.FirstOrDefault(p => p.Id == controllerId);
+            if (controller != null)
+            {
+                if (controller.IsBot)
+                {
+                    actualPlayerName = controller.BotName ?? "Bot";
+                }
+                else if (context != null)
+                {
+                    var user = context.Users.FirstOrDefault(u => u.Id == controller.UserId);
+                    if (user != null && !string.IsNullOrEmpty(user.UserName))
+                    {
+                        actualPlayerName = user.UserName;
+                    }
+                }
+            }
+        }
+
+        LogAction(context, game, "FlagPlacement", newController, actualPlayerName, new FlagPlacementMetadata { TerritoryId = territoryId, OldController = oldController, NewController = newController });
     }
 
     public static void LogFactoryBuild(ApplicationDbContext? context, Game game, string cityName, Nation nation, string playerName)
     {
         string territoryId = TerritoryData.AllTerritories.FirstOrDefault(t => t.Name == cityName)?.Id ?? cityName;
-        LogAction(context, game, "", "Factory", nation, playerName, new ActionMetadata { TerritoryId = territoryId });
+        LogAction(context, game, "Factory", nation, playerName, new ActionMetadata { TerritoryId = territoryId });
     }
 
     public static void LogFactoryDestruction(ApplicationDbContext? context, Game game, string territoryId, Nation nation, string playerName)
     {
-        LogAction(context, game, "", "DestroyFactory", nation, playerName, new ActionMetadata { TerritoryId = territoryId });
+        LogAction(context, game, "DestroyFactory", nation, playerName, new ActionMetadata { TerritoryId = territoryId });
     }
 
     public static void LogSwissBankForceStop(ApplicationDbContext? context, Game game, Nation nation, string playerName)
     {
-        LogAction(context, game, "", "SwissBankResponse", nation, playerName, new SwissBankResponseMetadata { IsForceStop = true, Nation = nation });
+        LogAction(context, game, "SwissBankResponse", nation, playerName, new SwissBankResponseMetadata { IsForceStop = true, Nation = nation });
     }
 
     public static void LogSwissBankPass(ApplicationDbContext? context, Game game, Nation nation, string playerName)
     {
-        LogAction(context, game, "", "SwissBankResponse", nation, playerName, new SwissBankResponseMetadata { IsForceStop = false, Nation = nation });
+        LogAction(context, game, "SwissBankResponse", nation, playerName, new SwissBankResponseMetadata { IsForceStop = false, Nation = nation });
     }
 
     public static void LogBattleResponsePeace(ApplicationDbContext? context, Game game, Nation respondingNation, Nation aggressorNation, string territoryName, string playerName)
     {
         string territoryId = TerritoryData.AllTerritories.FirstOrDefault(t => t.Name == territoryName)?.Id ?? territoryName;
-        LogAction(context, game, "", "BattleResponse", respondingNation, playerName, new ActionMetadata { TerritoryId = territoryId, RespondingNationStr = respondingNation.ToString(), AggressorNation = aggressorNation });
+        LogAction(context, game, "BattleResponse", respondingNation, playerName, new ActionMetadata { TerritoryId = territoryId, RespondingNationStr = respondingNation.ToString(), AggressorNation = aggressorNation });
     }
 
     public static void LogAllPartiesPeace(ApplicationDbContext? context, Game game, string territoryId, string playerName)
     {
-        LogAction(context, game, "", "AllPartiesPeace", null, playerName, new ActionMetadata { TerritoryId = territoryId });
+        LogAction(context, game, "AllPartiesPeace", null, playerName, new ActionMetadata { TerritoryId = territoryId });
     }
 
     public static void LogHostilityToggle(ApplicationDbContext? context, Game game, UnitType unitType, string territoryName, bool isHostile, Nation nation, string playerName)
     {
         string territoryId = TerritoryData.AllTerritories.FirstOrDefault(t => t.Name == territoryName)?.Id ?? territoryName;
-        LogAction(context, game, "", "ToggleHostility", nation, playerName, new HostilityMetadata { UnitType = unitType, TerritoryId = territoryId, IsHostile = isHostile });
+        LogAction(context, game, "ToggleHostility", nation, playerName, new HostilityMetadata { UnitType = unitType, TerritoryId = territoryId, IsHostile = isHostile });
     }
 
     public static void LogInvestmentBuy(ApplicationDbContext? context, Game game, Nation nation, int cost, string playerName, string? newControllerName = null, string? oldControllerName = null, bool isSwissBankKicked = false, int? tradeInCost = null)
@@ -114,12 +138,12 @@ public static class GameLogger
             Cost = cost,
             TradeInCost = tradeInCost
         };
-        LogAction(context, game, "", "Investment", null, playerName, metadata);
+        LogAction(context, game, "Investment", null, playerName, metadata);
     }
 
     public static void LogInvestmentPass(ApplicationDbContext? context, Game game, string playerName)
     {
-        LogAction(context, game, "", "Investment", null, playerName);
+        LogAction(context, game, "Investment", null, playerName);
     }
 
     public static void LogTaxation(ApplicationDbContext? context, Game game, int totalRevenue, int soldiersPay, int treasuryGain, int bonus, int powerGain, Nation nation, string playerName)
@@ -132,7 +156,7 @@ public static class GameLogger
             Bonus = bonus,
             PowerGain = powerGain
         };
-        LogAction(context, game, "", "Taxation", nation, playerName, metadata);
+        LogAction(context, game, "Taxation", nation, playerName, metadata);
     }
 
     public static void LogImport(ApplicationDbContext? context, Game game, int importedCount, IEnumerable<(UnitType UnitType, string TerritoryId)> units, Nation nation, string playerName)
@@ -147,25 +171,25 @@ public static class GameLogger
                 TerritoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == u.TerritoryId)?.Name ?? u.TerritoryId
             }).ToList()
         };
-        LogAction(context, game, "", "Import", nation, playerName, metadata);
+        LogAction(context, game, "Import", nation, playerName, metadata);
     }
 
     public static void LogAutoSkipManeuverPhase(ApplicationDbContext? context, Game game, string phaseName, Nation nation, string playerName)
     {
         var metadata = new PhaseMetadata { PhaseName = phaseName };
-        LogAction(context, game, "", "AutoSkipPhase", nation, playerName, metadata);
+        LogAction(context, game, "AutoSkipPhase", nation, playerName, metadata);
     }
 
     public static void LogAutoEndManeuverPhase(ApplicationDbContext? context, Game game, string phaseName, Nation nation, string playerName)
     {
         var metadata = new PhaseMetadata { PhaseName = phaseName };
-        LogAction(context, game, "", "AutoEndPhase", nation, playerName, metadata);
+        LogAction(context, game, "AutoEndPhase", nation, playerName, metadata);
     }
 
     public static void LogEndManeuverPhase(ApplicationDbContext? context, Game game, string phaseName, Nation nation, string playerName)
     {
         var metadata = new PhaseMetadata { PhaseName = phaseName };
-        LogAction(context, game, "", "EndPhase", nation, playerName, metadata);
+        LogAction(context, game, "EndPhase", nation, playerName, metadata);
     }
 
     public static void LogProduction(ApplicationDbContext? context, Game game, int producedCount, IEnumerable<(UnitType UnitType, string TerritoryId)> units, Nation nation, string playerName)
@@ -180,6 +204,51 @@ public static class GameLogger
                 TerritoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == u.TerritoryId)?.Name ?? u.TerritoryId
             }).ToList()
         };
-        LogAction(context, game, "", "Production", nation, playerName, metadata);
+        LogAction(context, game, "Production", nation, playerName, metadata);
+    }
+
+    public static void LogInvestorInterestPaid(ApplicationDbContext? context, Game game, Nation nation, string controllerName, int paidAmount, string payeeName)
+    {
+        LogAction(context, game, "Investor", nation, controllerName, new InvestorMetadata { Type = "InterestPaid", PaidAmount = paidAmount, PayeeName = payeeName });
+    }
+
+    public static void LogInvestorInterestPartial(ApplicationDbContext? context, Game game, Nation nation, string controllerName, int paidAmount, int expectedAmount, string payeeName)
+    {
+        LogAction(context, game, "Investor", nation, controllerName, new InvestorMetadata { Type = "InterestPartial", PaidAmount = paidAmount, ExpectedAmount = expectedAmount, PayeeName = payeeName });
+    }
+
+    public static void LogInvestorUnableToPay(ApplicationDbContext? context, Game game, Nation nation, string controllerName, int expectedAmount, string payeeName, bool treasuryEmpty, bool missedInterest)
+    {
+        LogAction(context, game, "Investor", nation, controllerName, new InvestorMetadata { Type = "UnableToPay", ExpectedAmount = expectedAmount, PayeeName = payeeName, MissedInterest = missedInterest, TreasuryEmpty = treasuryEmpty });
+    }
+
+    public static void LogInvestorPersonallyContributed(ApplicationDbContext? context, Game game, Nation nation, string controllerName, int personalContribution)
+    {
+        LogAction(context, game, "Investor", nation, controllerName, new InvestorMetadata { Type = "PersonallyContributed", PersonalContribution = personalContribution });
+    }
+
+    public static void LogInvestorBonus(ApplicationDbContext? context, Game game, string playerName, int paidAmount)
+    {
+        LogAction(context, game, "InvestorBonus", null, playerName, new InvestorMetadata { Type = "InvestorBonus", PaidAmount = paidAmount });
+    }
+
+    public static void LogJoinGame(ApplicationDbContext? context, Game game, string playerName)
+    {
+        LogAction(context, game, "JoinGame", null, playerName);
+    }
+
+    public static void LogLeaveGame(ApplicationDbContext? context, Game game, string playerName)
+    {
+        LogAction(context, game, "LeaveGame", null, playerName);
+    }
+
+    public static void LogStartGame(ApplicationDbContext? context, Game game, string playerName)
+    {
+        LogAction(context, game, "StartGame", null, playerName);
+    }
+
+    public static void LogEndTurn(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "EndTurn", nation, playerName);
     }
 }

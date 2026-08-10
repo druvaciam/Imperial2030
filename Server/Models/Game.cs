@@ -23,6 +23,7 @@ public class Game
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FinishedAt { get; set; }
+    public int TurnCount { get; set; } = 0;
     public Nation CurrentTurnNation { get; set; } = Nation.Russia;
     public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;
     
@@ -80,6 +81,7 @@ public class Game
 
     public void AdvanceTurn()
     {
+        this.TurnCount++;
         var currentNs = this.NationStates.FirstOrDefault(n => n.Nation == this.CurrentTurnNation);
         if (currentNs != null)
         {

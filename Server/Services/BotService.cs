@@ -329,7 +329,7 @@ public class BotService
             // Advance turn
             game.AdvanceTurn();
 
-            GameLogger.LogAction(ctx, game, "", "EndTurn", nation, controller.BotName ?? "Bot");
+            GameLogger.LogEndTurn(ctx, game, nation, controller.BotName ?? "Bot");
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
         }
@@ -598,6 +598,7 @@ public class BotService
                 var originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == fleet.TerritoryId)?.Name ?? fleet.TerritoryId;
                 var targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target)?.Name ?? target;
 
+                var originalTerritoryId = fleet.TerritoryId;
                 fleet.TerritoryId = target;
                 fleet.HasMoved = true;
                 fleet.IsHostile = isHostileMove;
@@ -621,7 +622,7 @@ public class BotService
 
                             if (enemyFleet != null)
                             {
-                                GameLogger.LogUnitMove(ctx, game, fleet.UnitType, fleet.TerritoryId, target, true, nation, controller.BotName ?? "Bot");
+                                GameLogger.LogUnitMove(ctx, game, fleet.UnitType, originalTerritoryId, target, true, nation, controller.BotName ?? "Bot");
                                 RemoveUnit(ctx, game, fleet);
                                 RemoveUnit(ctx, game, enemyFleet);
                                 GameLogger.LogBattleDestruction(ctx, game, fleet.UnitType, targetNation, enemyFleet.UnitType, target, nation, controller.BotName ?? "Bot");
@@ -636,8 +637,7 @@ public class BotService
                             game.PendingBattleAggressorNation = nation;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
-                            string peaceOrHostile = isHostileMove ? "hostilely" : "peacefully";
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, fleet.TerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, originalTerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -647,7 +647,7 @@ public class BotService
                     }
                 }
 
-                GameLogger.LogUnitMove(ctx, game, UnitType.Fleet, fleet.TerritoryId, target, isHostileMove, nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Fleet, originalTerritoryId, target, isHostileMove, nation, controller.BotName ?? "Bot");
                 await BotUnitActionDelay(ctx, game);
             }
         }
@@ -743,6 +743,7 @@ public class BotService
                 var originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == army.TerritoryId)?.Name ?? army.TerritoryId;
                 var targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best)?.Name ?? best;
 
+                var originalTerritoryId = army.TerritoryId;
                 army.TerritoryId = best;
                 army.HasMoved = true;
                 army.IsHostile = isHostileMove;
@@ -774,7 +775,7 @@ public class BotService
 
                             if (enemyUnit != null)
                             {
-                                GameLogger.LogUnitMove(ctx, game, army.UnitType, army.TerritoryId, best, true, nation, controller.BotName ?? "Bot");
+                                GameLogger.LogUnitMove(ctx, game, army.UnitType, originalTerritoryId, best, true, nation, controller.BotName ?? "Bot");
                                 RemoveUnit(ctx, game, army);
                                 RemoveUnit(ctx, game, enemyUnit);
                                 GameLogger.LogBattleDestruction(ctx, game, army.UnitType, targetNation, enemyUnit.UnitType, best, nation, controller.BotName ?? "Bot");
@@ -789,8 +790,7 @@ public class BotService
                             game.PendingBattleAggressorNation = nation;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
-                            string peaceOrHostile = isHostileMove ? "hostilely" : "peacefully";
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, army.TerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -800,7 +800,7 @@ public class BotService
                     }
                 }
 
-                GameLogger.LogUnitMove(ctx, game, UnitType.Army, army.TerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Army, originalTerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot");
                 await BotUnitActionDelay(ctx, game);
             }
         }
@@ -1060,14 +1060,14 @@ public class BotService
             }
 
             GameLogger.LogInvestmentBuy(
-                ctx, 
-                game, 
-                bondToBuy.Nation, 
-                bondToBuy.Cost, 
-                botName, 
-                newControllerName, 
-                oldControllerName, 
-                isSwissBankKicked, 
+                ctx,
+                game,
+                bondToBuy.Nation,
+                bondToBuy.Cost,
+                botName,
+                newControllerName,
+                oldControllerName,
+                isSwissBankKicked,
                 null);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", toastMsg, false);
         }

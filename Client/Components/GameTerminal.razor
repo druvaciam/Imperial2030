@@ -314,6 +314,52 @@
                     {
                         <span class="message">started the game</span>
                     }
+                    else if (action.ActionType == "InvestorBonus" && !string.IsNullOrEmpty(action.Metadata))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<Imperial2030.Shared.Models.InvestorMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null && meta.Type == "InvestorBonus")
+                            {
+                                <span class="message">received @(meta.PaidAmount)M Investor bonus</span>
+                            }
+                        }
+                        catch { }
+                    }
+                    else if (action.ActionType == "Investor" && !string.IsNullOrEmpty(action.Metadata))
+                    {
+                        try
+                        {
+                            var meta = System.Text.Json.JsonSerializer.Deserialize<Imperial2030.Shared.Models.InvestorMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (meta != null)
+                            {
+                                if (meta.Type == "InterestPaid")
+                                {
+                                    <span class="message">paid @(meta.PaidAmount)M interest to @meta.PayeeName</span>
+                                }
+                                else if (meta.Type == "InterestPartial")
+                                {
+                                    <span class="message">paid partial @(meta.PaidAmount)M interest to @meta.PayeeName (insufficient funds for full @(meta.ExpectedAmount)M)</span>
+                                }
+                                else if (meta.Type == "UnableToPay")
+                                {
+                                    if (meta.TreasuryEmpty == true)
+                                    {
+                                        <span class="message">unable to pay interest to @meta.PayeeName (treasury empty)</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="message">unable to pay @(meta.ExpectedAmount)M interest to @meta.PayeeName (insufficient funds)</span>
+                                    }
+                                }
+                                else if (meta.Type == "PersonallyContributed")
+                                {
+                                    <span class="message">personally contributed @(meta.PersonalContribution)M to cover interest deficit</span>
+                                }
+                            }
+                        }
+                        catch { }
+                    }
                 </div>
             }
         }
