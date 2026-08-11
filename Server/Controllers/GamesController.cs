@@ -443,6 +443,7 @@ public class GamesController : ControllerBase
     private static readonly string[] BotNames = { "Bot Alpha", "Bot Bravo", "Bot Charlie", "Bot Delta", "Bot Echo", "Bot Foxtrot" };
 
     [HttpGet("available-bots")]
+    [AllowAnonymous]
     public IActionResult GetAvailableBots()
     {
         var bots = GetAvailableBotTypes();

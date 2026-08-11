@@ -1,0 +1,81 @@
+sudo chmod +x /opt/imperial2030/publish/Imperial2030.Server
+
+#
+sudo tee /etc/systemd/system/imperial2030.service > /dev/null <<'EOF'
+[Unit]
+Description=Imperial2030 Game Server
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/imperial2030/publish
+ExecStart=/opt/imperial2030/publish/Imperial2030.Server
+Restart=always
+RestartSec=10
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=ASPNETCORE_URLS=http://localhost:5000
+Environment=ConnectionStrings__DefaultConnection="Data Source=/opt/imperial2030/imperial2030.db"
+# openssl rand -base64 32
+Environment=Jwt__Key=YourStrongRandomKeyHere_AtLeast32CharsLong!!
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+#
+sudo systemctl enable imperial2030
+sudo systemctl start imperial2030
+sudo systemctl status imperial2030
+
+
+#
+sudo apt update && sudo apt install -y nginx certbot python3-certbot-nginx
+
+sudo tee /etc/nginx/sites-available/imperial2030 > /dev/null <<'EOF'
+server {
+    listen 80;
+    
+    server_name 51.83.187.156;
+
+    location / {
+        proxy_pass http://localhost:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+EOF
+
+
+
+#
+sudo ln -s /etc/nginx/sites-available/imperial2030 /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl restart nginx
+
+#
+sudo ufw allow 'Nginx HTTP'
+
+
+# Get Free SSL Certificate
+
+sudo certbot --nginx -d yourdomain.com
+
+
+# Updating the App
+# Stop the running server
+sudo systemctl stop imperial2030
+
+scp -r ./publish ubuntu@51.83.187.156:/home/ubuntu/temp_publish
+
+sudo cp -r /home/ubuntu/temp_publish/* /opt/imperial2030/publish/
+rm -rf /home/ubuntu/temp_publish
+sudo chmod +x /opt/imperial2030/publish/Imperial2030.Server
+
+# On VPS
+sudo systemctl start imperial2030
+sudo systemctl status imperial2030
