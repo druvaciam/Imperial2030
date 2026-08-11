@@ -23,25 +23,6 @@
 else
 {
         <div class="game-container">
-        @if (IsMyTurn())
-        {
-                    <div class="turn-alert-overlay">
-                        <div class="alert-content">
-                            <h3>IT IS YOUR MOVE!</h3>
-                            <small>You control @game.CurrentTurnNation</small>
-                        </div>
-                    </div>
-        }
-
-        @if (MyPlayer == null)
-        {
-                    <div class="turn-alert-overlay" style="background: linear-gradient(180deg, rgba(52, 152, 219, 0.95) 0%, rgba(41, 128, 185, 0.95) 100%);">
-                        <div class="alert-content">
-                            <h3>OBSERVER MODE</h3>
-                            <small>You are watching this game</small>
-                        </div>
-                    </div>
-        }
 
             <div class="sidebar-left">
                 <div class="panel mb-3 text-center">
@@ -290,14 +271,16 @@ else
                     bool isLocked = currentNs?.HasMovedThisTurn ?? false;
                 }
 
-                    <Rondel 
-                        NationStates="@game.NationStates" 
-                        CurrentTurnNation="@game.CurrentTurnNation"
-                        IsMyTurn="@IsMyTurn()"
-                        IsLocked="@isLocked"
-                        OnMoveSelected="@OnRondelMove"
-                        Game="@game"
-                        CurrentPlayerId="@MyPlayer?.Id" />
+                    <div style="max-width: 380px; margin: 0 auto;">
+                        <Rondel 
+                            NationStates="@game.NationStates" 
+                            CurrentTurnNation="@game.CurrentTurnNation"
+                            IsMyTurn="@IsMyTurn()"
+                            IsLocked="@isLocked"
+                            OnMoveSelected="@OnRondelMove"
+                            Game="@game"
+                            CurrentPlayerId="@MyPlayer?.Id" />
+                    </div>
 
                     <div class="mt-3 text-center">
                         <span class="text-muted small text-uppercase">Current Turn</span>
@@ -422,9 +405,13 @@ else
 
             @if (game.Status == GameStatus.InProgress)
             {
-                        <div class="panel mt-3">
-                            <h4>Nations</h4>
-                            <ul class="list-group list-group-flush bg-transparent small">
+                        <div class="panel mt-3 pb-1">
+                            <details open>
+                                <summary class="h4 m-0 text-white" style="cursor: pointer; user-select: none;">
+                                    Nations
+                                </summary>
+                                <div class="mt-3">
+                                    <ul class="list-group list-group-flush bg-transparent small">
                         @foreach (var ns in game.NationStates.OrderBy(n => ((int)n.Nation - (int)game.CurrentTurnNation + 6) % 6))
                         {
                                         <li class="list-group-item bg-transparent text-white px-0">
@@ -477,7 +464,9 @@ else
                                 }
                                         </li>
                         }
-                            </ul>
+                                    </ul>
+                                </div>
+                            </details>
                         </div>
             }
 
@@ -510,6 +499,34 @@ else
             </div>
 
             <div class="main-board">
+        @if (IsMyTurn())
+        {
+                    <div class="turn-alert-overlay">
+                        <div class="alert-content">
+                            <h3>IT IS YOUR MOVE!</h3>
+                            <small>You control @game.CurrentTurnNation</small>
+                        </div>
+                    </div>
+        }
+        else if (MyPlayer != null && IsPlayerActive(MyPlayer))
+        {
+                    <div class="turn-alert-overlay" style="background: linear-gradient(180deg, rgba(230, 126, 34, 0.95) 0%, rgba(211, 84, 0, 0.95) 100%);">
+                        <div class="alert-content">
+                            <h3>INVESTOR PHASE</h3>
+                            <small>It is your turn to act</small>
+                        </div>
+                    </div>
+        }
+
+        @if (MyPlayer == null)
+        {
+                    <div class="turn-alert-overlay" style="background: linear-gradient(180deg, rgba(52, 152, 219, 0.95) 0%, rgba(41, 128, 185, 0.95) 100%);">
+                        <div class="alert-content">
+                            <h3>OBSERVER MODE</h3>
+                            <small>You are watching this game</small>
+                        </div>
+                    </div>
+        }
             @if (game.Status == GameStatus.InProgress)
             {
                           <div style="position: relative; width: 100%; display: flex; flex-direction: column; align-items: center; flex: 1;">
@@ -756,10 +773,52 @@ else
         min-height: 0;
     }
 
-    @@media (max-width: 640.98px) {
+    @@media (max-width: 1399.98px) {
         .game-container {
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 60vh auto;
+            height: auto;
             margin-left: -1.5rem;
             margin-right: -1.5rem;
+            overflow-y: auto;
+        }
+        .main-board {
+            grid-column: 1 / -1;
+            grid-row: 1;
+            min-height: 400px;
+        }
+        .sidebar-left {
+            grid-column: 1;
+            grid-row: 2;
+            height: auto;
+            max-height: none;
+            overflow: visible;
+        }
+        .sidebar-right {
+            grid-column: 2;
+            grid-row: 2;
+            height: auto;
+            max-height: none;
+            overflow: visible;
+        }
+    }
+
+    @@media (max-width: 767.98px) {
+        .game-container {
+            grid-template-columns: 1fr;
+            grid-template-rows: 50vh auto auto;
+        }
+        .main-board {
+            grid-column: 1;
+            grid-row: 1;
+        }
+        .sidebar-left {
+            grid-column: 1;
+            grid-row: 2;
+        }
+        .sidebar-right {
+            grid-column: 1;
+            grid-row: 3;
         }
     }
 
@@ -815,6 +874,7 @@ else
     }
 
     .main-board {
+        position: relative;
         background-color: #34495e;
         border-radius: 8px;
         display: flex;
@@ -833,12 +893,13 @@ else
     }
 
     .turn-alert-overlay {
-        position: fixed;
-        top: 55px; /* Positioned just below the top nav bar */
-        left: 50%;
-        transform: translateX(-50%);
-        width: auto;
-        height: auto;
+        position: absolute;
+        top: 15px; /* Positioned just below the top edge of the map container */
+        left: 0;
+        right: 0;
+        margin: 0 auto;
+        width: max-content;
+        max-width: 95%;
         padding: 5px 20px;
         border-radius: 8px; /* Compact radius */
         background: linear-gradient(180deg, rgba(231, 76, 60, 0.95) 0%, rgba(192, 57, 43, 0.95) 100%);
@@ -858,6 +919,8 @@ else
         text-shadow: 0 1px 2px rgba(0,0,0,0.5);
         display: flex;
         align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
         gap: 10px;
     }
 
@@ -892,8 +955,8 @@ else
     }
 
     @@keyframes slideDown {
-        from { transform: translate(-50%, -150%); opacity: 0; }
-        to { transform: translate(-50%, 0); opacity: 1; }
+        from { transform: translateY(-150%); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
     }
 
     @@keyframes pulse {
