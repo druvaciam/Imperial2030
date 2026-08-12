@@ -2,7 +2,7 @@
 @using Imperial2030.Shared.Constants
 @using Imperial2030.Client.Constants
 
-<div class="map-container position-relative" style="flex: 1; width: 100%; height: 100%;">
+<div class="map-container position-relative" style="flex: 1; width: 100%;">
     @if (selectedUnitId.HasValue)
     {
         <div class="position-absolute top-0 start-50 translate-middle-x mt-2 p-2 bg-warning text-dark rounded shadow fw-bold" style="z-index: 1000; opacity: 0.9; cursor: pointer;" @onclick="DeselectUnit">
@@ -1112,6 +1112,13 @@
         justify-content: center;
         align-items: center;
         position: relative;
+    }
+
+    @@media (max-width: 1399.98px) {
+        .map-container {
+            aspect-ratio: 1200 / 841;
+            height: auto;
+        }
     }
     /* Default narrow container: stacked HUD */
     .map-overlay-action-buttons {
