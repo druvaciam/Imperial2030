@@ -24,24 +24,24 @@ else
 {
         <div class="game-container">
 
-            <div class="sidebar-left">
-                <div class="panel mb-3 text-center">
-                    <h3 class="m-0 text-white">@game.Name</h3>
-                    <div class="text-muted small">Game ID: @GameId.ToString().Substring(0, 8)...</div>
-                    @if (game.Players.FirstOrDefault(p => p.IsHost) is var host && host != null)
-                    {
-                        <div class="text-muted small">Host: <strong>@host.UserName</strong></div>
-                    }
+            <SectionContent SectionName="top-bar-info">
+                <span class="text-white-50 small"><strong>@game.Name</strong></span>
+                <span class="text-white-50 small px-3" style="border-left: 1px solid rgba(255,255,255,0.2);">Game ID: @GameId.ToString().Substring(0, 8)...</span>
+                @if (game.Players.FirstOrDefault(p => p.IsHost) is var host && host != null)
+                {
+                    <span class="text-white-50 small px-3" style="border-left: 1px solid rgba(255,255,255,0.2);">Host: <strong class="text-white">@host.UserName</strong></span>
+                }
                 @if (game.IsPrivate && MyPlayer != null && game.HostId == MyPlayer.UserId && game.JoinCode != null)
                 {
-                    <div class="text-info small">Join Code: <strong>@game.JoinCode</strong></div>
+                    <span class="text-info small px-3" style="border-left: 1px solid rgba(255,255,255,0.2);">Join Code: <strong>@game.JoinCode</strong></span>
                 }
                 @if (game.VariantBonusOnlyForTaxIncreases)
                 {
-                            <div class="mt-1"><span class="badge bg-warning text-dark">Variant: Tax Increase Bonus</span></div>
+                    <span class="badge bg-warning text-dark ms-2">Variant: Tax Bonus</span>
                 }
-                </div>
+            </SectionContent>
 
+            <div class="sidebar-left">
             @if (game.PendingBattleTerritoryId != null)
             {
                         <div class="panel mb-3 border border-warning" style="background-color: rgba(230, 126, 34, 0.1);">
@@ -282,9 +282,9 @@ else
                             CurrentPlayerId="@MyPlayer?.Id" />
                     </div>
 
-                    <div class="mt-3 text-center">
+                    <div class="mt-1 text-center">
                         <span class="text-muted small text-uppercase">Current Turn</span>
-                        <h3 class="fw-bold text-white">@game.CurrentTurnNation</h3>
+                        <h3 class="fw-bold text-white mb-1">@game.CurrentTurnNation</h3>
                     </div>
 
                 @if (IsMyTurn())
@@ -293,7 +293,7 @@ else
                     bool alreadyBuilt = ns?.HasBuiltThisTurn ?? false;
                     bool turnMoved = ns?.HasMovedThisTurn ?? false;
 
-                            <div class="mt-3 d-grid gap-2">
+                            <div class="mt-2 d-grid gap-2">
                         @if (CanBuildFactory() && !alreadyBuilt && turnMoved)
                         {
                                         <div class="card bg-dark border-secondary">
@@ -414,7 +414,7 @@ else
                                     <ul class="list-group list-group-flush bg-transparent small">
                         @foreach (var ns in game.NationStates.OrderBy(n => ((int)n.Nation - (int)game.CurrentTurnNation + 6) % 6))
                         {
-                                        <li class="list-group-item bg-transparent text-white px-0">
+                                        <li class="list-group-item bg-transparent text-white @(ns.Nation == game.CurrentTurnNation ? "active-player-highlight" : "px-0")">
                                             <b>@ns.Nation</b><br/>
                                             <span class="text-info">Treasury: @ns.Treasury M</span> | 
                                             <span class="text-warning">Power: @ns.Power (@(ns.Power / 5)x)</span><br/>
@@ -498,43 +498,55 @@ else
                 </div>
             </div>
 
+            <div class="main-board-container">
             <div class="main-board">
         @if (IsMyTurn())
         {
-                    <div class="turn-alert-overlay">
-                        <div class="alert-content">
-                            <h3>IT IS YOUR MOVE!</h3>
-                            <small>You control @game.CurrentTurnNation</small>
-                        </div>
+            <div class="turn-alert-wrapper">
+                <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(231, 76, 60, 0.95) 0%, rgba(192, 57, 43, 0.95) 100%); --alert-color: rgba(231, 76, 60, 0.95);">
+                    <div class="alert-content">
+                        <h3><i class="bi bi-bell-fill me-2"></i>IT IS YOUR MOVE!</h3>
+                        <small>You control @game.CurrentTurnNation</small>
                     </div>
+                </div>
+            </div>
         }
         else if (MyPlayer != null && IsPlayerActive(MyPlayer))
         {
-                    <div class="turn-alert-overlay" style="background: linear-gradient(180deg, rgba(230, 126, 34, 0.95) 0%, rgba(211, 84, 0, 0.95) 100%);">
-                        <div class="alert-content">
-                            <h3>INVESTOR PHASE</h3>
-                            <small>It is your turn to act</small>
-                        </div>
+            <div class="turn-alert-wrapper">
+                <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(230, 126, 34, 0.95) 0%, rgba(211, 84, 0, 0.95) 100%); --alert-color: rgba(230, 126, 34, 0.95);">
+                    <div class="alert-content">
+                        <h3><i class="bi bi-person-fill-exclamation me-2"></i>INVESTOR PHASE</h3>
+                        <small>It is your turn to act</small>
                     </div>
+                </div>
+            </div>
         }
 
         @if (MyPlayer == null)
         {
-                    <div class="turn-alert-overlay" style="background: linear-gradient(180deg, rgba(52, 152, 219, 0.95) 0%, rgba(41, 128, 185, 0.95) 100%);">
-                        <div class="alert-content">
-                            <h3>OBSERVER MODE</h3>
-                            <small>You are watching this game</small>
-                        </div>
+            <div class="turn-alert-wrapper">
+                <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(52, 152, 219, 0.95) 0%, rgba(41, 128, 185, 0.95) 100%); --alert-color: rgba(52, 152, 219, 0.95);">
+                    <div class="alert-content">
+                        <h3><i class="bi bi-eye-fill me-2"></i>OBSERVER MODE</h3>
+                        <small>You are watching this game</small>
                     </div>
+                </div>
+            </div>
         }
             @if (game.Status == GameStatus.InProgress)
             {
                           <div style="position: relative; width: 100%; display: flex; flex-direction: column; align-items: center; flex: 1;">
                     @if (!string.IsNullOrEmpty(toastMessage))
                     {
-                                      <div class="toast-notification @(isToastError ? "bg-danger" : "bg-success")">
-                            @toastMessage
-                                      </div>
+                        <div class="toast-notification-wrapper">
+                            <div class="toast-notification @(isToastError ? "toast-error" : "toast-success")">
+                                <div class="toast-content">
+                                    <i class="bi @(isToastError ? "bi-exclamation-octagon-fill" : "bi-info-circle-fill") me-2"></i>
+                                    @toastMessage
+                                </div>
+                            </div>
+                        </div>
                     }
                               <GameMap @ref="gameMap" Game="@game" IsMyTurn="@IsMyTurn()" IsObserver="@(MyPlayer == null)" ShowToastAction="OnShowToastAction" NewUnitIds="@(_newUnitTimestamps.Keys.ToHashSet())" NewFactoryIds="@(_newFactoryTimestamps.Keys.ToHashSet())" PowerBlinkNations="@(_nationPowerChanges.Keys.ToHashSet())" TaxBlinkNations="@(_nationTaxChanges.Keys.ToHashSet())" />
                           </div>
@@ -606,6 +618,7 @@ else
             }
 
                  <GameTerminal Actions="@game.Actions" />
+            </div>
             </div>
 
 
@@ -782,7 +795,7 @@ else
             margin-right: -1.5rem;
             overflow-y: auto;
         }
-        .main-board {
+        .main-board-container {
             grid-column: 1 / -1;
             grid-row: 1;
             min-height: 400px;
@@ -808,9 +821,13 @@ else
             grid-template-columns: 1fr;
             grid-template-rows: 50vh auto auto;
         }
-        .main-board {
+        .main-board-container {
             grid-column: 1;
             grid-row: 1;
+            min-height: 50vh;
+        }
+        .main-board {
+            padding-top: 35px; /* Smaller safe zone for mobile */
         }
         .sidebar-left {
             grid-column: 1;
@@ -853,8 +870,9 @@ else
         flex-direction: column;
         height: 100%;
         overflow-y: auto; 
+        overflow-x: hidden;
         gap: 0.1rem;
-        padding-right: 5px;
+        padding: 8px; /* Added padding to prevent box-shadow clipping on the left edge */
         min-height: 0;
     }
 
@@ -873,6 +891,13 @@ else
         background: rgba(255,255,255,0.4); 
     }
 
+    .main-board-container {
+        container-type: inline-size;
+        container-name: mainboard;
+        display: flex;
+        flex-direction: column;
+    }
+
     .main-board {
         position: relative;
         background-color: #34495e;
@@ -883,6 +908,14 @@ else
         color: #95a5a6;
         flex-direction: column;
         overflow: hidden;
+        flex: 1;
+        padding-top: 85px; /* Default narrow: stacked HUD space */
+    }
+
+    @@container mainboard (min-width: 800px) {
+        .main-board {
+            padding-top: 45px; /* Wide: row HUD space */
+        }
     }
 
     .map-placeholder {
@@ -892,26 +925,34 @@ else
         border-radius: 12px;
     }
 
-    .turn-alert-overlay {
+    .turn-alert-wrapper {
         position: absolute;
-        top: 15px; /* Positioned just below the top edge of the map container */
-        left: 0;
-        right: 0;
-        margin: 0 auto;
+        top: 5px; /* Positioned inside the main-board padding-top safe zone */
+        left: 50%;
+        transform: translateX(-50%) translateZ(0);
+        z-index: 2000;
+        animation: bannerEntrance 0.3s ease-out forwards;
+        will-change: transform;
+        backface-visibility: hidden;
+    }
+
+    .turn-alert-overlay {
         width: max-content;
-        max-width: 95%;
+        max-width: 95vw;
         padding: 5px 20px;
         border-radius: 8px; /* Compact radius */
-        background: linear-gradient(180deg, rgba(231, 76, 60, 0.95) 0%, rgba(192, 57, 43, 0.95) 100%);
-        z-index: 2000;
         display: flex;
         align-items: center;
         justify-content: center;
         color: white;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.4);
         border: 1px solid rgba(255,255,255,0.2);
-        animation: slideDown 0.5s ease-out, pulse 2s infinite;
+        backdrop-filter: blur(6px);
+        animation: custom-glow-pulse 2s ease-in-out infinite alternate;
         pointer-events: none;
+        will-change: box-shadow;
+        backface-visibility: hidden;
+        transform: translateZ(0);
     }
 
     .alert-content {
@@ -954,36 +995,96 @@ else
         padding-left: 10px;
     }
 
-    @@keyframes slideDown {
-        from { transform: translateY(-150%); opacity: 0; }
-        to { transform: translateY(0); opacity: 1; }
+    @@media (max-width: 767.98px) {
+        .turn-alert-wrapper {
+            top: 3px;
+        }
+        .turn-alert-overlay {
+            padding: 3px 12px;
+        }
+        .alert-content {
+            gap: 6px;
+        }
+        .alert-content h3 {
+            font-size: 0.8rem;
+        }
+        .alert-content small {
+            font-size: 0.7rem;
+            padding-left: 6px;
+        }
     }
 
-    @@keyframes pulse {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.02); }
-        100% { transform: scale(1); }
+    @@keyframes bannerEntrance {
+        0% { opacity: 0; transform: translateX(-50%) translateY(-20px) translateZ(0); }
+        100% { opacity: 1; transform: translateX(-50%) translateY(0) translateZ(0); }
     }
-    .toast-notification {
+
+    @@keyframes custom-glow-pulse {
+        0% { box-shadow: 0 0 0 0px var(--alert-color, transparent), 0 4px 15px rgba(0,0,0,0.4); }
+        100% { box-shadow: 0 0 0 4px var(--alert-color, transparent), 0 8px 25px rgba(0,0,0,0.6); }
+    }
+    .toast-notification-wrapper {
         position: absolute;
-        bottom: 15px; /* Above the large country tiles at the bottom of the map */
+        bottom: 25px; /* Above the large country tiles at the bottom of the map */
         left: 50%;
-        transform: translateX(-50%);
-        padding: 12px 24px;
-        border-radius: 8px;
-        color: white;
+        transform: translateX(-50%) translateZ(0);
         z-index: 3000;
-        box-shadow: 0 6px 12px rgba(0,0,0,0.4);
-        animation: toastFadeIn 0.3s ease-in-out;
-        text-align: center;
-        white-space: nowrap;
-        font-weight: bold;
-        font-size: 1.1rem;
+        /* The wrapper does the entrance, translating and scaling from the center */
+        animation: toastEntrance 0.3s ease-out forwards;
+        will-change: transform;
+        backface-visibility: hidden;
     }
 
-    @@keyframes toastFadeIn {
-        from { opacity: 0; transform: translate(-50%, 20px); }
-        to { opacity: 1; transform: translate(-50%, 0); }
+    .toast-notification {
+        padding: 10px 24px;
+        border-radius: 8px; /* Compact radius */
+        color: white;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.5);
+        /* The inner notification does the smooth floating using transform */
+        animation: toastFloat 2.5s ease-in-out infinite alternate;
+        text-align: center;
+        white-space: normal;
+        font-weight: 600;
+        font-size: 1.05rem;
+        max-width: 90vw;
+        backdrop-filter: blur(6px);
+        border: 1px solid rgba(255,255,255,0.25);
+        /* Hardware acceleration to prevent text jitter/shimmer */
+        will-change: transform;
+        backface-visibility: hidden;
+        -webkit-font-smoothing: antialiased;
+        transform: translateZ(0);
+    }
+    
+    @@media (max-width: 767.98px) {
+        .toast-notification {
+            font-size: 0.9rem;
+            padding: 8px 16px;
+        }
+    }
+
+    .toast-notification.toast-success {
+        background: linear-gradient(135deg, rgba(39, 174, 96, 0.9) 0%, rgba(46, 204, 113, 0.9) 100%);
+    }
+
+    .toast-notification.toast-error {
+        background: linear-gradient(135deg, rgba(192, 57, 43, 0.9) 0%, rgba(231, 76, 60, 0.9) 100%);
+    }
+
+    .toast-content {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    @@keyframes toastEntrance {
+        0% { opacity: 0; transform: translateX(-50%) translateY(20px) translateZ(0); }
+        100% { opacity: 1; transform: translateX(-50%) translateY(0) translateZ(0); }
+    }
+
+    @@keyframes toastFloat {
+        0% { transform: translateY(0) translateZ(0); }
+        100% { transform: translateY(-8px) translateZ(0); box-shadow: 0 15px 30px rgba(0,0,0,0.7); }
     }
 
     .game-over-overlay {

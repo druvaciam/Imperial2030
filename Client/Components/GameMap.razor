@@ -1077,29 +1077,31 @@
 </svg>
 
 
-    @if (IsMyTurn && Game?.ManeuverState?.Phase != ManeuverPhase.None)
-    {
-        <div class="card p-2 bg-light shadow" style="position: absolute; top: 10px; right: 10px; z-index: 500;">
-            <h6 class="mb-2">Phase: @(Game?.ManeuverState?.Phase)</h6>
-            <button class="btn btn-primary btn-sm @(isHighlightingEndPhase ? "btn-error-pulse" : "")" @onclick="NextPhase">End Phase</button>
-        </div>
-    }
+    <div class="d-flex gap-2 map-overlay-action-buttons">
+        @if (IsMyTurn && Game?.ManeuverState?.Phase != ManeuverPhase.None)
+        {
+            <div class="d-flex align-items-center gap-2 rounded-pill shadow-lg" style="background: rgba(30,30,40,0.85); padding: 5px 12px; border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(4px);">
+                <span class="small text-uppercase text-white fw-bold mb-0" style="letter-spacing: 1px;">@(Game?.ManeuverState?.Phase)</span>
+                <button class="btn btn-warning btn-sm rounded-pill fw-bold py-0 px-3 @(isHighlightingEndPhase ? "btn-endturn-pulse" : "")" style="font-size: 0.75rem;" @onclick="NextPhase">End Phase</button>
+            </div>
+        }
 
-    @if (CanInitiateStationaryBattle())
-    {
-        <div class="card p-2 bg-light shadow" style="position: absolute; top: 100px; right: 10px; z-index: 500;">
-             <button class="btn btn-danger" @onclick="OpenStationaryBattleModal">Battle!</button>
-        </div>
-    }
+        @if (CanInitiateStationaryBattle())
+        {
+            <div class="rounded-pill shadow-lg" style="background: rgba(30,30,40,0.85); padding: 4px 6px; border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(4px);">
+                 <button class="btn btn-danger btn-sm rounded-pill fw-bold py-0 px-3" style="font-size: 0.75rem;" @onclick="OpenStationaryBattleModal">Battle!</button>
+            </div>
+        }
 
-    @if (CanToggleHostility())
-    {
-        <div class="card p-2 bg-light shadow" style="position: absolute; top: 160px; right: 10px; z-index: 500;">
-             <button class="btn btn-sm @(GetSelectedUnit()?.IsHostile == true ? "btn-success" : "btn-danger")" @onclick="ToggleHostility">
-                 Make @(GetSelectedUnit()?.IsHostile == true ? "Friendly" : "Hostile")
-             </button>
-        </div>
-    }
+        @if (CanToggleHostility())
+        {
+            <div class="rounded-pill shadow-lg" style="background: rgba(30,30,40,0.85); padding: 4px 6px; border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(4px);">
+                 <button class="btn rounded-pill fw-bold py-0 px-3 btn-sm @(GetSelectedUnit()?.IsHostile == true ? "btn-success" : "btn-danger")" style="font-size: 0.75rem;" @onclick="ToggleHostility">
+                     Make @(GetSelectedUnit()?.IsHostile == true ? "Friendly" : "Hostile")
+                 </button>
+            </div>
+        }
+    </div>
 </div>
 
 <style>
@@ -1110,6 +1112,24 @@
         justify-content: center;
         align-items: center;
         position: relative;
+    }
+    /* Default narrow container: stacked HUD */
+    .map-overlay-action-buttons {
+        position: absolute;
+        top: -42px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 500;
+        width: max-content;
+    }
+    /* Wide container: right aligned */
+    @@container mainboard (min-width: 800px) {
+        .map-overlay-action-buttons {
+            top: -38px;
+            right: 10px;
+            left: unset;
+            transform: none;
+        }
     }
     .world-map {
         max-width: 100%;
