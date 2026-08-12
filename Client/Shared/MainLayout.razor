@@ -7,6 +7,9 @@
 
     <main>
 <div class="top-row px-4 auth">
+            <div class="me-4 d-flex gap-3 align-items-center">
+                <SectionOutlet SectionName="top-bar-info" />
+            </div>
             <AuthorizeView>
                 <Authorized>
                     @if (context.User.IsInRole("Guest"))
