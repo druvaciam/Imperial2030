@@ -14,13 +14,13 @@
                 <Authorized>
                     @if (context.User.IsInRole("Guest"))
                     {
-                        <span class="me-3 text-muted"><span class="oi oi-eye me-1"></span>Guest (Watch Only)</span>
+                        <span class="me-3 text-muted d-none d-sm-inline"><span class="oi oi-eye me-1"></span>Guest (Watch Only)</span>
                         <a href="register" class="me-2">Register</a>
                         <a href="logout">Logout</a>
                     }
                     else
                     {
-                        <span class="me-3">Hello, @context.User.Identity?.Name!</span>
+                        <span class="me-3 d-none d-sm-inline">Hello, @context.User.Identity?.Name!</span>
                         <a href="logout">Logout</a>
                     }
                 </Authorized>

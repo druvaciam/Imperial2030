@@ -26,14 +26,14 @@ else
 
             <SectionContent SectionName="top-bar-info">
                 <span class="text-white-50 small"><strong>@game.Name</strong></span>
-                <span class="text-white-50 small px-3" style="border-left: 1px solid rgba(255,255,255,0.2);">Game ID: @GameId.ToString().Substring(0, 8)...</span>
+                <span class="text-white-50 small px-3 d-none d-md-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">Game ID: @GameId.ToString().Substring(0, 8)...</span>
                 @if (game.Players.FirstOrDefault(p => p.IsHost) is var host && host != null)
                 {
-                    <span class="text-white-50 small px-3" style="border-left: 1px solid rgba(255,255,255,0.2);">Host: <strong class="text-white">@host.UserName</strong></span>
+                    <span class="text-white-50 small px-3 d-none d-md-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">Host: <strong class="text-white">@host.UserName</strong></span>
                 }
                 @if (game.IsPrivate && MyPlayer != null && game.HostId == MyPlayer.UserId && game.JoinCode != null)
                 {
-                    <span class="text-info small px-3" style="border-left: 1px solid rgba(255,255,255,0.2);">Join Code: <strong>@game.JoinCode</strong></span>
+                    <span class="text-info small px-3 d-none d-lg-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">Join Code: <strong>@game.JoinCode</strong></span>
                 }
                 @if (game.VariantBonusOnlyForTaxIncreases)
                 {
@@ -559,7 +559,7 @@ else
                              {
                                  <div class="game-over-overlay">
                                     <div class="game-over-card" style="position: relative;">
-                                        <button type="button" class="btn-close btn-close-white" style="position: absolute; top: 1.5rem; right: 1.5rem;" @onclick="() => showGameOverPopup = false" aria-label="Close"></button>
+                                        <button type="button" class="btn-close btn-close-white" style="position: absolute; top: 1rem; right: 1rem; z-index: 100; cursor: pointer;" @onclick="() => showGameOverPopup = false" aria-label="Close"></button>
                                         <h1 class="text-gradient mb-2">GAME OVER</h1>
                                         <h5 class="text-white-50 mb-4">Ended by @GetWinningNation() reaching 25 Power</h5>
 
@@ -789,7 +789,7 @@ else
     @@media (max-width: 1399.98px) {
         .game-container {
             grid-template-columns: 1fr 1fr;
-            grid-template-rows: 60vh auto;
+            grid-template-rows: auto auto;
             height: auto;
             margin-left: -1.5rem;
             margin-right: -1.5rem;
@@ -819,12 +819,11 @@ else
     @@media (max-width: 767.98px) {
         .game-container {
             grid-template-columns: 1fr;
-            grid-template-rows: 50vh auto auto;
+            grid-template-rows: auto auto auto;
         }
         .main-board-container {
             grid-column: 1;
             grid-row: 1;
-            min-height: 50vh;
         }
         .main-board {
             padding-top: 35px; /* Smaller safe zone for mobile */
@@ -896,6 +895,7 @@ else
         container-name: mainboard;
         display: flex;
         flex-direction: column;
+        height: 100%;
     }
 
     .main-board {
@@ -1088,11 +1088,11 @@ else
     }
 
     .game-over-overlay {
-        position: absolute;
+        position: fixed;
         top: 0;
         left: 0;
-        width: 100%;
-        height: 100%;
+        right: 0;
+        bottom: 0;
         background: rgba(0, 0, 0, 0.4); /* Reduced opacity, no blur */
         z-index: 2000;
         display: flex;
@@ -1115,7 +1115,27 @@ else
         text-align: center;
         max-width: 600px;
         width: 90%;
+        max-height: calc(100% - 2rem);
+        display: flex;
+        flex-direction: column;
         animation: cardScaleIn 0.4s ease-out backwards;
+    }
+
+    .leaderboard-container {
+        overflow-y: auto;
+        flex: 1;
+        min-height: 0;
+        margin-bottom: 1rem;
+    }
+
+    @@media (max-width: 767.98px) {
+        .game-over-card {
+            padding: 1.5rem;
+        }
+        .btn-close {
+            top: 1rem;
+            right: 1rem;
+        }
     }
 
     @@keyframes cardScaleIn {
@@ -1131,6 +1151,12 @@ else
         letter-spacing: 2px;
         text-transform: uppercase;
         filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+    }
+
+    @@media (max-width: 767.98px) {
+        .text-gradient {
+            font-size: 2.5rem;
+        }
     }
 
     .leaderboard-container {
