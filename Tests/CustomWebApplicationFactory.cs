@@ -15,13 +15,6 @@ namespace Imperial2030.Tests
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
-            builder.ConfigureAppConfiguration((context, configBuilder) =>
-            {
-                configBuilder.AddInMemoryCollection(new System.Collections.Generic.Dictionary<string, string>
-                {
-                    { "AzureFunctionNotificationUrl", "" }
-                });
-            });
 
             builder.ConfigureServices(services =>
             {
@@ -31,6 +24,7 @@ namespace Imperial2030.Tests
                          d.ServiceType == typeof(Imperial2030.Server.Data.SqliteApplicationDbContext) ||
                          d.ServiceType == typeof(DbContextOptions<ApplicationDbContext>) ||
                          d.ServiceType == typeof(DbContextOptions) ||
+                         d.ServiceType == typeof(Imperial2030.Server.Services.INotificationService) ||
                          d.ServiceType.Name.Contains("DbConnection") ||
                          d.ServiceType.Name.Contains("DbContextOptions")).ToList();
 
@@ -43,6 +37,8 @@ namespace Imperial2030.Tests
                 {
                     options.UseInMemoryDatabase("InMemoryDbForTesting");
                 });
+
+                services.AddSingleton<Imperial2030.Server.Services.INotificationService, Imperial2030.Server.Services.NoOpNotificationService>();
 
                 var sp = services.BuildServiceProvider();
 
