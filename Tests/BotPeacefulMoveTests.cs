@@ -103,6 +103,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
 
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(GetDbContext(dbName));
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });

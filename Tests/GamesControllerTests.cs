@@ -49,6 +49,7 @@ namespace Imperial2030.Tests
 
             var mockScopeFactory = new Mock<IServiceScopeFactory>();
             var mockServiceProvider = new Mock<IServiceProvider>();
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
             mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
             {
                 var scope = new Mock<IServiceScope>();
@@ -58,7 +59,7 @@ namespace Imperial2030.Tests
             var mockBotServiceLogger = new Mock<ILogger<BotService>>();
             var botService = new BotService(mockScopeFactory.Object, mockHub.Object, new System.Collections.Generic.List<Imperial2030.Server.Services.Bots.IBotStrategy> { new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy() }, mockBotServiceLogger.Object);
 
-            var controller = new GamesController(context, mockUserManager.Object, mockHub.Object, presenceTracker, botService);
+            var controller = new GamesController(context, mockUserManager.Object, mockHub.Object, presenceTracker, botService, new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
 
             var claims = new List<Claim> { new Claim(ClaimTypes.NameIdentifier, userId) };
             var identity = new ClaimsIdentity(claims, "TestAuthType");
@@ -677,6 +678,52 @@ namespace Imperial2030.Tests
                 
                 var updatedRussia = await verifyContext.NationStates.FirstAsync(n => n.GameId == gId && n.Nation == Nation.Russia);
                 Assert.Equal(expectedTax, updatedRussia.TaxRevenue);
+            }
+        }
+
+        [Fact]
+        public async Task StartGame_DoubleCall_DoesNotDuplicateEntities()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            Guid gameId;
+            string hostUserId = "host-user";
+
+            using (var context = GetDbContext(dbName))
+            {
+                gameId = Guid.NewGuid();
+                var game = new Game
+                {
+                    Id = gameId,
+                    Status = GameStatus.Lobby
+                };
+                var p1 = new Player { Id = Guid.NewGuid(), GameId = gameId, UserId = hostUserId, IsHost = true };
+                var p2 = new Player { Id = Guid.NewGuid(), GameId = gameId, UserId = "other-user", IsHost = false };
+                
+                context.Games.Add(game);
+                context.Players.AddRange(p1, p2);
+                await context.SaveChangesAsync();
+            }
+
+            // Act: Call StartGame sequentially but simulating concurrent calls where both passed the initial Lobby check, 
+            // OR simply call it twice on the same game to ensure idempotency if that's how we fix it.
+            // Actually, we'll just call it twice. If it's fixed, the second call should return BadRequest or just not duplicate.
+            using (var context1 = GetDbContext(dbName))
+            using (var context2 = GetDbContext(dbName))
+            {
+                var controller1 = GetController(context1, hostUserId);
+                var controller2 = GetController(context2, hostUserId);
+
+                // Simulate concurrent calls: wait for both to finish
+                var t1 = controller1.StartGame(gameId);
+                var t2 = controller2.StartGame(gameId);
+                await Task.WhenAll(t1, t2);
+            }
+
+            using (var context = GetDbContext(dbName))
+            {
+                var nationStatesCount = await context.NationStates.CountAsync(ns => ns.GameId == gameId);
+                // There should be exactly 6 nations in a game, not 12.
+                Assert.Equal(6, nationStatesCount);
             }
         }
     }

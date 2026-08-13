@@ -22,6 +22,7 @@ public class Game
     public GameStatus Status { get; set; } = GameStatus.Lobby;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? StartedAt { get; set; }
     public DateTime? FinishedAt { get; set; }
     public int TurnCount { get; set; } = 0;
     public Nation CurrentTurnNation { get; set; } = Nation.Russia;

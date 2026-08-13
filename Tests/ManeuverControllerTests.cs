@@ -49,6 +49,7 @@ namespace Imperial2030.Tests
 
             var mockScopeFactory = new Mock<IServiceScopeFactory>();
             var mockServiceProvider = new Mock<IServiceProvider>();
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
             mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
             {
                 var scope = new Mock<IServiceScope>();

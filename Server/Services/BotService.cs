@@ -962,6 +962,14 @@ public class BotService
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameEnded", game.Id);
+
+            // Resolve INotificationService to send email
+            using (var notificationScope = _scopeFactory.CreateScope())
+            {
+                var notificationService = notificationScope.ServiceProvider.GetRequiredService<INotificationService>();
+                _ = notificationService.NotifyGameFinishedAsync(game, $"Ended by {nation} reaching 25 Power (Bot {controller.BotName})");
+            }
+
             return;
         }
 
