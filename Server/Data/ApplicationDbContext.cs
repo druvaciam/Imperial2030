@@ -7,7 +7,7 @@ namespace Imperial2030.Server.Data;
 
 public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
 {
-    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options)
+    public ApplicationDbContext(DbContextOptions options) : base(options)
     {
     }
 
@@ -30,5 +30,18 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
     {
         base.OnModelCreating(builder);
         // Any other specific configurations
+    }
+}
+public class SqliteApplicationDbContext : ApplicationDbContext
+{
+    public SqliteApplicationDbContext(DbContextOptions<SqliteApplicationDbContext> options) : base(options)
+    {
+    }
+}
+
+public class SqlServerApplicationDbContext : ApplicationDbContext
+{
+    public SqlServerApplicationDbContext(DbContextOptions<SqlServerApplicationDbContext> options) : base(options)
+    {
     }
 }
