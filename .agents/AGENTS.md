@@ -5,3 +5,4 @@
 - **Cross-Platform Compatibility:** Ensure all written code (including scripts and file paths) is fully compatible and works seamlessly across both Windows and Linux operating systems.
 - **Build Before Completion:** Always compile/build the project to ensure there are no compilation errors before reporting that a task is done.
 - **Extract Constants:** Always extract constants to avoid magic numbers and strings.
+- **Run Tests on Backend Changes:** Always run the full test suite (dotnet test) if any backend code (.cs files) is modified to ensure no existing logic is broken.
