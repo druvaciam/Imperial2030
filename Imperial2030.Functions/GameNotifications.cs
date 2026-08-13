@@ -90,18 +90,6 @@ namespace Imperial2030.Functions
                 // Send to Admin
                 await SendEmailAsync(AdminEmail, subject, htmlContent);
 
-                // Send to Players
-                if (data.PlayerEmails != null)
-                {
-                    foreach (var email in data.PlayerEmails)
-                    {
-                        if (!string.IsNullOrEmpty(email))
-                        {
-                            await SendEmailAsync(email, subject, htmlContent);
-                        }
-                    }
-                }
-
                 return req.CreateResponse(HttpStatusCode.OK);
             }
             catch (Exception ex)
@@ -149,15 +137,18 @@ namespace Imperial2030.Functions
                                            $"<h2>Congratulations to the Winner: {data.WinnerName}!</h2>" +
                                            sharedHtmlContent;
 
+                var sentEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                 // Send to Admin
                 await SendEmailAsync(AdminEmail, subject, baseHtmlContent);
+                sentEmails.Add(AdminEmail);
 
                 // Send to Players
                 if (data.PlayerEmails != null)
                 {
                     foreach (var email in data.PlayerEmails)
                     {
-                        if (!string.IsNullOrEmpty(email))
+                        if (!string.IsNullOrEmpty(email) && !sentEmails.Contains(email))
                         {
                             if (string.Equals(email, data.WinnerEmail, StringComparison.OrdinalIgnoreCase))
                             {
@@ -167,6 +158,7 @@ namespace Imperial2030.Functions
                             {
                                 await SendEmailAsync(email, subject, baseHtmlContent);
                             }
+                            sentEmails.Add(email);
                         }
                     }
                 }

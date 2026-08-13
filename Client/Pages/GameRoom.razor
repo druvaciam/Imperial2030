@@ -145,21 +145,21 @@ else
                     {
                                 <li class="list-group-item bg-transparent text-white d-flex flex-column @(IsPlayerActive(player) ? "active-player-highlight" : (game.InvestorCardHolderId == player.Id ? "" : "px-0")) @(game.InvestorCardHolderId == player.Id ? "border border-info rounded my-2 p-2" : "")" style="@(game.InvestorCardHolderId == player.Id ? "border-width: 2px !important;" : "")">
                                     <div class="d-flex justify-content-between align-items-center w-100">
-                                        <span class="d-flex align-items-center gap-2">
+                                        <span class="d-flex align-items-center gap-2 flex-grow-1" style="min-width: 0; padding-right: 8px;">
                                 @if (player.IsBot)
                                 {
-                                                <span title="Bot Player">🤖</span>
+                                                <span class="flex-shrink-0" title="Bot Player">🤖</span>
                                 }
                                 else
                                 {
-                                                <span class="rounded-circle d-inline-block" 
+                                                <span class="rounded-circle d-inline-block flex-shrink-0" 
                                                       style="width: 10px; height: 10px; background-color: @(player.IsOnline ? (player.IsActiveInGame ? "#28a745" : "#ffc107") : "#dc3545");"
                                                       title="@(player.IsOnline ? (player.IsActiveInGame ? "In Game" : "Online") : "Offline")"></span>
                                 }
-                                        <span class="text-truncate" style="max-width: 160px;">@player.UserName</span>
-                                        <span class="ms-1" style="font-size: 1.1em; white-space: nowrap;" title="Controlled Nations">@GetPlayerControlledNationsString(player)</span>
+                                        <span class="text-truncate" title="@player.UserName">@player.UserName</span>
+                                        <span class="ms-1 flex-shrink-0 fw-bold" style="font-size: 1.0em; white-space: nowrap; color: #ced4da;" title="Controlled Nations">@GetPlayerControlledNationsString(player)</span>
                                     </span>
-                                    <div class="d-flex align-items-center flex-wrap justify-content-end gap-1">
+                                    <div class="d-flex align-items-center justify-content-end gap-1 flex-shrink-0">
                                         <span class="badge bg-warning text-dark position-relative" title="Cash">
                                             $@(player.Cash)M
                                             @if (_playerCashEffects.TryGetValue(player.Id, out var effect) && (DateTime.Now - effect.Timestamp).TotalSeconds < 5.5)

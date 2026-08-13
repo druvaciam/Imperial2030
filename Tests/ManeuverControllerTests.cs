@@ -692,8 +692,8 @@ namespace Imperial2030.Tests
             Assert.Contains(unitsInTerritory, u => u.Nation == Nation.Europe);
             Assert.Contains(unitsInTerritory, u => u.Nation == Nation.Russia);
 
-            // Both units should be marked peaceful
-            Assert.All(unitsInTerritory, u => Assert.False(u.IsHostile));
+            // Units keep their original hostility status (which defaults to true in test setup)
+            Assert.All(unitsInTerritory, u => Assert.True(u.IsHostile));
         }
 
         [Fact]
@@ -782,7 +782,7 @@ namespace Imperial2030.Tests
 
             var unitsInTerritory = finalGame.Units.Where(u => u.TerritoryId == "Ukraine").ToList();
             Assert.Equal(3, unitsInTerritory.Count);
-            Assert.All(unitsInTerritory, u => Assert.False(u.IsHostile));
+            Assert.All(unitsInTerritory, u => Assert.True(u.IsHostile));
         }
 
         [Fact]
@@ -934,6 +934,48 @@ namespace Imperial2030.Tests
                 var targetState = await context.TerritoryStates.FirstAsync(t => t.TerritoryId == targetTerritoryId);
                 // The old flag (Europe) should be removed, and no new flag (Russia) should be placed
                 Assert.Null(targetState.Controller);
+            }
+        }
+
+        [Fact]
+        public async Task RespondToBattle_PeaceBetweenTwoForeignArmies_MaintainsHostileOccupationOfHomeNation()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, playerId) = await SetupGame(context);
+                
+                var game = await context.Games.FirstAsync();
+                
+                // Pending Battle setup: EU is aggressor, RU is defender in Chicago (USA Home)
+                game.PendingBattleTerritoryId = "Chicago";
+                game.PendingBattleAggressorNation = Nation.Europe;
+                game.PendingBattleDefenders.Add(Nation.Russia);
+                
+                // RU occupies Chicago with hostile flag
+                var ruArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = "Chicago", IsHostile = true };
+                
+                // EU moved in peacefully
+                var euArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Europe, UnitType = UnitType.Army, TerritoryId = "Chicago", IsHostile = false };
+
+                context.Units.AddRange(ruArmy, euArmy);
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId); // Russia's controller
+
+                var request = new BattleResponseRequest { IsFight = false }; // Peace
+
+                // Act
+                var result = await controller.BattleResponse(gameId, request);
+
+                // Assert
+                Assert.IsType<OkResult>(result);
+
+                var finalUnits = await context.Units.Where(u => u.TerritoryId == "Chicago").ToListAsync();
+                var finalRuArmy = finalUnits.First(u => u.Nation == Nation.Russia);
+                
+                // EU moved in, both chose peace. EU remains peaceful, but RU was already hostilely occupying USA, so it must stay hostile.
+                Assert.True(finalRuArmy.IsHostile, "Russian army should remain hostile in USA home territory even after peace with EU.");
             }
         }
     }
