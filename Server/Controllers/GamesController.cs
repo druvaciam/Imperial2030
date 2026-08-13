@@ -25,14 +25,16 @@ public class GamesController : ControllerBase
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
     private readonly Imperial2030.Server.Services.PresenceTracker _presenceTracker;
     private readonly Imperial2030.Server.Services.BotService _botService;
+    private readonly Imperial2030.Server.Services.INotificationService _notificationService;
 
-    public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.PresenceTracker presenceTracker, Imperial2030.Server.Services.BotService botService)
+    public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.PresenceTracker presenceTracker, Imperial2030.Server.Services.BotService botService, Imperial2030.Server.Services.INotificationService notificationService)
     {
         _context = context;
         _userManager = userManager;
         _hubContext = hubContext;
         _presenceTracker = presenceTracker;
         _botService = botService;
+        _notificationService = notificationService;
     }
 
     [HttpGet]
@@ -42,7 +44,7 @@ public class GamesController : ControllerBase
         var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
         return await _context.Games
-            .Include(g => g.Players)
+            .Include(g => g.Players).ThenInclude(p => p.User)
             .Include(g => g.NationStates)
             .OrderByDescending(g => g.CreatedAt)
             .Select(g => new GameDto
@@ -59,6 +61,7 @@ public class GamesController : ControllerBase
                 JoinCode = g.Players.Any(p => p.UserId == currentUserId && p.IsHost) ? g.JoinCode : null,
                 UserIds = g.Players.Select(p => p.UserId).ToList(),
                 HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault(),
+                HostName = g.Players.Where(p => p.IsHost).Select(p => p.User.UserName).FirstOrDefault(),
                 MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0,
                 TurnCount = g.TurnCount,
                 WinnerName = g.WinnerName
@@ -109,7 +112,8 @@ public class GamesController : ControllerBase
             TurnCount = game.TurnCount,
             VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
             UserIds = new List<string> { userId },
-            HostId = userId
+            HostId = userId,
+            HostName = User.Identity?.Name
         };
 
         await _hubContext.Clients.All.SendAsync("GameCreated", gameDto);
@@ -564,6 +568,25 @@ public class GamesController : ControllerBase
         if (gameCheck.Players.Count < 2) return BadRequest("Need at least 2 players to start.");
         if (gameCheck.Status != GameStatus.Lobby) return BadRequest("Game is not in lobby state.");
 
+        // Atomically transition the game out of Lobby state to prevent concurrent StartGame requests
+        if (_context.Database.IsRelational())
+        {
+            var rowsUpdated = await _context.Games
+                .Where(g => g.Id == gameId && g.Status == GameStatus.Lobby)
+                .ExecuteUpdateAsync(s => s.SetProperty(g => g.Status, GameStatus.InProgress));
+
+            if (rowsUpdated == 0) return BadRequest("Game is already starting or not in lobby state.");
+        }
+        else
+        {
+            gameCheck.Status = GameStatus.InProgress;
+            await _context.SaveChangesAsync();
+        }
+
+        // Ensure the tracked entity knows about this change for later saves
+        gameCheck.Status = GameStatus.InProgress;
+        gameCheck.StartedAt = DateTime.UtcNow;
+
         try
         {
             // --- Initialization Logic ---
@@ -835,6 +858,9 @@ public class GamesController : ControllerBase
                 }
 
                 _context.Entry(gameToUpdate).State = EntityState.Modified;
+                
+                // Fire notification after starting the game
+                _ = _notificationService.NotifyGameStartedAsync(gameToUpdate);
             }
 
             int startingCash = playersToUpdate.Count switch
@@ -1776,6 +1802,10 @@ public class GamesController : ControllerBase
             await _context.SaveChangesAsync();
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); // Notify update FIRST so clients see 25 Power
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameEnded", gameId); // Notify end
+            
+            // Fire notification
+            _ = _notificationService.NotifyGameFinishedAsync(game, $"Ended by {nation} reaching 25 Power");
+            
             return Ok(new { Message = "Game Over", Winner = nation });
         }
 

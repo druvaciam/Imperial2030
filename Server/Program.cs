@@ -25,6 +25,7 @@ builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Im
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.GreedyBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.RandomBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.BotService>();
+builder.Services.AddHttpClient<Imperial2030.Server.Services.INotificationService, Imperial2030.Server.Services.NotificationService>();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 

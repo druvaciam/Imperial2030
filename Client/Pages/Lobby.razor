@@ -84,6 +84,10 @@
                     <div class="card h-100 bg-dark text-white border-secondary shadow-sm">
                         <div class="card-body">
                             <h5 class="card-title text-warning">@game.Name</h5>
+                            @if (!string.IsNullOrEmpty(game.HostName))
+                            {
+                                <h6 class="card-subtitle mb-2 text-info"><i class="bi bi-person-fill me-1"></i>Host: @game.HostName</h6>
+                            }
                             <h6 class="card-subtitle mb-2 text-muted">Created: @game.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy h:mm tt")</h6>
                             @if (game.FinishedAt.HasValue)
                             {

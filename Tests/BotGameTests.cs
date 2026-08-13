@@ -72,6 +72,7 @@ namespace Imperial2030.Tests
                 // Return a new context instance with the same dbName
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
 
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
@@ -87,7 +88,7 @@ namespace Imperial2030.Tests
 
             var mockPresenceTracker = new Mock<PresenceTracker>();
 
-            var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService);
+            var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
 
             var userId = "host-user-id";
             var httpContext = new DefaultHttpContext();
@@ -194,6 +195,7 @@ namespace Imperial2030.Tests
                     var mockServiceProvider = new Mock<IServiceProvider>();
                     var scopeContext = GetDbContext(dbName);
                     mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                    mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
                     scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                     return scope.Object;
                 });
@@ -206,7 +208,7 @@ namespace Imperial2030.Tests
                 var mockUserManager = new Mock<UserManager<ApplicationUser>>(store.Object, null, null, null, null, null, null, null, null);
                 var mockPresenceTracker = new Mock<PresenceTracker>();
 
-                var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService);
+                var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
 
                 var userId = "host-user-id";
                 var httpContext = new DefaultHttpContext();
@@ -309,6 +311,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
@@ -366,6 +369,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
@@ -434,6 +438,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
@@ -492,6 +497,7 @@ namespace Imperial2030.Tests
             scopeFactory.Setup(f => f.CreateScope()).Returns(scope.Object);
             scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
             sp.Setup(s => s.GetService(typeof(ApplicationDbContext))).Returns(() => GetDbContext(dbName));
+            sp.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
 
             var mockLogger = new Mock<ILogger<BotService>>();
 
@@ -570,6 +576,7 @@ namespace Imperial2030.Tests
                     var mockServiceProvider = new Mock<IServiceProvider>();
                     var scopeContext = GetDbContext(dbName);
                     mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                    mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
                     scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                     return scope.Object;
                 });
@@ -590,7 +597,7 @@ namespace Imperial2030.Tests
                 var mockUserManager = new Mock<UserManager<ApplicationUser>>(store.Object, null, null, null, null, null, null, null, null);
                 var mockPresenceTracker = new Mock<PresenceTracker>();
 
-                var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService);
+                var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
 
                 var userId = "host-user-id";
                 var httpContext = new DefaultHttpContext();
@@ -694,6 +701,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
@@ -771,6 +779,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });

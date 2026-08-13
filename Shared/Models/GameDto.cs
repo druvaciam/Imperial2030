@@ -17,6 +17,7 @@ public class GameDto
     public bool IsFull => PlayerCount >= MaxPlayers;
     public List<string> UserIds { get; set; } = [];
     public string? HostId { get; set; }
+    public string? HostName { get; set; }
     public int MaxPower { get; set; }
     public int TurnCount { get; set; }
     public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;

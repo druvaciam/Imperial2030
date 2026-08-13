@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 
 namespace Imperial2030.Tests
 {
@@ -14,6 +15,14 @@ namespace Imperial2030.Tests
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            builder.ConfigureAppConfiguration((context, configBuilder) =>
+            {
+                configBuilder.AddInMemoryCollection(new System.Collections.Generic.Dictionary<string, string>
+                {
+                    { "AzureFunctionNotificationUrl", "" }
+                });
+            });
+
             builder.ConfigureServices(services =>
             {
                 var descriptors = services.Where(
