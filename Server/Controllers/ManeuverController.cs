@@ -809,12 +809,6 @@ public class ManeuverController : ControllerBase
                 GameLogger.LogAllPartiesPeace(_context, game, game.PendingBattleTerritoryId, "System");
                 var aggressorNation = game.PendingBattleAggressorNation.Value;
 
-                // Mark all units in the territory as peaceful
-                var peacefulUnits = game.Units.Where(u => u.TerritoryId == game.PendingBattleTerritoryId).ToList();
-                foreach (var pu in peacefulUnits)
-                {
-                    pu.IsHostile = false;
-                }
 
                 game.PendingBattleTerritoryId = null;
                 game.PendingBattleAggressorNation = null;
