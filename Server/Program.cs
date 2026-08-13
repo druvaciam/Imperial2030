@@ -36,25 +36,28 @@ if (isTrainingMode)
     builder.Services.AddHostedService<Imperial2030.Server.Services.TcpTrainingServer>();
 }
 
-builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext>(options =>
-{
     if (isTrainingMode)
     {
-        options.UseInMemoryDatabase("TrainingDB");
+        builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext>(opt => opt.UseInMemoryDatabase("TrainingDB"));
     }
-    else if (string.IsNullOrEmpty(connectionString))
+    else if (string.IsNullOrEmpty(connectionString) || connectionString.Contains(".db"))
     {
-        // Fallback to SQLite if no SQL Server connection string is provided
-        var dbPath = System.IO.Path.Combine(builder.Environment.ContentRootPath, "imperial2030.db");
-        options.UseSqlite($"Data Source={dbPath}");
+        // Use SQLite if no connection string is provided, or if it points to a .db file
+        var dbPath = string.IsNullOrEmpty(connectionString) 
+            ? $"Data Source={System.IO.Path.Combine(builder.Environment.ContentRootPath, "imperial2030.db")}"
+            : connectionString;
+            
+        builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext, Imperial2030.Server.Data.SqliteApplicationDbContext>(opt => 
+            opt.UseSqlite(dbPath)
+               .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
     }
     else
     {
-        // Use SQL Server if connection string exists
-        options.UseSqlServer(connectionString);
+        // Use SQL Server for standard connection strings (e.g., Azure App Service, local development)
+        builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext, Imperial2030.Server.Data.SqlServerApplicationDbContext>(opt => 
+            opt.UseSqlServer(connectionString)
+               .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
     }
-    options.ConfigureWarnings(warnings => warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
-});
 
 builder.Services.AddIdentity<Imperial2030.Server.Models.ApplicationUser, Microsoft.AspNetCore.Identity.IdentityRole>()
     .AddEntityFrameworkStores<Imperial2030.Server.Data.ApplicationDbContext>()
@@ -158,6 +161,12 @@ using (var scope = app.Services.CreateScope())
         var logger = services.GetRequiredService<ILogger<Program>>();
 
         var dbContext = services.GetRequiredService<Imperial2030.Server.Data.ApplicationDbContext>();
+        
+        if (dbContext.Database.IsRelational())
+        {
+            await dbContext.Database.MigrateAsync();
+        }
+
         var twoWeeksAgo = DateTime.UtcNow.AddDays(-14);
         var statuses = new[] { GameStatus.Lobby, GameStatus.InProgress };
         var oldGames = await dbContext.Games

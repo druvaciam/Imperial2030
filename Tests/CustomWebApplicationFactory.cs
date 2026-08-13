@@ -26,7 +26,10 @@ namespace Imperial2030.Tests
             builder.ConfigureServices(services =>
             {
                 var descriptors = services.Where(
-                    d => d.ServiceType == typeof(DbContextOptions<ApplicationDbContext>) ||
+                    d => d.ServiceType == typeof(ApplicationDbContext) ||
+                         d.ServiceType == typeof(Imperial2030.Server.Data.SqlServerApplicationDbContext) ||
+                         d.ServiceType == typeof(Imperial2030.Server.Data.SqliteApplicationDbContext) ||
+                         d.ServiceType == typeof(DbContextOptions<ApplicationDbContext>) ||
                          d.ServiceType == typeof(DbContextOptions) ||
                          d.ServiceType.Name.Contains("DbConnection") ||
                          d.ServiceType.Name.Contains("DbContextOptions")).ToList();

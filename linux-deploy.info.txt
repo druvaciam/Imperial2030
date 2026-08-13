@@ -1,6 +1,7 @@
+# make the server executable
 sudo chmod +x /opt/imperial2030/publish/Imperial2030.Server
 
-#
+# Create a systemd service to run the app
 sudo tee /etc/systemd/system/imperial2030.service > /dev/null <<'EOF'
 [Unit]
 Description=Imperial2030 Game Server
@@ -16,18 +17,25 @@ Environment=ASPNETCORE_URLS=http://localhost:5000
 Environment=ConnectionStrings__DefaultConnection="Data Source=/opt/imperial2030/imperial2030.db"
 # openssl rand -base64 32
 Environment=Jwt__Key=YourStrongRandomKeyHere_AtLeast32CharsLong!!
+Environment=AzureFunctionNotificationKey=YOUR_FUNCTION_KEY_HERE
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-#
+# edit config file to update the paths
+sudo nano /etc/systemd/system/imperial2030.service
+#Save and close the file (in nano, press CTRL+O, Enter, then CTRL+X).
+# reload the daemon
+sudo systemctl daemon-reload
+
+# enable and start the service
 sudo systemctl enable imperial2030
 sudo systemctl start imperial2030
 sudo systemctl status imperial2030
 
 
-#
+# nginx setup
 sudo apt update && sudo apt install -y nginx certbot python3-certbot-nginx
 
 sudo tee /etc/nginx/sites-available/imperial2030 > /dev/null <<'EOF'
@@ -52,30 +60,40 @@ EOF
 
 
 
-#
+# enable nginx
 sudo ln -s /etc/nginx/sites-available/imperial2030 /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl restart nginx
 
-#
+# update the firewall
 sudo ufw allow 'Nginx HTTP'
 
 
 # Get Free SSL Certificate
-
 sudo certbot --nginx -d yourdomain.com
 
 
 # Updating the App
-# Stop the running server
-sudo systemctl stop imperial2030
+# on local pc
+dotnet publish Server/Imperial2030.Server.csproj -c Release -o ./publish --self-contained -r linux-x64
 
 scp -r ./publish ubuntu@51.83.187.156:/home/ubuntu/temp_publish
 
+# on vps
+# stop the running server
+sudo systemctl stop imperial2030
+# backup old files
+sudo rm -rf /opt/imperial2030/publish_backup
+sudo cp -r /opt/imperial2030/publish /opt/imperial2030/publish_backup
+
+# restore from backup
+sudo cp -r /opt/imperial2030/publish_backup/* /opt/imperial2030/publish/
+
+# copy new files
 sudo cp -r /home/ubuntu/temp_publish/* /opt/imperial2030/publish/
-rm -rf /home/ubuntu/temp_publish
+sudo rm -rf /home/ubuntu/temp_publish
 sudo chmod +x /opt/imperial2030/publish/Imperial2030.Server
 
-# On VPS
+# on vps
 sudo systemctl start imperial2030
 sudo systemctl status imperial2030

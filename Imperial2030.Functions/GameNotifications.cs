@@ -139,11 +139,7 @@ namespace Imperial2030.Functions
 
                 var sentEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                // Send to Admin
-                await SendEmailAsync(AdminEmail, subject, baseHtmlContent);
-                sentEmails.Add(AdminEmail);
-
-                // Send to Players
+                // Send to Players first so they get role-specific templates (like winner congratulation)
                 if (data.PlayerEmails != null)
                 {
                     foreach (var email in data.PlayerEmails)
@@ -161,6 +157,13 @@ namespace Imperial2030.Functions
                             sentEmails.Add(email);
                         }
                     }
+                }
+
+                // Send to Admin if they weren't in the game
+                if (!sentEmails.Contains(AdminEmail))
+                {
+                    await SendEmailAsync(AdminEmail, subject, baseHtmlContent);
+                    sentEmails.Add(AdminEmail);
                 }
 
                 return req.CreateResponse(HttpStatusCode.OK);
