@@ -79,7 +79,7 @@ dotnet publish Server/Imperial2030.Server.csproj -c Release -o ./publish --self-
 
 scp -r ./publish ubuntu@51.83.187.156:/home/ubuntu/temp_publish
 
-# on vps
+# on vps (ssh ubuntu@51.83.187.156)
 # stop the running server
 sudo systemctl stop imperial2030
 # backup old files

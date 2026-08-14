@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
@@ -10,9 +10,7 @@ namespace Imperial2030.Server.Migrations.SqlServerMigrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropIndex(
-                name: "IX_GameActions_GameId",
-                table: "GameActions");
+            migrationBuilder.Sql("IF EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GameActions_GameId' AND object_id = OBJECT_ID('GameActions')) DROP INDEX IX_GameActions_GameId ON GameActions;");
 
             migrationBuilder.AddColumn<long>(
                 name: "OrderIndex",
@@ -30,9 +28,7 @@ namespace Imperial2030.Server.Migrations.SqlServerMigrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropIndex(
-                name: "IX_GameActions_GameId_OrderIndex",
-                table: "GameActions");
+            migrationBuilder.Sql("IF EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GameActions_GameId_OrderIndex' AND object_id = OBJECT_ID('GameActions')) DROP INDEX IX_GameActions_GameId_OrderIndex ON GameActions;");
 
             migrationBuilder.DropColumn(
                 name: "OrderIndex",
