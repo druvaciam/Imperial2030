@@ -176,7 +176,7 @@ else
                                             @if (_playerCashEffects.TryGetValue(player.Id, out var effect) && (DateTime.Now - effect.Timestamp).TotalSeconds < 5.5)
                                             {
                                                 <span @key="effect.TriggerId" class="floating-cash @(effect.Delta > 0 ? "positive" : "negative")">
-                                                    @(effect.Delta > 0 ? "+" : "")@(effect.Delta)M
+                                                    @(effect.Delta > 0 ? "+$" : "-$")@(Math.Abs(effect.Delta))M
                                                 </span>
                                             }
                                         </span>
@@ -423,11 +423,19 @@ else
                                 </summary>
                                 <div class="mt-3">
                                     <ul class="list-group list-group-flush bg-transparent small">
-                        @foreach (var ns in game.NationStates.OrderBy(n => ((int)n.Nation - (int)game.CurrentTurnNation + 6) % 6))
+                        @foreach (var ns in game.NationStates.OrderBy(n => ((int)n.Nation - (int)(_displayedTurnNation ?? game.CurrentTurnNation) + 6) % 6))
                         {
                                         <li class="list-group-item bg-transparent text-white @(ns.Nation == game.CurrentTurnNation ? "active-player-highlight" : "px-0")">
                                             <b>@ns.Nation</b><br/>
-                                            <span class="text-info">Treasury: @ns.Treasury M</span> | 
+                                            <span class="text-info position-relative">
+                                                Treasury: @ns.Treasury M
+                                                @if (_nationTreasuryEffects.TryGetValue(ns.Nation, out var tEffect) && (DateTime.Now - tEffect.Timestamp).TotalSeconds < 5.5)
+                                                {
+                                                    <span @key="tEffect.TriggerId" class="floating-cash @(tEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
+                                                        @(tEffect.Delta > 0 ? "+$" : "-$")@(Math.Abs(tEffect.Delta))M
+                                                    </span>
+                                                }
+                                            </span> | 
                                             <span class="text-warning">Power: @ns.Power (@(ns.Power / 5)x)</span><br/>
                                             @{
                                                 var taxInfo = GetTaxPreview(ns);
@@ -681,7 +689,15 @@ else
                             {
                                                  <div class="d-flex align-items-center mb-1">
                                                      <span class="badge bg-primary me-2">@gov.Nation</span>
-                                                     <small class="text-muted">Power: @gov.Power | Treasury: @gov.Treasury M</small>
+                                                     <small class="text-muted position-relative">
+                                                         Power: @gov.Power | Treasury: @gov.Treasury M
+                                                         @if (_nationTreasuryEffects.TryGetValue(gov.Nation, out var govTEffect) && (DateTime.Now - govTEffect.Timestamp).TotalSeconds < 5.5)
+                                                         {
+                                                             <span @key="govTEffect.TriggerId" class="floating-cash @(govTEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
+                                                                 @(govTEffect.Delta > 0 ? "+$" : "-$")@(Math.Abs(govTEffect.Delta))M
+                                                             </span>
+                                                         }
+                                                     </small>
                                                  </div>
                             }
                         }
@@ -1288,10 +1304,13 @@ else
     private List<string> availableBotTypes = new() { "Default", "Aggressive", "Friendly", "Greedy", "RL", "Random" };
     private string commandInput = string.Empty;
     private Dictionary<Guid, (int Delta, Guid TriggerId, DateTime Timestamp)> _playerCashEffects = new();
+    private Dictionary<Nation, (int Delta, Guid TriggerId, DateTime Timestamp)> _nationTreasuryEffects = new();
     private Dictionary<Guid, DateTime> _newUnitTimestamps = new();
     private Dictionary<string, DateTime> _newFactoryTimestamps = new();
     private Dictionary<Nation, DateTime> _nationPowerChanges = new();
     private Dictionary<Nation, DateTime> _nationTaxChanges = new();
+    private Nation? _displayedTurnNation;
+    private CancellationTokenSource? _nationRotationCts;
 
     protected override async Task OnInitializedAsync()
     {
@@ -1400,11 +1419,13 @@ else
             var oldPlayers = game?.Players.ToDictionary(p => p.Id, p => p.Cash);
             var oldUnitIds = game?.Units.Select(u => u.Id).ToHashSet();
             var oldFactories = game?.Territories.Where(t => t.HasFactory).Select(t => t.TerritoryId).ToHashSet();
-            var oldNationStates = game?.NationStates.ToDictionary(ns => ns.Nation, ns => new { ns.Power, ns.TaxRevenue });
+            var oldNationStates = game?.NationStates.ToDictionary(ns => ns.Nation, ns => new { ns.Power, ns.TaxRevenue, ns.Treasury });
             var newGame = await Http.GetFromJsonAsync<GameDetailDto>($"api/games/{GameId}");
             
             if (newGame != null)
             {
+                UpdateDisplayedNation(newGame.CurrentTurnNation);
+
                 if (oldPlayers != null)
                 {
                     foreach (var p in newGame.Players)
@@ -1449,6 +1470,11 @@ else
                     {
                         if (oldNationStates.TryGetValue(ns.Nation, out var oldNs))
                         {
+                            if (oldNs.Treasury != ns.Treasury)
+                            {
+                                var delta = ns.Treasury - oldNs.Treasury;
+                                _nationTreasuryEffects[ns.Nation] = (delta, Guid.NewGuid(), DateTime.Now);
+                            }
                             if (oldNs.Power != ns.Power)
                             {
                                 _nationPowerChanges[ns.Nation] = DateTime.Now;
@@ -1459,6 +1485,9 @@ else
                             }
                         }
                     }
+                    var expiredTreasury = _nationTreasuryEffects.Where(kv => (DateTime.Now - kv.Value.Timestamp).TotalSeconds > 10).Select(kv => kv.Key).ToList();
+                    foreach (var e in expiredTreasury) _nationTreasuryEffects.Remove(e);
+
                     var expiredPower = _nationPowerChanges.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 30).Select(kv => kv.Key).ToList();
                     foreach (var e in expiredPower) _nationPowerChanges.Remove(e);
                     
@@ -2306,8 +2335,38 @@ else
         public bool IsPaused { get; set; }
     }
 
+    private void UpdateDisplayedNation(Nation newNation)
+    {
+        if (_displayedTurnNation == null)
+        {
+            _displayedTurnNation = newNation;
+            return;
+        }
+
+        if (_displayedTurnNation != newNation)
+        {
+            _nationRotationCts?.Cancel();
+            _nationRotationCts = new CancellationTokenSource();
+            var token = _nationRotationCts.Token;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(3000, token);
+                    _displayedTurnNation = newNation;
+                    await InvokeAsync(StateHasChanged);
+                }
+                catch (TaskCanceledException) { }
+            });
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
+        _nationRotationCts?.Cancel();
+        _nationRotationCts?.Dispose();
+
         if (hubConnection is not null)
         {
             await hubConnection.InvokeAsync("LeaveGameGroup", GameId.ToString(), MyPlayer == null);
