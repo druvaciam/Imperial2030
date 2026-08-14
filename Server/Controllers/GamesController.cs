@@ -387,9 +387,10 @@ public class GamesController : ControllerBase
             PendingSwissBankResponders = game.PendingSwissBankResponders.ToList(),
             Units = game.Units.ToList(),
             ManeuverState = new ManeuverState { Phase = game.CurrentManeuverPhase },
-            Actions = game.Actions.OrderBy(a => a.Timestamp).Select(a => new GameActionDto
+            Actions = game.Actions.OrderBy(a => a.OrderIndex).ThenBy(a => a.Timestamp).Select(a => new GameActionDto
             {
                 Id = a.Id,
+                OrderIndex = a.OrderIndex,
                 Timestamp = a.Timestamp,
                 PlayerName = a.PlayerName,
                 Nation = a.Nation,
@@ -811,7 +812,7 @@ public class GamesController : ControllerBase
             // Let's assign to first player sorted by ID for simplicity.
             if (players.Any())
             {
-                var sorted = players.OrderBy(p => p.Id).ToList();
+                var sorted = players.GetOrderedPlayers().ToList();
                 var gameToInit = await _context.Games.Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == gameId);
                 if (gameToInit != null)
                 {
@@ -851,14 +852,15 @@ public class GamesController : ControllerBase
             {
                 gameToUpdate.Status = GameStatus.InProgress;
 
-                var firstNs = gameToUpdate.NationStates.FirstOrDefault(ns => ns.Nation == gameToUpdate.CurrentTurnNation);
-                if (firstNs == null || !firstNs.ControllerId.HasValue)
+                int advanceCount = 0;
+                while (gameToUpdate.NationStates.FirstOrDefault(ns => ns.Nation == gameToUpdate.CurrentTurnNation)?.ControllerId == null && advanceCount < 6)
                 {
                     gameToUpdate.AdvanceTurn();
+                    advanceCount++;
                 }
 
                 _context.Entry(gameToUpdate).State = EntityState.Modified;
-                
+
                 // Fire notification after starting the game
                 _ = _notificationService.NotifyGameStartedAsync(gameToUpdate);
             }
@@ -906,11 +908,7 @@ public class GamesController : ControllerBase
     // Helper to find next player in rotation
     private Guid GetNextPlayerId(Game game, Guid currentId)
     {
-        var sortedParams = game.Players.OrderBy(p => p.Id).ToList(); // Stable sort
-        var index = sortedParams.FindIndex(p => p.Id == currentId);
-        if (index == -1) return currentId; // Fallback
-        var nextIndex = (index + 1) % sortedParams.Count;
-        return sortedParams[nextIndex].Id;
+        return PlayerHelper.GetNextPlayerId(game, currentId);
     }
 
     private string GenerateJoinCode()
@@ -1078,7 +1076,7 @@ public class GamesController : ControllerBase
         var controlledNations = game.NationStates.Where(ns => ns.ControllerId.HasValue).Select(ns => ns.ControllerId).Distinct().ToList();
         var swissBankPlayers = game.Players
             .Where(p => !controlledNations.Contains(p.Id))
-            .OrderBy(p => p.Id)
+            .GetOrderedPlayers()
             .Select(p => p.Id)
             .ToList();
 
@@ -1258,7 +1256,7 @@ public class GamesController : ControllerBase
             if (nationState.Treasury >= totalInterest)
             {
                 // Find Swiss Bank players (players with no controlled government)
-                var swissBankPlayers = game.Players.Where(p => !game.NationStates.Any(ns => ns.ControllerId == p.Id)).ToList();
+                var swissBankPlayers = game.Players.Where(p => !game.NationStates.Any(ns => ns.ControllerId == p.Id)).GetOrderedPlayers().ToList();
                 if (swissBankPlayers.Any())
                 {
                     game.PendingSwissBankForceNation = nation;
@@ -1802,10 +1800,10 @@ public class GamesController : ControllerBase
             await _context.SaveChangesAsync();
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); // Notify update FIRST so clients see 25 Power
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameEnded", gameId); // Notify end
-            
+
             // Fire notification
             _ = _notificationService.NotifyGameFinishedAsync(game, $"Ended by {nation} reaching 25 Power");
-            
+
             return Ok(new { Message = "Game Over", Winner = nation });
         }
 

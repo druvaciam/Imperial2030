@@ -19,6 +19,12 @@ namespace Imperial2030.Server.Services
         Task NotifyGameFinishedAsync(Game game, string summary);
     }
 
+    public class NoOpNotificationService : INotificationService
+    {
+        public Task NotifyGameStartedAsync(Game game) => Task.CompletedTask;
+        public Task NotifyGameFinishedAsync(Game game, string summary) => Task.CompletedTask;
+    }
+
     public class NotificationService : INotificationService
     {
         private readonly HttpClient _httpClient;

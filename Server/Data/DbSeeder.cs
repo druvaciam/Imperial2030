@@ -9,11 +9,21 @@ public static class DbSeeder
     public static async Task SeedAsync(IServiceProvider serviceProvider)
     {
         var context = serviceProvider.GetRequiredService<ApplicationDbContext>();
-        // Migrations were generated for SQL Server, so MigrateAsync only works with SqlServer.
-        // For SQLite and InMemory, use EnsureCreated which builds schema from the current model.
-        if (context.Database.IsSqlServer())
+        var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
+
+        if (context.Database.IsRelational())
         {
-            await context.Database.MigrateAsync();
+            var pendingMigrations = (await context.Database.GetPendingMigrationsAsync()).ToList();
+            if (pendingMigrations.Any())
+            {
+                logger.LogInformation($"Applying {pendingMigrations.Count} pending database migrations: {string.Join(", ", pendingMigrations)}");
+                await context.Database.MigrateAsync();
+                logger.LogInformation("Database migrations applied successfully.");
+            }
+            else
+            {
+                logger.LogInformation("Database schema is up to date. No pending migrations.");
+            }
         }
         else
         {

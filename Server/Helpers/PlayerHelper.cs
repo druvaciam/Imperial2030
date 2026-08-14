@@ -18,4 +18,18 @@ public static class PlayerHelper
         }
         return p.UserId ?? "Player";
     }
+
+    public static IOrderedEnumerable<Player> GetOrderedPlayers(this IEnumerable<Player> players)
+    {
+        return players.OrderBy(p => p.Id);
+    }
+
+    public static Guid GetNextPlayerId(Game game, Guid currentId)
+    {
+        var sortedParams = game.Players.GetOrderedPlayers().ToList();
+        var index = sortedParams.FindIndex(p => p.Id == currentId);
+        if (index == -1) return currentId; // Fallback
+        var nextIndex = (index + 1) % sortedParams.Count;
+        return sortedParams[nextIndex].Id;
+    }
 }

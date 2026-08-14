@@ -7,6 +7,7 @@ using Imperial2030.Server.Models;
 using Imperial2030.Server.Services.Bots.Strategies;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
+using Imperial2030.Server.Helpers;
 
 namespace Imperial2030.Server.Services;
 
@@ -293,7 +294,7 @@ public class TcpTrainingServer : BackgroundService
 
         if (allPlayers.Any())
         {
-            var sorted = allPlayers.OrderBy(p => p.Id).ToList();
+            var sorted = allPlayers.GetOrderedPlayers().ToList();
             var gameToInit = game;
             if (gameToInit != null)
             {

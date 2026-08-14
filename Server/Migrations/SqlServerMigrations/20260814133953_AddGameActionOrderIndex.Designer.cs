@@ -4,16 +4,19 @@ using Imperial2030.Server.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace Imperial2030.Server.Migrations
+namespace Imperial2030.Server.Migrations.SqlServerMigrations
 {
-    [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [DbContext(typeof(SqlServerApplicationDbContext))]
+    [Migration("20260814133953_AddGameActionOrderIndex")]
+    partial class AddGameActionOrderIndex
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -234,6 +237,9 @@ namespace Imperial2030.Server.Migrations
                     b.Property<string>("Nation")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<long>("OrderIndex")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("PlayerName")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -244,7 +250,7 @@ namespace Imperial2030.Server.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("GameId");
+                    b.HasIndex("GameId", "OrderIndex");
 
                     b.ToTable("GameActions");
                 });

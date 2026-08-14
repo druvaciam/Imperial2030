@@ -10,9 +10,21 @@ public static class GameLogger
 {
     private static void LogAction(ApplicationDbContext? context, Game game, string type, Nation? nation, string playerName, object? metadata = null)
     {
+        long nextIndex = 1;
+        if (game.Actions != null && game.Actions.Count > 0)
+        {
+            nextIndex = game.Actions.Max(a => a.OrderIndex) + 1;
+        }
+        else if (context != null)
+        {
+            var maxDb = context.GameActions.Where(a => a.GameId == game.Id).Select(a => (long?)a.OrderIndex).Max();
+            nextIndex = (maxDb ?? 0) + 1;
+        }
+
         var action = new GameAction
         {
             GameId = game.Id,
+            OrderIndex = nextIndex,
             Timestamp = DateTime.UtcNow,
             PlayerName = playerName,
             Message = string.Empty,

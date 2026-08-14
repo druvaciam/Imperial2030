@@ -15,4 +15,5 @@ public class MoveUnitRequest
 public class BattleResponseRequest
 {
     public bool IsFight { get; set; }
+    public Nation? Nation { get; set; }
 }

@@ -62,6 +62,15 @@ public class ManeuverController : ControllerBase
 
         if (unit.HasMoved) return BadRequest("Unit already moved.");
 
+        if (unit.TerritoryId == request.DestinationId)
+        {
+            unit.HasMoved = true;
+            _context.Entry(unit).State = EntityState.Modified;
+            GameLogger.LogUnitMove(_context, game, unit.UnitType, unit.TerritoryId, request.DestinationId, false, nation, User.Identity?.Name ?? "System");
+            await _context.SaveChangesAsync();
+            return Ok();
+        }
+
         // Validate Move Adjacency and Type
         if (!MapConnectivity.Adjacency.TryGetValue(unit.TerritoryId, out var neighbors))
             return BadRequest("Invalid current territory.");
@@ -107,7 +116,22 @@ public class ManeuverController : ControllerBase
 
         // Determine if the fleet will engage in battle
         bool willFight = false;
-        List<Nation> foreignFleets = new List<Nation>();
+        var destDefForBattle = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
+        bool isForeignHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value != nation;
+        bool isMyHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value == nation;
+
+        var friendlyNations = controller != null
+            ? game.NationStates.Where(n => n.ControllerId == controller.Id).Select(n => n.Nation).ToHashSet()
+            : new HashSet<Nation>();
+        friendlyNations.Add(nation);
+
+        List<Nation> foreignFleets = game.Units
+            .Where(u => u.TerritoryId == request.DestinationId && !friendlyNations.Contains(u.Nation))
+            .Where(u => u.UnitType == UnitType.Fleet || (isForeignHome && u.Nation == destDefForBattle!.Nation!.Value && request.IsHostile))
+            .Select(u => u.Nation)
+            .Distinct()
+            .ToList();
+
         if (request.IsHostile)
         {
             if (request.BattleTargetNation.HasValue)
@@ -116,11 +140,6 @@ public class ManeuverController : ControllerBase
             }
             else
             {
-                foreignFleets = game.Units
-                    .Where(u => u.TerritoryId == request.DestinationId && u.UnitType == UnitType.Fleet && u.Nation != nation)
-                    .Select(u => u.Nation)
-                    .Distinct()
-                    .ToList();
                 willFight = foreignFleets.Any();
             }
         }
@@ -176,8 +195,14 @@ public class ManeuverController : ControllerBase
         }
         else
         {
-            // Peace Move for Fleets
-            if (foreignFleets.Any())
+            if (isMyHome && foreignFleets.Any())
+            {
+                request.IsHostile = true;
+                unit.IsHostile = true;
+            }
+
+            // Peace Move or Hostile Move for Fleets
+            if (foreignFleets.Any() && request.IsHostile)
             {
                 if (request.IsHostile && foreignFleets.Count == 1)
                 {
@@ -185,8 +210,8 @@ public class ManeuverController : ControllerBase
                     var targetNation = foreignFleets.First();
                     var enemyFleet = game.Units.FirstOrDefault(u =>
                         u.TerritoryId == request.DestinationId &&
-                        u.UnitType == UnitType.Fleet &&
-                        u.Nation == targetNation);
+                        u.Nation == targetNation &&
+                        (u.UnitType == UnitType.Fleet || (isForeignHome && u.Nation == destDefForBattle.Nation.Value && request.IsHostile)));
 
                     if (enemyFleet != null)
                     {
@@ -327,6 +352,15 @@ public class ManeuverController : ControllerBase
 
         if (unit.HasMoved) return BadRequest("Unit already moved.");
 
+        if (unit.TerritoryId == request.DestinationId)
+        {
+            unit.HasMoved = true;
+            _context.Entry(unit).State = EntityState.Modified;
+            GameLogger.LogUnitMove(_context, game, unit.UnitType, unit.TerritoryId, request.DestinationId, false, nation, User.Identity?.Name ?? "System");
+            await _context.SaveChangesAsync();
+            return Ok();
+        }
+
         // Validate Move Adjacency and Type
         if (!MapConnectivity.Adjacency.TryGetValue(unit.TerritoryId, out var neighbors))
             return BadRequest("Invalid current territory.");
@@ -396,10 +430,15 @@ public class ManeuverController : ControllerBase
         bool isForeignHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value != nation;
         bool isMyHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value == nation;
 
+        var friendlyNations = controller != null
+            ? game.NationStates.Where(n => n.ControllerId == controller.Id).Select(n => n.Nation).ToHashSet()
+            : new HashSet<Nation>();
+        friendlyNations.Add(nation);
+
         // Always compute foreignDefenders so forced-battle logic (isMyHome) works even on peaceful moves
         List<Nation> foreignDefenders = game.Units
-            .Where(u => u.TerritoryId == request.DestinationId && u.Nation != nation)
-            .Where(u => u.UnitType == UnitType.Army || (isForeignHome && u.Nation == destDefForBattle!.Nation!.Value))
+            .Where(u => u.TerritoryId == request.DestinationId && !friendlyNations.Contains(u.Nation))
+            .Where(u => u.UnitType == UnitType.Army || (isForeignHome && u.Nation == destDefForBattle!.Nation!.Value && request.IsHostile))
             .Select(u => u.Nation)
             .Distinct()
             .ToList();
@@ -484,7 +523,7 @@ public class ManeuverController : ControllerBase
                     var enemyUnit = game.Units.FirstOrDefault(u =>
                         u.TerritoryId == request.DestinationId &&
                         u.Nation == targetNation &&
-                        (u.UnitType == UnitType.Army || (isForeignHome && u.Nation == destDefForBattle.Nation.Value)));
+                        (u.UnitType == UnitType.Army || (isForeignHome && u.Nation == destDefForBattle.Nation.Value && request.IsHostile)));
 
                     if (enemyUnit != null)
                     {
@@ -751,14 +790,16 @@ public class ManeuverController : ControllerBase
         // Find the responding nation based on the user
         var respondingNations = game.NationStates
             .Where(ns => game.PendingBattleDefenders.Contains(ns.Nation))
-            .Where(ns => ns.ControllerId != null && game.Players.Any(p => p.Id == ns.ControllerId && p.UserId == userId))
+            .Where(ns => (ns.ControllerId != null && game.Players.Any(p => p.Id == ns.ControllerId && p.UserId == userId)) || ns.ControllerId == null)
             .Select(ns => ns.Nation)
             .ToList();
 
         if (!respondingNations.Any()) return Forbid();
 
-        // For simplicity, we process the first valid nation this user controls in the defenders list
-        var respondingNation = respondingNations.First();
+        // Process the specific requested nation or fallback to first valid nation
+        var respondingNation = (request.Nation.HasValue && respondingNations.Contains(request.Nation.Value))
+            ? request.Nation.Value
+            : respondingNations.First();
 
         if (request.IsFight)
         {
@@ -784,14 +825,13 @@ public class ManeuverController : ControllerBase
                 await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} chose FIGHT against {aggressorNation}!", false);
             }
 
-            // A single fight breaks the peace negotiation. Clear pending state.
-            game.PendingBattleTerritoryId = null;
-            game.PendingBattleAggressorNation = null;
-            game.PendingBattleDefenders.Clear();
+                game.PendingBattleTerritoryId = null;
+                game.PendingBattleAggressorNation = null;
+                game.PendingBattleDefenders.Clear();
 
-            await UpdateTerritoryControl(game);
-            // Advance Maneuver if applicable
-            await TryAutoAdvanceManeuver(game, aggressorNation);
+                await UpdateTerritoryControl(game);
+                // Advance Maneuver if applicable
+                await TryAutoAdvanceManeuver(game, aggressorNation);
         }
         else
         {
@@ -803,15 +843,17 @@ public class ManeuverController : ControllerBase
             GameLogger.LogBattleResponsePeace(_context, game, respondingNation, game.PendingBattleAggressorNation.Value, game.PendingBattleTerritoryId, User.Identity?.Name ?? "System");
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} agreed to PEACE.", false);
 
-            if (!game.PendingBattleDefenders.Any())
-            {
-                // Everyone agreed to peace
-                GameLogger.LogAllPartiesPeace(_context, game, game.PendingBattleTerritoryId, "System");
-                var aggressorNation = game.PendingBattleAggressorNation.Value;
+            var territoryId = game.PendingBattleTerritoryId;
+            var aggressorNation = game.PendingBattleAggressorNation.Value;
 
+            if (!game.PendingBattleDefenders.Any() || !game.Units.Any(u => u.TerritoryId == territoryId && u.Nation == aggressorNation))
+            {
+                // Everyone agreed to peace or aggressor eliminated
+                GameLogger.LogAllPartiesPeace(_context, game, territoryId, "System");
 
                 game.PendingBattleTerritoryId = null;
                 game.PendingBattleAggressorNation = null;
+                game.PendingBattleDefenders.Clear();
 
                 await UpdateTerritoryControl(game);
                 // Advance Maneuver if applicable
@@ -860,7 +902,7 @@ public class ManeuverController : ControllerBase
         // Actually, no further changes needed since the caller will SaveChanges.
     }
 
-    private async Task UpdateTerritoryControl(Game game)
+    public async Task UpdateTerritoryControl(Game game)
     {
         // Automatic Flag Placement Logic
         var territoriesWithUnits = game.Units.Select(u => u.TerritoryId).Distinct().ToList();
