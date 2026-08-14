@@ -54,16 +54,18 @@ if (isTrainingMode)
             ? $"Data Source={System.IO.Path.Combine(builder.Environment.ContentRootPath, "imperial2030.db")}"
             : connectionString;
             
-        builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext, Imperial2030.Server.Data.SqliteApplicationDbContext>(opt => 
+        builder.Services.AddDbContext<Imperial2030.Server.Data.SqliteApplicationDbContext>(opt => 
             opt.UseSqlite(dbPath, b => b.MigrationsAssembly(typeof(Imperial2030.Server.Data.SqliteApplicationDbContext).Assembly.FullName))
                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
+        builder.Services.AddScoped<Imperial2030.Server.Data.ApplicationDbContext>(sp => sp.GetRequiredService<Imperial2030.Server.Data.SqliteApplicationDbContext>());
     }
     else
     {
         // Use SQL Server for standard connection strings (e.g., Azure App Service, local development)
-        builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext, Imperial2030.Server.Data.SqlServerApplicationDbContext>(opt => 
+        builder.Services.AddDbContext<Imperial2030.Server.Data.SqlServerApplicationDbContext>(opt => 
             opt.UseSqlServer(connectionString, b => b.MigrationsAssembly(typeof(Imperial2030.Server.Data.SqlServerApplicationDbContext).Assembly.FullName))
                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
+        builder.Services.AddScoped<Imperial2030.Server.Data.ApplicationDbContext>(sp => sp.GetRequiredService<Imperial2030.Server.Data.SqlServerApplicationDbContext>());
     }
 
 builder.Services.AddIdentity<Imperial2030.Server.Models.ApplicationUser, Microsoft.AspNetCore.Identity.IdentityRole>()
