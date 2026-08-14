@@ -428,7 +428,7 @@ else
                                         <li class="list-group-item bg-transparent text-white @(ns.Nation == game.CurrentTurnNation ? "active-player-highlight" : "px-0")">
                                             <b>@ns.Nation</b><br/>
                                             <span class="text-info position-relative">
-                                                Treasury: @ns.Treasury M
+                                                Treasury: $@(ns.Treasury)M
                                                 @if (_nationTreasuryEffects.TryGetValue(ns.Nation, out var tEffect) && (DateTime.Now - tEffect.Timestamp).TotalSeconds < 5.5)
                                                 {
                                                     <span @key="tEffect.TriggerId" class="floating-cash @(tEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
@@ -436,7 +436,15 @@ else
                                                     </span>
                                                 }
                                             </span> | 
-                                            <span class="text-warning">Power: @ns.Power (@(ns.Power / 5)x)</span><br/>
+                                            <span class="text-warning position-relative">
+                                                Power: @ns.Power (@(ns.Power / 5)x)
+                                                @if (_nationPowerEffects.TryGetValue(ns.Nation, out var pEffect) && (DateTime.Now - pEffect.Timestamp).TotalSeconds < 5.5)
+                                                {
+                                                    <span @key="pEffect.TriggerId" class="floating-cash @(pEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
+                                                        @(pEffect.Delta > 0 ? "+" : "")@(pEffect.Delta)
+                                                    </span>
+                                                }
+                                            </span><br/>
                                             @{
                                                 var taxInfo = GetTaxPreview(ns);
                                             }
@@ -690,13 +698,24 @@ else
                                                  <div class="d-flex align-items-center mb-1">
                                                      <span class="badge bg-primary me-2">@gov.Nation</span>
                                                      <small class="text-muted position-relative">
-                                                         Power: @gov.Power | Treasury: @gov.Treasury M
-                                                         @if (_nationTreasuryEffects.TryGetValue(gov.Nation, out var govTEffect) && (DateTime.Now - govTEffect.Timestamp).TotalSeconds < 5.5)
-                                                         {
-                                                             <span @key="govTEffect.TriggerId" class="floating-cash @(govTEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
-                                                                 @(govTEffect.Delta > 0 ? "+$" : "-$")@(Math.Abs(govTEffect.Delta))M
-                                                             </span>
-                                                         }
+                                                         <span class="position-relative">
+                                                             Power: @gov.Power
+                                                             @if (_nationPowerEffects.TryGetValue(gov.Nation, out var govPEffect) && (DateTime.Now - govPEffect.Timestamp).TotalSeconds < 5.5)
+                                                             {
+                                                                 <span @key="govPEffect.TriggerId" class="floating-cash @(govPEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
+                                                                     @(govPEffect.Delta > 0 ? "+" : "")@(govPEffect.Delta)
+                                                                 </span>
+                                                             }
+                                                         </span> | 
+                                                         <span class="position-relative">
+                                                             Treasury: $@(gov.Treasury)M
+                                                             @if (_nationTreasuryEffects.TryGetValue(gov.Nation, out var govTEffect) && (DateTime.Now - govTEffect.Timestamp).TotalSeconds < 5.5)
+                                                             {
+                                                                 <span @key="govTEffect.TriggerId" class="floating-cash @(govTEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
+                                                                     @(govTEffect.Delta > 0 ? "+$" : "-$")@(Math.Abs(govTEffect.Delta))M
+                                                                 </span>
+                                                             }
+                                                         </span>
                                                      </small>
                                                  </div>
                             }
@@ -1305,6 +1324,7 @@ else
     private string commandInput = string.Empty;
     private Dictionary<Guid, (int Delta, Guid TriggerId, DateTime Timestamp)> _playerCashEffects = new();
     private Dictionary<Nation, (int Delta, Guid TriggerId, DateTime Timestamp)> _nationTreasuryEffects = new();
+    private Dictionary<Nation, (int Delta, Guid TriggerId, DateTime Timestamp)> _nationPowerEffects = new();
     private Dictionary<Guid, DateTime> _newUnitTimestamps = new();
     private Dictionary<string, DateTime> _newFactoryTimestamps = new();
     private Dictionary<Nation, DateTime> _nationPowerChanges = new();
@@ -1477,6 +1497,8 @@ else
                             }
                             if (oldNs.Power != ns.Power)
                             {
+                                var pDelta = ns.Power - oldNs.Power;
+                                _nationPowerEffects[ns.Nation] = (pDelta, Guid.NewGuid(), DateTime.Now);
                                 _nationPowerChanges[ns.Nation] = DateTime.Now;
                             }
                             if (oldNs.TaxRevenue != ns.TaxRevenue)
@@ -1487,6 +1509,9 @@ else
                     }
                     var expiredTreasury = _nationTreasuryEffects.Where(kv => (DateTime.Now - kv.Value.Timestamp).TotalSeconds > 10).Select(kv => kv.Key).ToList();
                     foreach (var e in expiredTreasury) _nationTreasuryEffects.Remove(e);
+
+                    var expiredPowerEffects = _nationPowerEffects.Where(kv => (DateTime.Now - kv.Value.Timestamp).TotalSeconds > 10).Select(kv => kv.Key).ToList();
+                    foreach (var e in expiredPowerEffects) _nationPowerEffects.Remove(e);
 
                     var expiredPower = _nationPowerChanges.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 30).Select(kv => kv.Key).ToList();
                     foreach (var e in expiredPower) _nationPowerChanges.Remove(e);

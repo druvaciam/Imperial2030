@@ -101,7 +101,7 @@
                                 Status: <span class="badge bg-@GetStatusColor(game.Status)">
                                     @if (game.Status == GameStatus.InProgress)
                                     {
-                                        @($"In Progress ({(int)(game.MaxPower < 10 ? (game.TurnCount / 800.0 * 100.0) : (game.MaxPower / 25.0 * 100.0))}%)")
+                                        @($"In Progress ({(int)(game.MaxPower < 10 ? (game.TurnCount / 110.0 * 100.0) : (game.MaxPower / 25.0 * 100.0))}%)")
                                     }
                                     else if (game.Status == GameStatus.Finished && game.TurnCount > 0)
                                     {

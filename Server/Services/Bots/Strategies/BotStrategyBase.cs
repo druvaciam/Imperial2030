@@ -32,6 +32,9 @@ public abstract class BotStrategyBase : IBotStrategy
         return validCities[rng.Next(validCities.Count)].Id;
     }
 
+    private const string LondonTerritoryId = "London";
+    private const double PreferArmyProbability = 0.80;
+
     public virtual List<(UnitType Type, string TerritoryId)> ChooseImports(Game game, NationState ns, int maxImport, List<Territory> homeTerritories)
     {
         var result = new List<(UnitType Type, string TerritoryId)>();
@@ -46,6 +49,24 @@ public abstract class BotStrategyBase : IBotStrategy
 
         if (validTerritories.Count == 0) return result;
 
+        var allHomeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == nation).ToList();
+
+        bool hasOccupiedTerritory = game.Units.Any(u =>
+            u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile && allHomeTerritories.Any(ht => string.Equals(ht.Id, u.TerritoryId, StringComparison.OrdinalIgnoreCase)));
+
+        int availableArmyFactories = allHomeTerritories.Count(ht =>
+            ht.CityType == CityType.Brown &&
+            game.TerritoryStates.Any(ts => string.Equals(ts.TerritoryId, ht.Id, StringComparison.OrdinalIgnoreCase) && ts.HasFactory) &&
+            !game.Units.Any(u => string.Equals(u.TerritoryId, ht.Id, StringComparison.OrdinalIgnoreCase) && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile));
+
+        int availableFleetFactories = allHomeTerritories.Count(ht =>
+            ht.CityType == CityType.LightBlue &&
+            game.TerritoryStates.Any(ts => string.Equals(ts.TerritoryId, ht.Id, StringComparison.OrdinalIgnoreCase) && ts.HasFactory) &&
+            !game.Units.Any(u => string.Equals(u.TerritoryId, ht.Id, StringComparison.OrdinalIgnoreCase) && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile));
+
+        bool preferArmy = hasOccupiedTerritory || availableArmyFactories < availableFleetFactories;
+        var rng = new Random();
+
         while (imported < maxImport)
         {
             bool built = false;
@@ -53,19 +74,36 @@ public abstract class BotStrategyBase : IBotStrategy
             {
                 if (imported >= maxImport) break;
 
-                bool canBuildArmy = currentArmies < NationData.GetMaxArmies(nation);
+                bool isLondon = string.Equals(t.Id, LondonTerritoryId, StringComparison.OrdinalIgnoreCase);
+                bool canBuildArmy = currentArmies < NationData.GetMaxArmies(nation) && !isLondon;
                 bool canBuildFleet = currentFleets < NationData.GetMaxFleets(nation) && t.CityType == CityType.LightBlue;
 
                 if (!canBuildArmy && !canBuildFleet) continue;
 
-                UnitType typeToBuild = UnitType.Army;
-                if (canBuildFleet && (!canBuildArmy || imported % 2 == 0))
+                UnitType typeToBuild;
+                if (!canBuildFleet)
                 {
-                    typeToBuild = UnitType.Fleet;
+                    typeToBuild = UnitType.Army;
                 }
                 else if (!canBuildArmy)
                 {
                     typeToBuild = UnitType.Fleet;
+                }
+                else
+                {
+                    if (preferArmy)
+                    {
+                        typeToBuild = rng.NextDouble() < PreferArmyProbability ? UnitType.Army : UnitType.Fleet;
+                    }
+                    else
+                    {
+                        if (currentArmies < currentFleets)
+                            typeToBuild = UnitType.Army;
+                        else if (currentFleets < currentArmies)
+                            typeToBuild = UnitType.Fleet;
+                        else
+                            typeToBuild = rng.Next(2) == 0 ? UnitType.Army : UnitType.Fleet;
+                    }
                 }
 
                 result.Add((typeToBuild, t.Id));
