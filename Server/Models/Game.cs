@@ -31,6 +31,8 @@ public class Game
     [MaxLength(50)]
     public string? WinnerName { get; set; }
 
+    public bool IsPaused { get; set; } = false;
+
     // Investor Logic
     public Guid? InvestorCardHolderId { get; set; }
     public bool IsInvestorTurn { get; set; } = false;

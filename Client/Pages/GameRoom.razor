@@ -39,6 +39,17 @@ else
                 {
                     <span class="badge bg-warning text-dark ms-2">Variant: Tax Bonus</span>
                 }
+                @if (game.Status == GameStatus.InProgress && IsSinglePlayerGame())
+                {
+                    <button class="btn btn-sm @(game.IsPaused ? "btn-warning" : "btn-outline-light") ms-3 px-3 py-0 d-inline-flex align-items-center gap-1 fw-bold shadow-sm"
+                            style="height: 28px; border-radius: 6px;"
+                            @onclick="TogglePauseGame"
+                            disabled="@isTogglingPause"
+                            title="@(game.IsPaused ? "Resume game" : "Pause game")">
+                        <i class="bi @(game.IsPaused ? "bi-play-fill" : "bi-pause-fill")"></i>
+                        @(game.IsPaused ? "RESUME" : "PAUSE")
+                    </button>
+                }
             </SectionContent>
 
             <div class="sidebar-left">
@@ -500,7 +511,18 @@ else
 
             <div class="main-board-container">
             <div class="main-board">
-        @if (IsMyTurn())
+        @if (game.IsPaused)
+        {
+            <div class="turn-alert-wrapper">
+                <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(243, 156, 18, 0.95) 0%, rgba(211, 84, 0, 0.95) 100%); --alert-color: rgba(243, 156, 18, 0.95);">
+                    <div class="alert-content">
+                        <h3><i class="bi bi-pause-circle-fill me-2"></i>GAME PAUSED</h3>
+                        <small>Bots are paused. Click Resume to continue.</small>
+                    </div>
+                </div>
+            </div>
+        }
+        else if (IsMyTurn())
         {
             <div class="turn-alert-wrapper">
                 <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(231, 76, 60, 0.95) 0%, rgba(192, 57, 43, 0.95) 100%); --alert-color: rgba(231, 76, 60, 0.95);">
@@ -2242,6 +2264,46 @@ else
         int expectedTreasuryGain = simulatedTreasury - nationState.Treasury;
 
         return (actualBonus, expectedTreasuryGain, powerGain);
+    }
+
+    private bool isTogglingPause = false;
+    private bool IsSinglePlayerGame() => game != null && game.Players.Count(p => !p.IsBot) <= 1;
+
+    private async Task TogglePauseGame()
+    {
+        if (isTogglingPause || game == null) return;
+        isTogglingPause = true;
+        try
+        {
+            var response = await Http.PostAsync($"api/games/{GameId}/toggle-pause", null);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<TogglePauseResponse>();
+                if (result != null)
+                {
+                    game.IsPaused = result.IsPaused;
+                }
+            }
+            else
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                await ShowToast($"Failed to toggle pause: {errorBody}", true);
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast($"Error toggling pause: {ex.Message}", true);
+        }
+        finally
+        {
+            isTogglingPause = false;
+            StateHasChanged();
+        }
+    }
+
+    private class TogglePauseResponse
+    {
+        public bool IsPaused { get; set; }
     }
 
     public async ValueTask DisposeAsync()

@@ -64,7 +64,8 @@ public class GamesController : ControllerBase
                 HostName = g.Players.Where(p => p.IsHost).Select(p => p.User.UserName).FirstOrDefault(),
                 MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0,
                 TurnCount = g.TurnCount,
-                WinnerName = g.WinnerName
+                WinnerName = g.WinnerName,
+                IsPaused = g.IsPaused
             })
             .ToListAsync();
     }
@@ -111,6 +112,7 @@ public class GamesController : ControllerBase
             MaxPower = game.NationStates.Any() ? game.NationStates.Max(ns => ns.Power) : 0,
             TurnCount = game.TurnCount,
             VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
+            IsPaused = game.IsPaused,
             UserIds = new List<string> { userId },
             HostId = userId,
             HostName = User.Identity?.Name
@@ -324,6 +326,7 @@ public class GamesController : ControllerBase
             FinishedAt = game.FinishedAt,
             WinnerName = game.WinnerName,
             IsPrivate = game.IsPrivate,
+            IsPaused = game.IsPaused,
             VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
             HostId = game.Players.FirstOrDefault(p => p.IsHost)?.UserId,
             JoinCode = game.Players.Any(p => p.UserId == userId && p.IsHost) ? game.JoinCode : null,
@@ -2035,6 +2038,50 @@ public class GamesController : ControllerBase
                 return Ok();
             }
         }
+    }
+
+    [HttpPost("{gameId}/toggle-pause")]
+    public async Task<IActionResult> TogglePause(Guid gameId)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var game = await _context.Games
+            .Include(g => g.Players).ThenInclude(p => p.User)
+            .Include(g => g.NationStates)
+            .FirstOrDefaultAsync(g => g.Id == gameId);
+
+        if (game == null) return NotFound("Game not found.");
+        if (game.Status != GameStatus.InProgress) return BadRequest("Game is not in progress.");
+
+        var humanPlayers = game.Players.Where(p => !p.IsBot).ToList();
+        if (humanPlayers.Count > 1) return BadRequest("Pause is only available in single-player games.");
+
+        var myPlayer = humanPlayers.FirstOrDefault(p => p.UserId == userId);
+        if (myPlayer == null) return Forbid();
+
+        game.IsPaused = !game.IsPaused;
+        _context.Entry(game).Property(g => g.IsPaused).IsModified = true;
+
+        string actorName = myPlayer.User?.UserName ?? User.Identity?.Name ?? "Player";
+        if (game.IsPaused)
+        {
+            GameLogger.LogPauseGame(_context, game, actorName);
+        }
+        else
+        {
+            GameLogger.LogResumeGame(_context, game, actorName);
+        }
+
+        await _context.SaveChangesAsync();
+
+        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", game.IsPaused ? "Game Paused." : "Game Resumed.", false);
+
+        if (!game.IsPaused)
+        {
+            _botService.TriggerBotTurn(gameId, delayMs: 0);
+        }
+
+        return Ok(new { IsPaused = game.IsPaused });
     }
 }
 

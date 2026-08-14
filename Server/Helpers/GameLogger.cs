@@ -259,6 +259,16 @@ public static class GameLogger
         LogAction(context, game, "StartGame", null, playerName);
     }
 
+    public static void LogPauseGame(ApplicationDbContext? context, Game game, string playerName)
+    {
+        LogAction(context, game, "PauseGame", null, playerName);
+    }
+
+    public static void LogResumeGame(ApplicationDbContext? context, Game game, string playerName)
+    {
+        LogAction(context, game, "ResumeGame", null, playerName);
+    }
+
     public static void LogEndTurn(ApplicationDbContext? context, Game game, Nation nation, string playerName)
     {
         LogAction(context, game, "EndTurn", nation, playerName);
