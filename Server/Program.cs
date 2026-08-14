@@ -55,14 +55,14 @@ if (isTrainingMode)
             : connectionString;
             
         builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext, Imperial2030.Server.Data.SqliteApplicationDbContext>(opt => 
-            opt.UseSqlite(dbPath)
+            opt.UseSqlite(dbPath, b => b.MigrationsAssembly(typeof(Imperial2030.Server.Data.SqliteApplicationDbContext).Assembly.FullName))
                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
     }
     else
     {
         // Use SQL Server for standard connection strings (e.g., Azure App Service, local development)
         builder.Services.AddDbContext<Imperial2030.Server.Data.ApplicationDbContext, Imperial2030.Server.Data.SqlServerApplicationDbContext>(opt => 
-            opt.UseSqlServer(connectionString)
+            opt.UseSqlServer(connectionString, b => b.MigrationsAssembly(typeof(Imperial2030.Server.Data.SqlServerApplicationDbContext).Assembly.FullName))
                .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
     }
 
@@ -166,13 +166,7 @@ using (var scope = app.Services.CreateScope())
     {
         await Imperial2030.Server.Data.DbSeeder.SeedAsync(services);
         var logger = services.GetRequiredService<ILogger<Program>>();
-
         var dbContext = services.GetRequiredService<Imperial2030.Server.Data.ApplicationDbContext>();
-        
-        if (dbContext.Database.IsRelational())
-        {
-            await dbContext.Database.MigrateAsync();
-        }
 
         var twoWeeksAgo = DateTime.UtcNow.AddDays(-14);
         var statuses = new[] { GameStatus.Lobby, GameStatus.InProgress };

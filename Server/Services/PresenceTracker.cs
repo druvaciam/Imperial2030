@@ -32,7 +32,7 @@ public class PresenceTracker
         if (_connectionUsers.TryRemove(connectionId, out var userId))
         {
             _userConnections.AddOrUpdate(userId, 0, (_, count) => System.Math.Max(0, count - 1));
-            
+
             if (_connectionObservedGames.TryRemove(connectionId, out var games))
             {
                 HashSet<string> gamesToUpdate;
@@ -57,7 +57,7 @@ public class PresenceTracker
                     if (_gamePlayers.TryGetValue(gameId, out var players))
                     {
                         players.AddOrUpdate(userId, 0, (_, count) => System.Math.Max(0, count - 1));
-                        
+
                         if (!playerUpdates.ContainsKey(gameId)) playerUpdates[gameId] = new List<string>();
                         playerUpdates[gameId].Add(userId);
                     }

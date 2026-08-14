@@ -228,6 +228,9 @@ namespace Imperial2030.Server.Migrations.SqliteMigrations
                     b.Property<string>("Nation")
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("OrderIndex")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("PlayerName")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -238,7 +241,7 @@ namespace Imperial2030.Server.Migrations.SqliteMigrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("GameId");
+                    b.HasIndex("GameId", "OrderIndex");
 
                     b.ToTable("GameActions");
                 });

@@ -29,9 +29,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
-        // Any other specific configurations
+        builder.Entity<GameAction>()
+            .HasIndex(a => new { a.GameId, a.OrderIndex });
     }
 }
+
 public class SqliteApplicationDbContext : ApplicationDbContext
 {
     public SqliteApplicationDbContext(DbContextOptions<SqliteApplicationDbContext> options) : base(options)

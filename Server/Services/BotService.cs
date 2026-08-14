@@ -161,6 +161,15 @@ public class BotService
                             }
                         }
                     }
+                    else if (nationState != null && nationState.ControllerId == null)
+                    {
+                        // Uncontrolled nation: automatically advance to next nation
+                        game.AdvanceTurn();
+                        GameLogger.LogAutoSkipManeuverPhase(ctx, game, "Turn", nationState.Nation, "System");
+                        await SaveChangesAsync(ctx);
+                        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                        botActed = true;
+                    }
                 }
 
                 if (!botActed || singleTurnOnly) break;
@@ -224,10 +233,10 @@ public class BotService
 
             if (crossingInvestor && game.PendingSwissBankForceNation == null)
             {
-                int totalInterest = game.Bonds.Where(b => b.Nation == nation).Sum(b => b.Interest);
+                int totalInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId != null).Sum(b => b.Interest);
                 if (nationState.Treasury >= totalInterest)
                 {
-                    var swissBankPlayers = game.Players.Where(p => !game.NationStates.Any(ns => ns.ControllerId == p.Id)).ToList();
+                    var swissBankPlayers = game.Players.Where(p => !game.NationStates.Any(ns => ns.ControllerId == p.Id)).GetOrderedPlayers().ToList();
                     if (swissBankPlayers.Any())
                     {
                         game.PendingSwissBankForceNation = nation;
@@ -369,6 +378,8 @@ public class BotService
             if (ns.RondelPosition.HasValue)
             {
                 int dist = (slot - ns.RondelPosition.Value + 8) % 8;
+                if (dist > 6) continue;
+
                 if (dist > 3)
                 {
                     int pf = ns.Power / 5;
@@ -621,6 +632,13 @@ public class BotService
                         .Distinct()
                         .ToList();
 
+                    bool isMyHome = def != null && def.Nation.HasValue && def.Nation.Value == nation;
+                    if (isMyHome && foreignDefenders.Any())
+                    {
+                        isHostileMove = true;
+                        fleet.IsHostile = true;
+                    }
+
                     if (foreignDefenders.Any())
                     {
                         if (isHostileMove && foreignDefenders.Count == 1)
@@ -773,6 +791,13 @@ public class BotService
                         .Select(u => u.Nation)
                         .Distinct()
                         .ToList();
+
+                    bool isMyHome = def != null && def.Nation.HasValue && def.Nation.Value == nation;
+                    if (isMyHome && foreignDefenders.Any())
+                    {
+                        isHostileMove = true;
+                        army.IsHostile = true;
+                    }
 
                     if (foreignDefenders.Any())
                     {
@@ -1102,9 +1127,7 @@ public class BotService
         {
             if (game.InvestorCardHolderId.HasValue)
             {
-                var sorted = game.Players.OrderBy(p => p.Id).ToList();
-                var idx = sorted.FindIndex(p => p.Id == game.InvestorCardHolderId.Value);
-                game.InvestorCardHolderId = sorted[(idx + 1) % sorted.Count].Id;
+                game.InvestorCardHolderId = PlayerHelper.GetNextPlayerId(game, game.InvestorCardHolderId.Value);
             }
             game.IsInvestorTurn = false;
             game.ActingPlayerId = null;
@@ -1118,10 +1141,14 @@ public class BotService
     {
         foreach (var defNation in game.PendingBattleDefenders.ToList())
         {
+            if (string.IsNullOrEmpty(game.PendingBattleTerritoryId) || !game.PendingBattleAggressorNation.HasValue ||
+                !game.Units.Any(u => u.TerritoryId == game.PendingBattleTerritoryId && u.Nation == game.PendingBattleAggressorNation.Value))
+            {
+                break;
+            }
+
             var defNs = game.NationStates.FirstOrDefault(ns => ns.Nation == defNation);
-            if (defNs?.ControllerId == null) continue;
-            var defController = game.Players.FirstOrDefault(p => p.Id == defNs.ControllerId);
-            if (defController == null || !defController.IsBot) continue;
+            var defController = defNs?.ControllerId != null ? game.Players.FirstOrDefault(p => p.Id == defNs.ControllerId) : null;
 
             var pendingBattle = new PendingBattle
             {
@@ -1130,7 +1157,14 @@ public class BotService
                 DefenderNations = game.PendingBattleDefenders.ToList()
             };
 
-            bool retreat = GetStrategy(defController).RetreatFromBattle(game, pendingBattle);
+            if (defController != null && !defController.IsBot)
+            {
+                // Human player must respond manually
+                continue;
+            }
+
+            bool retreat = defController == null ? true : GetStrategy(defController).RetreatFromBattle(game, pendingBattle);
+            string responderName = defController?.BotName ?? "System";
 
             if (retreat)
             {
@@ -1138,7 +1172,7 @@ public class BotService
                 defenders.Remove(defNation);
                 game.PendingBattleDefenders = defenders;
                 if (ctx != null) ctx.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
-                GameLogger.LogBattleResponsePeace(ctx, game, defNation, pendingBattle.AggressorNation, pendingBattle.TerritoryId, defController.BotName ?? "Bot");
+                GameLogger.LogBattleResponsePeace(ctx, game, defNation, pendingBattle.AggressorNation, pendingBattle.TerritoryId, responderName);
             }
             else
             {
@@ -1147,29 +1181,23 @@ public class BotService
                 defenders.Remove(defNation); // It's no longer pending for them
                 game.PendingBattleDefenders = defenders;
                 if (ctx != null) ctx.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
-                // Resolve battle...
-                // The current codebase just removes them and logs peace for everyone. 
-                // Let's preserve the original behavior for now if they fight (we'll just log they fought, 
-                // but actually the actual battle logic needs to execute. Since original bot always accepted peace, 
-                // we'll just log "fought" and let the engine handle it).
-                // The battle destruction log will handle the logging
 
-                // Actual fight logic would remove units, etc. For simplicity, we just destroy 1 unit of each if they fight.
                 var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation);
                 var friendlyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == defNation);
                 if (enemyUnit != null && friendlyUnit != null)
                 {
                     RemoveUnit(ctx, game, enemyUnit);
                     RemoveUnit(ctx, game, friendlyUnit);
-                    GameLogger.LogBattleResponseDestruction(ctx, game, defNation, friendlyUnit.UnitType, pendingBattle.AggressorNation, enemyUnit.UnitType, pendingBattle.TerritoryId, "System");
+                    GameLogger.LogBattleResponseDestruction(ctx, game, defNation, friendlyUnit.UnitType, pendingBattle.AggressorNation, enemyUnit.UnitType, pendingBattle.TerritoryId, responderName);
                 }
             }
         }
 
         await BotUpdateTerritoryControl(ctx, game, "System");
 
-        if (!game.PendingBattleDefenders.Any())
+        if (!game.PendingBattleDefenders.Any() || !game.Units.Any(u => u.TerritoryId == (game.PendingBattleTerritoryId ?? "") && u.Nation == game.PendingBattleAggressorNation))
         {
+            game.PendingBattleDefenders.Clear();
             game.PendingBattleTerritoryId = null;
             game.PendingBattleAggressorNation = null;
         }

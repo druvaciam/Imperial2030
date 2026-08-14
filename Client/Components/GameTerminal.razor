@@ -14,7 +14,7 @@
         }
         else
         {
-            @foreach (var action in Actions.OrderBy(a => a.Timestamp))
+            @foreach (var action in Actions.OrderBy(a => a.OrderIndex).ThenBy(a => a.Timestamp))
             {
                 <div class="terminal-line">
                     <span class="timestamp">[@action.Timestamp.ToLocalTime().ToString("HH:mm:ss")]</span>

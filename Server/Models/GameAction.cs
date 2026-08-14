@@ -11,6 +11,7 @@ public class GameAction
     public Game Game { get; set; } = default!;
 
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    public long OrderIndex { get; set; }
 
     [MaxLength(50)]
     public string PlayerName { get; set; } = string.Empty;
