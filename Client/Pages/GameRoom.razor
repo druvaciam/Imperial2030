@@ -427,23 +427,25 @@ else
                         {
                                         <li class="list-group-item bg-transparent text-white @(ns.Nation == game.CurrentTurnNation ? "active-player-highlight" : "px-0")">
                                             <b>@ns.Nation</b><br/>
-                                            <span class="text-info position-relative">
-                                                Treasury: $@(ns.Treasury)M
+                                            <span class="text-info">
+                                                Treasury: <span class="position-relative">$@(ns.Treasury)M
                                                 @if (_nationTreasuryEffects.TryGetValue(ns.Nation, out var tEffect) && (DateTime.Now - tEffect.Timestamp).TotalSeconds < 5.5)
                                                 {
-                                                    <span @key="tEffect.TriggerId" class="floating-cash @(tEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
+                                                    <span @key="tEffect.TriggerId" class="floating-cash @(tEffect.Delta > 0 ? "positive" : "negative")">
                                                         @(tEffect.Delta > 0 ? "+$" : "-$")@(Math.Abs(tEffect.Delta))M
                                                     </span>
                                                 }
+                                                </span>
                                             </span> | 
-                                            <span class="text-warning position-relative">
-                                                Power: @ns.Power (@(ns.Power / 5)x)
+                                            <span class="text-warning">
+                                                Power: <span class="position-relative">@ns.Power
                                                 @if (_nationPowerEffects.TryGetValue(ns.Nation, out var pEffect) && (DateTime.Now - pEffect.Timestamp).TotalSeconds < 5.5)
                                                 {
-                                                    <span @key="pEffect.TriggerId" class="floating-cash @(pEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
+                                                    <span @key="pEffect.TriggerId" class="floating-cash @(pEffect.Delta > 0 ? "positive" : "negative")">
                                                         @(pEffect.Delta > 0 ? "+" : "")@(pEffect.Delta)
                                                     </span>
                                                 }
+                                                </span> (@(ns.Power / 5)x)
                                             </span><br/>
                                             @{
                                                 var taxInfo = GetTaxPreview(ns);
@@ -697,21 +699,19 @@ else
                             {
                                                  <div class="d-flex align-items-center mb-1">
                                                      <span class="badge bg-primary me-2">@gov.Nation</span>
-                                                     <small class="text-muted position-relative">
-                                                         <span class="position-relative">
-                                                             Power: @gov.Power
+                                                     <small class="text-muted">
+                                                         Power: <span class="position-relative">@gov.Power
                                                              @if (_nationPowerEffects.TryGetValue(gov.Nation, out var govPEffect) && (DateTime.Now - govPEffect.Timestamp).TotalSeconds < 5.5)
                                                              {
-                                                                 <span @key="govPEffect.TriggerId" class="floating-cash @(govPEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
+                                                                 <span @key="govPEffect.TriggerId" class="floating-cash @(govPEffect.Delta > 0 ? "positive" : "negative")">
                                                                      @(govPEffect.Delta > 0 ? "+" : "")@(govPEffect.Delta)
                                                                  </span>
                                                              }
                                                          </span> | 
-                                                         <span class="position-relative">
-                                                             Treasury: $@(gov.Treasury)M
+                                                         Treasury: <span class="position-relative">$@(gov.Treasury)M
                                                              @if (_nationTreasuryEffects.TryGetValue(gov.Nation, out var govTEffect) && (DateTime.Now - govTEffect.Timestamp).TotalSeconds < 5.5)
                                                              {
-                                                                 <span @key="govTEffect.TriggerId" class="floating-cash @(govTEffect.Delta > 0 ? "positive" : "negative")" style="top: -12px; right: -20px; font-size: 1.0em;">
+                                                                 <span @key="govTEffect.TriggerId" class="floating-cash @(govTEffect.Delta > 0 ? "positive" : "negative")">
                                                                      @(govTEffect.Delta > 0 ? "+$" : "-$")@(Math.Abs(govTEffect.Delta))M
                                                                  </span>
                                                              }
@@ -728,7 +728,7 @@ else
 
                             <ul class="list-group list-group-flush bg-transparent">
                                 <li class="list-group-item bg-transparent text-white fs-5 px-0">
-                                    Cash: <span class="text-success fw-bold">@targetPlayer.Cash M</span>
+                                    Cash: <span class="text-success fw-bold">$@(targetPlayer.Cash)M</span>
                                 </li>
                                 <li class="list-group-item bg-transparent text-white px-0">
                                     <h6 class="text-white border-bottom border-secondary pb-1 mt-2">Bonds</h6>
@@ -2268,18 +2268,20 @@ else
         }
     }
 
-    private (int Bonus, int TreasuryGain, int PowerGain) GetTaxPreview(NationStateDto nationState)
+    private (int Bonus, int TreasuryGain, int PowerGain) GetTaxPreview(NationStateDto nationState, GameDetailDto? targetGame = null)
     {
+        var curGame = targetGame ?? game;
+        if (curGame == null) return (0, 0, 0);
         var nation = nationState.Nation;
         int factoryRevenue = 0;
-        var territoriesWithFactories = game.Territories.Where(ts => ts.HasFactory).ToList();
+        var territoriesWithFactories = curGame.Territories.Where(ts => ts.HasFactory).ToList();
         
         foreach (var ts in territoriesWithFactories)
         {
             var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
             if (territoryDef != null && territoryDef.Nation == nation) 
             {
-                bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
+                bool hasHostileArmy = curGame.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
                 if (!hasHostileArmy)
                 {
                     factoryRevenue += 2;
@@ -2287,11 +2289,11 @@ else
             }
         }
 
-        int flagRevenue = game.Territories.Count(ts => ts.Controller == nation);
+        int flagRevenue = curGame.Territories.Count(ts => ts.Controller == nation);
         flagRevenue = Math.Min(15, flagRevenue);
         int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
 
-        int unitCount = game.Units.Count(u => u.Nation == nation);
+        int unitCount = curGame.Units.Count(u => u.Nation == nation);
         int soldiersPay = unitCount * 1;
         
         int simulatedTreasury = nationState.Treasury + totalTaxRevenue;
@@ -2299,7 +2301,7 @@ else
         simulatedTreasury -= actualPay;
 
         int bonus = 0;
-        if (game.VariantBonusOnlyForTaxIncreases)
+        if (curGame.VariantBonusOnlyForTaxIncreases)
         {
             int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(nationState.TaxRevenue);
             int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);

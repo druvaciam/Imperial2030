@@ -1078,37 +1078,37 @@
         {
             var activeNation = Game.CurrentTurnNation;
             int activeIdx = (int)activeNation;
-            double cardX = activeIdx * 200.0;
-            double pawnX = cardX + 38.0;
+            double cardX = 9.0 + activeIdx * 197.0;
+            double pawnX = cardX + 30.0;
             double pawnY = 682.0;
             string activeColor = GetNationColor(activeNation);
 
             <g id="turn-order-indicator" style="pointer-events: none;">
                 <!-- Flow Arrows between the 6 Nation Cards at bottom (y=682) -->
                 <g class="turn-track-arcs" opacity="0.45">
-                    <path d="M 38 682 Q 138 638 238 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
-                    <polygon points="234,676 242,682 234,688" fill="#ffffff" />
+                    <path d="M 39 682 Q 137.5 638 236 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="232,676 240,682 232,688" fill="#ffffff" />
 
-                    <path d="M 238 682 Q 338 638 438 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
-                    <polygon points="434,676 442,682 434,688" fill="#ffffff" />
+                    <path d="M 236 682 Q 334.5 638 433 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="429,676 437,682 429,688" fill="#ffffff" />
 
-                    <path d="M 438 682 Q 538 638 638 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
-                    <polygon points="634,676 642,682 634,688" fill="#ffffff" />
+                    <path d="M 433 682 Q 531.5 638 630 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="626,676 634,682 626,688" fill="#ffffff" />
 
-                    <path d="M 638 682 Q 738 638 838 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
-                    <polygon points="834,676 842,682 834,688" fill="#ffffff" />
+                    <path d="M 630 682 Q 728.5 638 827 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="823,676 831,682 823,688" fill="#ffffff" />
 
-                    <path d="M 838 682 Q 938 638 1038 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
-                    <polygon points="1034,676 1042,682 1034,688" fill="#ffffff" />
+                    <path d="M 827 682 Q 925.5 638 1024 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="1020,676 1028,682 1020,688" fill="#ffffff" />
 
-                    <!-- Loop back arrow from Europe (1038) to Russia (38) -->
-                    <path d="M 1038 682 C 1110 628, -20 628, 38 682" fill="none" stroke="#ffffff" stroke-width="2" stroke-dasharray="5,5" class="track-flow" opacity="0.3" />
-                    <polygon points="34,676 42,682 34,688" fill="#ffffff" opacity="0.5" />
+                    <!-- Loop back arrow from Europe (1024) to Russia (39) -->
+                    <path d="M 1024 682 C 1110 628, -20 628, 39 682" fill="none" stroke="#ffffff" stroke-width="2" stroke-dasharray="5,5" class="track-flow" opacity="0.3" />
+                    <polygon points="35,676 43,682 35,688" fill="#ffffff" opacity="0.5" />
                 </g>
 
-                <!-- Active Nation Card Glowing Frame (Fitted to card borders) -->
+                <!-- Active Nation Card Glowing Frame (Fitted to exact 197px card bounds) -->
                 <g class="turn-card-highlighter" style="transform: translateX(@(Fmt(cardX))px); transition: transform 0.7s cubic-bezier(0.34, 1.35, 0.64, 1);">
-                    <rect x="8" y="652" width="194" height="175" rx="6" 
+                    <rect x="0" y="652" width="197" height="175" rx="6" 
                           fill="@activeColor" 
                           fill-opacity="0.10" 
                           stroke="@activeColor" 
