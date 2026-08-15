@@ -1072,6 +1072,72 @@
                 }
             }
         }
+
+        <!-- Turn Order Indicator on Bottom Nation Cards -->
+        @if (Game.Status == GameStatus.InProgress)
+        {
+            var activeNation = Game.CurrentTurnNation;
+            int activeIdx = (int)activeNation;
+            double cardX = activeIdx * 200.0;
+            double pawnX = cardX + 38.0;
+            double pawnY = 682.0;
+            string activeColor = GetNationColor(activeNation);
+
+            <g id="turn-order-indicator" style="pointer-events: none;">
+                <!-- Flow Arrows between the 6 Nation Cards at bottom (y=682) -->
+                <g class="turn-track-arcs" opacity="0.45">
+                    <path d="M 38 682 Q 138 638 238 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="234,676 242,682 234,688" fill="#ffffff" />
+
+                    <path d="M 238 682 Q 338 638 438 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="434,676 442,682 434,688" fill="#ffffff" />
+
+                    <path d="M 438 682 Q 538 638 638 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="634,676 642,682 634,688" fill="#ffffff" />
+
+                    <path d="M 638 682 Q 738 638 838 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="834,676 842,682 834,688" fill="#ffffff" />
+
+                    <path d="M 838 682 Q 938 638 1038 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="1034,676 1042,682 1034,688" fill="#ffffff" />
+
+                    <!-- Loop back arrow from Europe (1038) to Russia (38) -->
+                    <path d="M 1038 682 C 1110 628, -20 628, 38 682" fill="none" stroke="#ffffff" stroke-width="2" stroke-dasharray="5,5" class="track-flow" opacity="0.3" />
+                    <polygon points="34,676 42,682 34,688" fill="#ffffff" opacity="0.5" />
+                </g>
+
+                <!-- Active Nation Card Glowing Frame (Fitted to card borders) -->
+                <g class="turn-card-highlighter" style="transform: translateX(@(Fmt(cardX))px); transition: transform 0.7s cubic-bezier(0.34, 1.35, 0.64, 1);">
+                    <rect x="8" y="652" width="194" height="175" rx="6" 
+                          fill="@activeColor" 
+                          fill-opacity="0.10" 
+                          stroke="@activeColor" 
+                          stroke-width="3.5" 
+                          class="turn-card-glow" />
+                </g>
+
+                <!-- Moving Turn Indicator Pawn / Token -->
+                <g class="turn-pawn-indicator" style="transform: translate(@(Fmt(pawnX))px, @(Fmt(pawnY))px); transition: transform 0.7s cubic-bezier(0.34, 1.35, 0.64, 1);">
+                    <!-- Pulsing animation wave -->
+                    <circle cx="0" cy="0" r="16" fill="none" stroke="@activeColor" stroke-width="2.5" class="pawn-pulse-ring" />
+                    
+                    <!-- Token Disc Outer Rim -->
+                    <circle cx="0" cy="0" r="13" fill="#1b1c23" stroke="#ffffff" stroke-width="2" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.8))" />
+                    
+                    <!-- Nation Color Inner Ring -->
+                    <circle cx="0" cy="0" r="8.5" fill="@activeColor" stroke="#ffffff" stroke-width="1" />
+                    
+                    <!-- Shiny center accent -->
+                    <circle cx="0" cy="0" r="3" fill="#ffffff" />
+                    
+                    <!-- Floating "TURN" Label Pill -->
+                    <g transform="translate(0, -18)">
+                        <rect x="-20" y="-10" width="40" height="13" rx="6.5" fill="#1b1c23" stroke="@activeColor" stroke-width="1.2" />
+                        <text x="0" y="-1" text-anchor="middle" font-size="8.5" font-weight="900" fill="#ffffff" letter-spacing="0.5">TURN</text>
+                    </g>
+                </g>
+            </g>
+        }
     }
   </g>
 </svg>
@@ -1210,7 +1276,36 @@
         pointer-events: none;
     }
 
+    .turn-card-highlighter {
+        transform-origin: 0 0;
+    }
 
+    .turn-card-glow {
+        animation: turnCardPulse 2s ease-in-out infinite;
+    }
+
+    @@keyframes turnCardPulse {
+        0%, 100% { stroke-opacity: 0.7; fill-opacity: 0.10; stroke-width: 3.5px; }
+        50% { stroke-opacity: 1.0; fill-opacity: 0.22; stroke-width: 5.5px; }
+    }
+
+    .pawn-pulse-ring {
+        animation: pawnPulse 1.8s ease-out infinite;
+        transform-origin: 0 0;
+    }
+
+    @@keyframes pawnPulse {
+        0% { transform: scale(0.7); opacity: 1; stroke-width: 3px; }
+        100% { transform: scale(2.2); opacity: 0; stroke-width: 0.5px; }
+    }
+
+    .track-flow {
+        animation: trackFlowAnts 1.2s linear infinite;
+    }
+
+    @@keyframes trackFlowAnts {
+        to { stroke-dashoffset: -20; }
+    }
 
     .pending-battle {
         stroke: #ffa500 !important; /* Orange */
@@ -1227,6 +1322,7 @@
 
     @@keyframes pulse-green {
         0% { fill-opacity: 0.3; }
+
 </style>
 
 
