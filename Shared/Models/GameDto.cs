@@ -22,4 +22,5 @@ public class GameDto
     public int TurnCount { get; set; }
     public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;
     public string? WinnerName { get; set; }
+    public bool IsPaused { get; set; } = false;
 }

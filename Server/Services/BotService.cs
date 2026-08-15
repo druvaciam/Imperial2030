@@ -71,7 +71,7 @@ public class BotService
                 var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
                 Game? game = await LoadGame(ctx, gameId);
-                if (game == null || game.Status != GameStatus.InProgress) break;
+                if (game == null || game.Status != GameStatus.InProgress || game.IsPaused) break;
 
                 bool botActed = false;
 

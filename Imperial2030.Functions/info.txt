@@ -1,0 +1,99 @@
+================================================================================
+Imperial 2030 - Azure Functions Notification Service (Deployment & Run Guide)
+================================================================================
+
+1. OVERVIEW
+--------------------------------------------------------------------------------
+The `Imperial2030.Functions` project is an Azure Functions v4 (.NET 10 Isolated Worker)
+microservice that handles email notifications for game events:
+  - GameStarted: Sends notification email when a match starts.
+  - GameFinished: Sends match summary and congratulation emails when a game finishes.
+
+
+2. RUNNING LOCALLY (Port 7071)
+--------------------------------------------------------------------------------
+Prerequisites:
+  - .NET 10 SDK
+  - Azure Functions Core Tools v4 (`npm install -g azure-functions-core-tools@4`)
+
+Steps to Run:
+  1. Navigate to the function directory:
+     cd Imperial2030.Functions
+
+  2. Ensure `local.settings.json` exists with required configuration:
+     {
+       "IsEncrypted": false,
+       "Values": {
+         "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+         "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+         "SMTP_HOST": "smtp.example.com",
+         "SMTP_PORT": "587",
+         "SMTP_USERNAME": "your-smtp-username",
+         "SMTP_PASSWORD": "your-smtp-password",
+         "SMTP_FROM": "notifications@imperial2030.com"
+       }
+     }
+
+  3. Start the function host on port 7071:
+     func start --port 7071
+
+  4. Connect the main Server to local Functions:
+     In `Server/appsettings.json` (or `Server/appsettings.Development.json`):
+     "AzureFunctionNotificationUrl": "http://localhost:7071"
+
+     (Leave `AzureFunctionNotificationKey` empty for local testing because local
+      `func start` runs with authorization bypassed by default).
+
+
+3. PUBLISHING TO AZURE
+--------------------------------------------------------------------------------
+Option A: Using Azure Functions Core Tools CLI (Fastest & Recommended)
+  1. Log in to Azure:
+     az login
+
+  2. Publish the function app:
+     cd Imperial2030.Functions
+     func azure functionapp publish <YOUR_AZURE_FUNCTION_APP_NAME>
+
+     Example:
+     func azure functionapp publish imperial2030-functions
+
+Option B: Using .NET CLI
+  1. Build and publish release binaries:
+     dotnet publish Imperial2030.Functions/Imperial2030.Functions.csproj -c Release -o ./publish/functions
+
+  2. Zip and deploy to Azure Function App:
+     az functionapp deployment source config-zip -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --src ./publish/functions.zip
+
+
+4. AZURE CONFIGURATION (Application Settings)
+--------------------------------------------------------------------------------
+In the Azure Portal (Function App -> Configuration -> Application settings) or via Azure CLI:
+  az functionapp config appsettings set --name <FUNCTION_APP_NAME> --resource-group <RESOURCE_GROUP> --settings \
+    SMTP_HOST="smtp.example.com" \
+    SMTP_PORT="587" \
+    SMTP_USERNAME="your-smtp-user" \
+    SMTP_PASSWORD="your-smtp-password" \
+    SMTP_FROM="notifications@imperial2030.com"
+
+In Server App Settings (e.g. on Azure App Service or Linux VPS):
+  "AzureFunctionNotificationUrl": "https://<FUNCTION_APP_NAME>.azurewebsites.net",
+  "AzureFunctionNotificationKey": "<YOUR_FUNCTION_KEY_OR_HOST_KEY>"
+
+The Server automatically attaches `x-functions-key` header to outgoing HTTP requests.
+
+
+5. TEST PAYLOADS
+--------------------------------------------------------------------------------
+Endpoint: POST http://localhost:7071/api/GameStarted
+Headers: Content-Type: application/json
+Body:
+{
+  "gameName": "Test Game",
+  "hostName": "player1",
+  "playerCount": 4,
+  "playerNames": ["player1", "player2", "Bot1", "Bot2"],
+  "variantBonusOnlyForTaxIncreases": false,
+  "startedDate": "2026-08-14T15:00:00Z",
+  "playerEmails": ["test@example.com"]
+}

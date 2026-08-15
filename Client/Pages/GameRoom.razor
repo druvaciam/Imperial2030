@@ -39,6 +39,17 @@ else
                 {
                     <span class="badge bg-warning text-dark ms-2">Variant: Tax Bonus</span>
                 }
+                @if (game.Status == GameStatus.InProgress && IsSinglePlayerGame())
+                {
+                    <button class="btn btn-sm @(game.IsPaused ? "btn-warning" : "btn-outline-light") ms-3 px-3 py-0 d-inline-flex align-items-center gap-1 fw-bold shadow-sm"
+                            style="height: 28px; border-radius: 6px;"
+                            @onclick="TogglePauseGame"
+                            disabled="@isTogglingPause"
+                            title="@(game.IsPaused ? "Resume game" : "Pause game")">
+                        <i class="bi @(game.IsPaused ? "bi-play-fill" : "bi-pause-fill")"></i>
+                        @(game.IsPaused ? "RESUME" : "PAUSE")
+                    </button>
+                }
             </SectionContent>
 
             <div class="sidebar-left">
@@ -165,7 +176,7 @@ else
                                             @if (_playerCashEffects.TryGetValue(player.Id, out var effect) && (DateTime.Now - effect.Timestamp).TotalSeconds < 5.5)
                                             {
                                                 <span @key="effect.TriggerId" class="floating-cash @(effect.Delta > 0 ? "positive" : "negative")">
-                                                    @(effect.Delta > 0 ? "+" : "")@(effect.Delta)M
+                                                    @(effect.Delta > 0 ? "+$" : "-$")@(Math.Abs(effect.Delta))M
                                                 </span>
                                             }
                                         </span>
@@ -412,12 +423,30 @@ else
                                 </summary>
                                 <div class="mt-3">
                                     <ul class="list-group list-group-flush bg-transparent small">
-                        @foreach (var ns in game.NationStates.OrderBy(n => ((int)n.Nation - (int)game.CurrentTurnNation + 6) % 6))
+                        @foreach (var ns in game.NationStates.OrderBy(n => ((int)n.Nation - (int)(_displayedTurnNation ?? game.CurrentTurnNation) + 6) % 6))
                         {
                                         <li class="list-group-item bg-transparent text-white @(ns.Nation == game.CurrentTurnNation ? "active-player-highlight" : "px-0")">
                                             <b>@ns.Nation</b><br/>
-                                            <span class="text-info">Treasury: @ns.Treasury M</span> | 
-                                            <span class="text-warning">Power: @ns.Power (@(ns.Power / 5)x)</span><br/>
+                                            <span class="text-info">
+                                                Treasury: <span class="position-relative">$@(ns.Treasury)M
+                                                @if (_nationTreasuryEffects.TryGetValue(ns.Nation, out var tEffect) && (DateTime.Now - tEffect.Timestamp).TotalSeconds < 5.5)
+                                                {
+                                                    <span @key="tEffect.TriggerId" class="floating-cash @(tEffect.Delta > 0 ? "positive" : "negative")">
+                                                        @(tEffect.Delta > 0 ? "+$" : "-$")@(Math.Abs(tEffect.Delta))M
+                                                    </span>
+                                                }
+                                                </span>
+                                            </span> | 
+                                            <span class="text-warning">
+                                                Power: <span class="position-relative">@ns.Power
+                                                @if (_nationPowerEffects.TryGetValue(ns.Nation, out var pEffect) && (DateTime.Now - pEffect.Timestamp).TotalSeconds < 5.5)
+                                                {
+                                                    <span @key="pEffect.TriggerId" class="floating-cash @(pEffect.Delta > 0 ? "positive" : "negative")">
+                                                        @(pEffect.Delta > 0 ? "+" : "")@(pEffect.Delta)
+                                                    </span>
+                                                }
+                                                </span> (@(ns.Power / 5)x)
+                                            </span><br/>
                                             @{
                                                 var taxInfo = GetTaxPreview(ns);
                                             }
@@ -500,7 +529,18 @@ else
 
             <div class="main-board-container">
             <div class="main-board">
-        @if (IsMyTurn())
+        @if (game.IsPaused)
+        {
+            <div class="turn-alert-wrapper">
+                <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(243, 156, 18, 0.95) 0%, rgba(211, 84, 0, 0.95) 100%); --alert-color: rgba(243, 156, 18, 0.95);">
+                    <div class="alert-content">
+                        <h3><i class="bi bi-pause-circle-fill me-2"></i>GAME PAUSED</h3>
+                        <small>Bots are paused. Click Resume to continue.</small>
+                    </div>
+                </div>
+            </div>
+        }
+        else if (IsMyTurn())
         {
             <div class="turn-alert-wrapper">
                 <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(231, 76, 60, 0.95) 0%, rgba(192, 57, 43, 0.95) 100%); --alert-color: rgba(231, 76, 60, 0.95);">
@@ -659,7 +699,24 @@ else
                             {
                                                  <div class="d-flex align-items-center mb-1">
                                                      <span class="badge bg-primary me-2">@gov.Nation</span>
-                                                     <small class="text-muted">Power: @gov.Power | Treasury: @gov.Treasury M</small>
+                                                     <small class="text-muted">
+                                                         Power: <span class="position-relative">@gov.Power
+                                                             @if (_nationPowerEffects.TryGetValue(gov.Nation, out var govPEffect) && (DateTime.Now - govPEffect.Timestamp).TotalSeconds < 5.5)
+                                                             {
+                                                                 <span @key="govPEffect.TriggerId" class="floating-cash @(govPEffect.Delta > 0 ? "positive" : "negative")">
+                                                                     @(govPEffect.Delta > 0 ? "+" : "")@(govPEffect.Delta)
+                                                                 </span>
+                                                             }
+                                                         </span> | 
+                                                         Treasury: <span class="position-relative">$@(gov.Treasury)M
+                                                             @if (_nationTreasuryEffects.TryGetValue(gov.Nation, out var govTEffect) && (DateTime.Now - govTEffect.Timestamp).TotalSeconds < 5.5)
+                                                             {
+                                                                 <span @key="govTEffect.TriggerId" class="floating-cash @(govTEffect.Delta > 0 ? "positive" : "negative")">
+                                                                     @(govTEffect.Delta > 0 ? "+$" : "-$")@(Math.Abs(govTEffect.Delta))M
+                                                                 </span>
+                                                             }
+                                                         </span>
+                                                     </small>
                                                  </div>
                             }
                         }
@@ -671,7 +728,7 @@ else
 
                             <ul class="list-group list-group-flush bg-transparent">
                                 <li class="list-group-item bg-transparent text-white fs-5 px-0">
-                                    Cash: <span class="text-success fw-bold">@targetPlayer.Cash M</span>
+                                    Cash: <span class="text-success fw-bold">$@(targetPlayer.Cash)M</span>
                                 </li>
                                 <li class="list-group-item bg-transparent text-white px-0">
                                     <h6 class="text-white border-bottom border-secondary pb-1 mt-2">Bonds</h6>
@@ -1266,10 +1323,14 @@ else
     private List<string> availableBotTypes = new() { "Default", "Aggressive", "Friendly", "Greedy", "RL", "Random" };
     private string commandInput = string.Empty;
     private Dictionary<Guid, (int Delta, Guid TriggerId, DateTime Timestamp)> _playerCashEffects = new();
+    private Dictionary<Nation, (int Delta, Guid TriggerId, DateTime Timestamp)> _nationTreasuryEffects = new();
+    private Dictionary<Nation, (int Delta, Guid TriggerId, DateTime Timestamp)> _nationPowerEffects = new();
     private Dictionary<Guid, DateTime> _newUnitTimestamps = new();
     private Dictionary<string, DateTime> _newFactoryTimestamps = new();
     private Dictionary<Nation, DateTime> _nationPowerChanges = new();
     private Dictionary<Nation, DateTime> _nationTaxChanges = new();
+    private Nation? _displayedTurnNation;
+    private CancellationTokenSource? _nationRotationCts;
 
     protected override async Task OnInitializedAsync()
     {
@@ -1378,11 +1439,13 @@ else
             var oldPlayers = game?.Players.ToDictionary(p => p.Id, p => p.Cash);
             var oldUnitIds = game?.Units.Select(u => u.Id).ToHashSet();
             var oldFactories = game?.Territories.Where(t => t.HasFactory).Select(t => t.TerritoryId).ToHashSet();
-            var oldNationStates = game?.NationStates.ToDictionary(ns => ns.Nation, ns => new { ns.Power, ns.TaxRevenue });
+            var oldNationStates = game?.NationStates.ToDictionary(ns => ns.Nation, ns => new { ns.Power, ns.TaxRevenue, ns.Treasury });
             var newGame = await Http.GetFromJsonAsync<GameDetailDto>($"api/games/{GameId}");
             
             if (newGame != null)
             {
+                UpdateDisplayedNation(newGame.CurrentTurnNation);
+
                 if (oldPlayers != null)
                 {
                     foreach (var p in newGame.Players)
@@ -1427,8 +1490,15 @@ else
                     {
                         if (oldNationStates.TryGetValue(ns.Nation, out var oldNs))
                         {
+                            if (oldNs.Treasury != ns.Treasury)
+                            {
+                                var delta = ns.Treasury - oldNs.Treasury;
+                                _nationTreasuryEffects[ns.Nation] = (delta, Guid.NewGuid(), DateTime.Now);
+                            }
                             if (oldNs.Power != ns.Power)
                             {
+                                var pDelta = ns.Power - oldNs.Power;
+                                _nationPowerEffects[ns.Nation] = (pDelta, Guid.NewGuid(), DateTime.Now);
                                 _nationPowerChanges[ns.Nation] = DateTime.Now;
                             }
                             if (oldNs.TaxRevenue != ns.TaxRevenue)
@@ -1437,6 +1507,12 @@ else
                             }
                         }
                     }
+                    var expiredTreasury = _nationTreasuryEffects.Where(kv => (DateTime.Now - kv.Value.Timestamp).TotalSeconds > 10).Select(kv => kv.Key).ToList();
+                    foreach (var e in expiredTreasury) _nationTreasuryEffects.Remove(e);
+
+                    var expiredPowerEffects = _nationPowerEffects.Where(kv => (DateTime.Now - kv.Value.Timestamp).TotalSeconds > 10).Select(kv => kv.Key).ToList();
+                    foreach (var e in expiredPowerEffects) _nationPowerEffects.Remove(e);
+
                     var expiredPower = _nationPowerChanges.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 30).Select(kv => kv.Key).ToList();
                     foreach (var e in expiredPower) _nationPowerChanges.Remove(e);
                     
@@ -2192,18 +2268,20 @@ else
         }
     }
 
-    private (int Bonus, int TreasuryGain, int PowerGain) GetTaxPreview(NationStateDto nationState)
+    private (int Bonus, int TreasuryGain, int PowerGain) GetTaxPreview(NationStateDto nationState, GameDetailDto? targetGame = null)
     {
+        var curGame = targetGame ?? game;
+        if (curGame == null) return (0, 0, 0);
         var nation = nationState.Nation;
         int factoryRevenue = 0;
-        var territoriesWithFactories = game.Territories.Where(ts => ts.HasFactory).ToList();
+        var territoriesWithFactories = curGame.Territories.Where(ts => ts.HasFactory).ToList();
         
         foreach (var ts in territoriesWithFactories)
         {
             var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
             if (territoryDef != null && territoryDef.Nation == nation) 
             {
-                bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
+                bool hasHostileArmy = curGame.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
                 if (!hasHostileArmy)
                 {
                     factoryRevenue += 2;
@@ -2211,11 +2289,11 @@ else
             }
         }
 
-        int flagRevenue = game.Territories.Count(ts => ts.Controller == nation);
+        int flagRevenue = curGame.Territories.Count(ts => ts.Controller == nation);
         flagRevenue = Math.Min(15, flagRevenue);
         int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
 
-        int unitCount = game.Units.Count(u => u.Nation == nation);
+        int unitCount = curGame.Units.Count(u => u.Nation == nation);
         int soldiersPay = unitCount * 1;
         
         int simulatedTreasury = nationState.Treasury + totalTaxRevenue;
@@ -2223,7 +2301,7 @@ else
         simulatedTreasury -= actualPay;
 
         int bonus = 0;
-        if (game.VariantBonusOnlyForTaxIncreases)
+        if (curGame.VariantBonusOnlyForTaxIncreases)
         {
             int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(nationState.TaxRevenue);
             int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
@@ -2244,8 +2322,78 @@ else
         return (actualBonus, expectedTreasuryGain, powerGain);
     }
 
+    private bool isTogglingPause = false;
+    private bool IsSinglePlayerGame() => game != null && game.Players.Count(p => !p.IsBot) <= 1;
+
+    private async Task TogglePauseGame()
+    {
+        if (isTogglingPause || game == null) return;
+        isTogglingPause = true;
+        try
+        {
+            var response = await Http.PostAsync($"api/games/{GameId}/toggle-pause", null);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<TogglePauseResponse>();
+                if (result != null)
+                {
+                    game.IsPaused = result.IsPaused;
+                }
+            }
+            else
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                await ShowToast($"Failed to toggle pause: {errorBody}", true);
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast($"Error toggling pause: {ex.Message}", true);
+        }
+        finally
+        {
+            isTogglingPause = false;
+            StateHasChanged();
+        }
+    }
+
+    private class TogglePauseResponse
+    {
+        public bool IsPaused { get; set; }
+    }
+
+    private void UpdateDisplayedNation(Nation newNation)
+    {
+        if (_displayedTurnNation == null)
+        {
+            _displayedTurnNation = newNation;
+            return;
+        }
+
+        if (_displayedTurnNation != newNation)
+        {
+            _nationRotationCts?.Cancel();
+            _nationRotationCts = new CancellationTokenSource();
+            var token = _nationRotationCts.Token;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(3000, token);
+                    _displayedTurnNation = newNation;
+                    await InvokeAsync(StateHasChanged);
+                }
+                catch (TaskCanceledException) { }
+            });
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
+        _nationRotationCts?.Cancel();
+        _nationRotationCts?.Dispose();
+
         if (hubConnection is not null)
         {
             await hubConnection.InvokeAsync("LeaveGameGroup", GameId.ToString(), MyPlayer == null);

@@ -66,13 +66,10 @@ namespace Imperial2030.Functions
             _logger.LogInformation("GameStarted trigger function processed a request.");
             try
             {
-                if (req.Body.CanSeek) req.Body.Position = 0;
-                string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-                _logger.LogInformation($"Raw GameStarted body: '{requestBody}'");
-                var data = JsonSerializer.Deserialize<GameStartPayload>(requestBody, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
+                var data = await req.ReadFromJsonAsync<GameStartPayload>();
                 if (data == null)
                 {
+                    _logger.LogWarning("GameStarted received empty or invalid payload.");
                     return req.CreateResponse(HttpStatusCode.BadRequest);
                 }
 
@@ -107,13 +104,10 @@ namespace Imperial2030.Functions
             _logger.LogInformation("GameFinished trigger function processed a request.");
             try
             {
-                if (req.Body.CanSeek) req.Body.Position = 0;
-                string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-                _logger.LogInformation($"Raw GameFinished body: '{requestBody}'");
-                var data = JsonSerializer.Deserialize<GameFinishPayload>(requestBody, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
+                var data = await req.ReadFromJsonAsync<GameFinishPayload>();
                 if (data == null)
                 {
+                    _logger.LogWarning("GameFinished received empty or invalid payload.");
                     return req.CreateResponse(HttpStatusCode.BadRequest);
                 }
 

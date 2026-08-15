@@ -314,6 +314,14 @@
                     {
                         <span class="message">started the game</span>
                     }
+                    else if (action.ActionType == "PauseGame")
+                    {
+                        <span class="message text-warning">paused the game</span>
+                    }
+                    else if (action.ActionType == "ResumeGame")
+                    {
+                        <span class="message text-success">resumed the game</span>
+                    }
                     else if (action.ActionType == "InvestorBonus" && !string.IsNullOrEmpty(action.Metadata))
                     {
                         try
