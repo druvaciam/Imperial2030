@@ -30,7 +30,30 @@ public class RLBotStrategy : BotStrategyBase
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, InferenceSession> _sessionCache = new();
     private InferenceSession? _onnxSession;
 
-    public static readonly int StateSize = 3164;
+    public static readonly int StateSize = 3172;
+
+    // Base action space (0-63): 0-5=Rondel distance, 6=unused, 7=Fight, 8=Retreat, 9-62=BuyBond, 63=Pass
+    public const int FightAction = 7;
+    public const int RetreatAction = 8;
+
+    // Factory destruction decision (asked after a hostile move stacks 3+ armies on an undefended foreign factory)
+    public const int FactoryDestroyAction = 189;
+    public const int FactoryKeepAction = 190;
+
+    // Import decision: asked once per unit while on the Import rondel slot, up to MaxImportUnits times.
+    // ImportPlaceActionBase + (homeSlotIndex * 2) + (0=Army, 1=Fleet), homeSlotIndex in [0,3] over the
+    // nation's 4 home territories ordered by Id (same ordering used elsewhere for per-nation home-territory encoding).
+    public const int MaxImportUnits = 3;
+    public const int ImportStopAction = 191;
+    public const int ImportPlaceActionBase = 192;
+    public const int ImportPlaceActionCount = 8;
+
+    // Factory build decision: asked once while on the Factory rondel slot. FactoryBuildActionBase + homeSlotIndex,
+    // homeSlotIndex in [0,3] over the nation's 4 home territories ordered by Id (same convention as Import).
+    public const int FactorySkipAction = 200;
+    public const int FactoryBuildActionBase = 201;
+    public const int FactoryBuildActionCount = 4;
+    public const int TotalActionSize = 205;
 
     // Fixed ordered territory lists for map encoding
     public static readonly string[] HomeProvinceIds = new[]
@@ -80,7 +103,20 @@ public class RLBotStrategy : BotStrategyBase
             {
                 _onnxSession = _sessionCache.GetOrAdd(onnxPath, path =>
                 {
-                    var session = new InferenceSession(path);
+                    // Default SessionOptions let ONNX Runtime fan a single inference call out across every
+                    // logical core. That's fine in isolation, but during training the C# server handles several
+                    // concurrent game sessions at once (one per parallel training env), each independently
+                    // wanting every opponent bot's inference to use all cores — the outer (session-level)
+                    // concurrency is already the real source of parallelism here, so per-call fan-out just
+                    // means N sessions all fighting over the same cores. Capping both to 1 keeps each inference
+                    // call single-threaded and lets the OS scheduler cleanly give each concurrent session its
+                    // own core instead of oversubscribing.
+                    var options = new Microsoft.ML.OnnxRuntime.SessionOptions
+                    {
+                        IntraOpNumThreads = 1,
+                        InterOpNumThreads = 1
+                    };
+                    var session = new InferenceSession(path, options);
                     Console.WriteLine($"Loaded ONNX model: {modelFilename}");
                     return session;
                 });
@@ -98,6 +134,62 @@ public class RLBotStrategy : BotStrategyBase
 
     private float[]? _lastState = null;
     private int _cachedAction = -1;
+    private int? _modelActionOutputSize;
+
+    // Older exported models (e.g. RL-2.onnx) predate the Destroy/Keep Factory actions and only
+    // output logits for the original action space. Detect that from the ONNX graph's static output
+    // shape so we never index past the end of the model's actual output tensor.
+    private int GetModelActionOutputSize()
+    {
+        if (_modelActionOutputSize.HasValue) return _modelActionOutputSize.Value;
+
+        if (_onnxSession == null)
+        {
+            _modelActionOutputSize = 0;
+            return 0;
+        }
+
+        try
+        {
+            var dims = _onnxSession.OutputMetadata.Values.First().Dimensions;
+            _modelActionOutputSize = (dims.Length > 1 && dims[1] > 0) ? dims[1] : int.MaxValue;
+        }
+        catch
+        {
+            _modelActionOutputSize = int.MaxValue; // Unknown/dynamic shape: assume it's safe
+        }
+
+        return _modelActionOutputSize.Value;
+    }
+
+    private int? _modelInputSize;
+
+    // Older exported models predate later additions to the state vector (e.g. the per-nation interest-owed
+    // features) and expect a narrower input than the current encoding produces. Detect that from the ONNX
+    // graph's static input shape — feeding a mismatched-width tensor doesn't throw cleanly in all cases, it
+    // can leave the caller's bot turn stuck mid-task, so this must be checked before every inference call.
+    private int GetModelInputSize()
+    {
+        if (_modelInputSize.HasValue) return _modelInputSize.Value;
+
+        if (_onnxSession == null)
+        {
+            _modelInputSize = 0;
+            return 0;
+        }
+
+        try
+        {
+            var dims = _onnxSession.InputMetadata.Values.First().Dimensions;
+            _modelInputSize = (dims.Length > 1 && dims[1] > 0) ? dims[1] : int.MaxValue;
+        }
+        catch
+        {
+            _modelInputSize = int.MaxValue; // Unknown/dynamic shape: assume it's safe
+        }
+
+        return _modelInputSize.Value;
+    }
 
     private bool IsSameState(float[] s1, float[] s2)
     {
@@ -132,7 +224,7 @@ public class RLBotStrategy : BotStrategyBase
 
         int distance = _cachedAction + 1; // Actions 0-5 map to distance 1-6
         int currentPos = ns.RondelPosition ?? 0;
-        int targetSlot = (currentPos + distance) % 8;
+        int targetSlot = (currentPos + distance) % RondelData.SlotCount;
 
         if (slot == targetSlot)
         {
@@ -167,7 +259,7 @@ public class RLBotStrategy : BotStrategyBase
             {
                 state[i++] = ns.Power / 25.0f;
                 state[i++] = ns.Treasury / 30.0f;
-                state[i++] = ns.RondelPosition.HasValue ? ns.RondelPosition.Value / 7.0f : -1.0f;
+                state[i++] = ns.RondelPosition.HasValue ? ns.RondelPosition.Value / (float)(RondelData.SlotCount - 1) : -1.0f;
 
                 var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
                 foreach (var cost in bondCosts)
@@ -305,10 +397,10 @@ public class RLBotStrategy : BotStrategyBase
                 continue;
             }
 
-            int targetSlot = (actingNs.RondelPosition.GetValueOrDefault() + act + 1) % 8;
+            int targetSlot = (actingNs.RondelPosition.GetValueOrDefault() + act + 1) % RondelData.SlotCount;
             bool isPenalized = false;
 
-            if (targetSlot == 1) // Factory
+            if (targetSlot == RondelData.FactorySlot)
             {
                 bool noMoney = actingNs.Treasury < 5;
                 bool allBuiltOrBlocked = false;
@@ -325,11 +417,11 @@ public class RLBotStrategy : BotStrategyBase
                 }
                 if (noMoney || allBuiltOrBlocked) isPenalized = true;
             }
-            else if (targetSlot == 5) // Import
+            else if (targetSlot == RondelData.ImportSlot)
             {
                 if (actingNs.Treasury < 1) isPenalized = true;
             }
-            else if (targetSlot == 3 || targetSlot == 7) // Maneuver
+            else if (RondelData.IsManeuverSlot(targetSlot))
             {
                 bool hasUnits = game.Units.Any(u => u.Nation == actingNs.Nation);
                 if (!hasUnits) isPenalized = true;
@@ -368,6 +460,39 @@ public class RLBotStrategy : BotStrategyBase
         state[i++] = game.CurrentManeuverPhase == ManeuverPhase.None ? 1.0f : 0.0f;
         state[i++] = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? 1.0f : 0.0f;
         state[i++] = game.CurrentManeuverPhase == ManeuverPhase.Armies ? 1.0f : 0.0f;
+
+        // === INVESTOR RISK CONTEXT (8 floats) ===
+        // Appended at the end, not spliced into the per-nation block above, on purpose: this keeps every float
+        // before this point at the exact same index it had before this feature existed, so an older model (one
+        // whose input layer expects fewer floats) can be fed a plain prefix of this vector — via GetActionFromOnnx's
+        // truncation — and still receive a byte-for-byte reproduction of the exact input it was trained on. Any
+        // future state additions should follow the same append-only rule to preserve that.
+        //
+        // 1. Total interest owed per nation (6 floats). Range is fixed by the bond table (interests 1..9 sum to
+        //    45), so this normalizes cleanly to [0,1] without clamping. Unlike Treasury, it isn't something the
+        //    agent's own action can directly change, so it's given raw rather than as a pre-subtracted "deficit".
+        foreach (var nation in imperial2030Nations)
+        {
+            state[i++] = game.Bonds.Where(b => b.Nation == nation && b.HolderId != null).Sum(b => b.Interest) / 45.0f;
+        }
+
+        // 2. Investor outcome preview for the acting nation's controller (2 floats), mirroring the taxation
+        // preview elsewhere in this vector. NetControllerCashDelta ranges [-45, 45] for the same reason as
+        // above. The boolean is included separately because it's a much easier signal to key off of than
+        // reading the exact float — the network doesn't need to calibrate "is this delta close enough to what's
+        // owed" itself.
+        var actingController = actingNs?.ControllerId != null ? game.Players.FirstOrDefault(p => p.Id == actingNs.ControllerId) : null;
+        if (actingNs != null && actingController != null)
+        {
+            var investorPreview = Imperial2030.Server.Helpers.InvestorHelper.PreviewInterestPayment(game, actingNs, actingController);
+            state[i++] = investorPreview.NetControllerCashDelta / 45.0f;
+            state[i++] = investorPreview.WillGetFullOwnInterest ? 1.0f : 0.0f;
+        }
+        else
+        {
+            state[i++] = 0f;
+            state[i++] = 0f;
+        }
 
         return state;
     }
@@ -454,7 +579,7 @@ public class RLBotStrategy : BotStrategyBase
 
         if (TrainingActionOverride.Value.HasValue)
         {
-            return TrainingActionOverride.Value.Value == 8; // 8 = Retreat, 7 = Fight
+            return TrainingActionOverride.Value.Value == RetreatAction;
         }
         else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
         {
@@ -463,7 +588,129 @@ public class RLBotStrategy : BotStrategyBase
 
         var mask = GetActionMask(game, controller.Id);
         int action = GetActionFromOnnx(game, controller, mask);
-        return action == 8;
+        return action == RetreatAction;
+    }
+
+    public override bool ShouldDestroyFactory(Game game, Nation nation, string territoryId, Player controller)
+    {
+        if (TrainingActionOverride.Value.HasValue)
+        {
+            return TrainingActionOverride.Value.Value == FactoryDestroyAction;
+        }
+        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
+        {
+            throw new RlTrainingPauseException();
+        }
+
+        // Models exported before this decision existed don't have logits for it; fall back to the heuristic.
+        if (GetModelActionOutputSize() < TotalActionSize)
+        {
+            return base.ShouldDestroyFactory(game, nation, territoryId, controller);
+        }
+
+        bool[] mask = new bool[TotalActionSize];
+        mask[FactoryDestroyAction] = true;
+        mask[FactoryKeepAction] = true;
+
+        int action = GetActionFromOnnx(game, controller, mask, territoryId);
+        return action == FactoryDestroyAction;
+    }
+
+    public override List<(UnitType Type, string TerritoryId)> ChooseImports(Game game, NationState ns, int maxImport, List<Territory> homeTerritories)
+    {
+        var controller = game.Players.First(p => p.Id == ns.ControllerId);
+
+        // During training, TcpTrainingServer handles Import directly step-by-step (see BotService.BotImport's early return).
+        // TrainingActionOverride is never set here since this method is skipped entirely in that path.
+        if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
+        {
+            throw new RlTrainingPauseException();
+        }
+
+        // Models exported before this decision existed don't have logits for it; fall back to the heuristic.
+        if (GetModelActionOutputSize() < TotalActionSize)
+        {
+            return base.ChooseImports(game, ns, maxImport, homeTerritories);
+        }
+
+        var result = new List<(UnitType Type, string TerritoryId)>();
+        var orderedHome = homeTerritories.OrderBy(t => t.Id).ToList();
+        int currentArmies = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Army);
+        int currentFleets = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Fleet);
+        int remaining = maxImport;
+
+        while (remaining > 0)
+        {
+            bool[] mask = new bool[TotalActionSize];
+            mask[ImportStopAction] = true;
+            bool anyPlaceable = false;
+
+            for (int slotIdx = 0; slotIdx < orderedHome.Count && slotIdx < 4; slotIdx++)
+            {
+                var t = orderedHome[slotIdx];
+                bool occupied = game.Units.Any(u => u.TerritoryId == t.Id && u.Nation != ns.Nation && u.UnitType == UnitType.Army && u.IsHostile);
+                if (occupied) continue;
+
+                // No London exclusion here: that's a heuristic-only guard in BotStrategyBase to keep the
+                // simple AI from stranding an army in a coastal city — the real game rules allow it, and the
+                // RL policy should be free to judge that trade-off itself (it may even be the only open slot).
+                bool canArmy = currentArmies < NationData.GetMaxArmies(ns.Nation);
+                bool canFleet = t.CityType == CityType.LightBlue && currentFleets < NationData.GetMaxFleets(ns.Nation);
+
+                if (canArmy) { mask[ImportPlaceActionBase + slotIdx * 2] = true; anyPlaceable = true; }
+                if (canFleet) { mask[ImportPlaceActionBase + slotIdx * 2 + 1] = true; anyPlaceable = true; }
+            }
+
+            if (!anyPlaceable) break;
+
+            int action = GetActionFromOnnx(game, controller, mask);
+            if (action < ImportPlaceActionBase || action >= ImportPlaceActionBase + ImportPlaceActionCount) break; // Stop (or invalid)
+
+            int idx = action - ImportPlaceActionBase;
+            int chosenSlot = idx / 2;
+            if (chosenSlot >= orderedHome.Count) break;
+
+            var chosenType = (idx % 2 == 0) ? UnitType.Army : UnitType.Fleet;
+            result.Add((chosenType, orderedHome[chosenSlot].Id));
+            if (chosenType == UnitType.Army) currentArmies++; else currentFleets++;
+            remaining--;
+        }
+
+        return result;
+    }
+
+    public override string? ChooseCityForFactory(Game game, Nation nation, List<Territory> validCities)
+    {
+        var ns = game.NationStates.First(n => n.Nation == nation);
+        var controller = game.Players.First(p => p.Id == ns.ControllerId);
+
+        // During training, TcpTrainingServer handles this directly (see BotService.BotBuildFactory's early return).
+        if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
+        {
+            throw new RlTrainingPauseException();
+        }
+
+        // Models exported before this decision existed don't have logits for it; fall back to the heuristic.
+        if (GetModelActionOutputSize() < TotalActionSize)
+        {
+            return base.ChooseCityForFactory(game, nation, validCities);
+        }
+
+        var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == nation).OrderBy(t => t.Id).ToList();
+        var validIds = validCities.Select(c => c.Id).ToHashSet();
+
+        bool[] mask = new bool[TotalActionSize];
+        mask[FactorySkipAction] = true;
+        for (int slotIdx = 0; slotIdx < orderedHome.Count && slotIdx < FactoryBuildActionCount; slotIdx++)
+        {
+            if (validIds.Contains(orderedHome[slotIdx].Id)) mask[FactoryBuildActionBase + slotIdx] = true;
+        }
+
+        int action = GetActionFromOnnx(game, controller, mask);
+        if (action < FactoryBuildActionBase || action >= FactoryBuildActionBase + FactoryBuildActionCount) return null; // Skip (or invalid)
+
+        int chosenSlot = action - FactoryBuildActionBase;
+        return chosenSlot < orderedHome.Count ? orderedHome[chosenSlot].Id : null;
     }
 
     private ThreadLocal<(Guid UnitId, int ChosenAction)> _maneuverCache = new ThreadLocal<(Guid, int)>();
@@ -589,10 +836,33 @@ public class RLBotStrategy : BotStrategyBase
 
         if (_onnxSession == null)
         {
-            // Fallback to random if model isn't loaded
+            // Fallback to random if no model is loaded at all
             var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();
             if (validIndices.Count == 0) return 0;
             return validIndices[Random.Shared.Next(validIndices.Count)];
+        }
+
+        int modelInputSize = GetModelInputSize();
+        if (modelInputSize != state.Length)
+        {
+            if (modelInputSize > 0 && modelInputSize < state.Length)
+            {
+                // Older model trained on a shorter state vector. Every new field is appended, never spliced in
+                // (see the "INVESTOR RISK CONTEXT" comment in GetStateVector), so the model's own input size is
+                // always an exact prefix of the current vector — truncating reproduces precisely what it was
+                // trained on, with no loss of information on anything it actually knows about. This is what
+                // keeps older exported models fully playable at unchanged strength as the state vector grows.
+                state = state[..modelInputSize];
+            }
+            else
+            {
+                // Model expects a shape we can't safely reconstruct a prefix for (larger than the current
+                // vector, or an unreadable/dynamic shape) — fall back to random rather than risk a shape
+                // mismatch at inference time.
+                var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();
+                if (validIndices.Count == 0) return 0;
+                return validIndices[Random.Shared.Next(validIndices.Count)];
+            }
         }
 
         // Create Tensor
@@ -678,8 +948,8 @@ public class RLBotStrategy : BotStrategyBase
 
             if (rlIsDefender)
             {
-                mask[7] = true; // Fight
-                mask[8] = true; // Retreat
+                mask[FightAction] = true;
+                mask[RetreatAction] = true;
                 return mask;
             }
         }
@@ -713,16 +983,16 @@ public class RLBotStrategy : BotStrategyBase
 
         int currentPos = ns.RondelPosition ?? 0;
 
-        for (int dist = 1; dist <= 6; dist++)
+        for (int dist = 1; dist <= RondelData.MaxMoveDistance; dist++)
         {
-            int targetSlot = (currentPos + dist) % 8;
+            int targetSlot = (currentPos + dist) % RondelData.SlotCount;
             mask[dist - 1] = IsSlotValid(ns, rlPlayer, targetSlot);
         }
 
-        mask[6] = false; // Action 6 is unused for Rondel (moving 7 spaces is illegal in Imperial 2030)
+        mask[RondelData.MaxMoveDistance] = false; // Action 6 is unused for Rondel (moving 7 spaces is illegal in Imperial 2030)
 
         // Failsafe: if no actions are somehow valid, just force action 0 (move 1 space)
-        if (!mask.Take(6).Any(m => m)) mask[0] = true;
+        if (!mask.Take(RondelData.MaxMoveDistance).Any(m => m)) mask[0] = true;
 
         return mask;
     }
@@ -734,11 +1004,11 @@ public class RLBotStrategy : BotStrategyBase
         int moveCost = 0;
         if (ns.RondelPosition.HasValue)
         {
-            int dist = (targetSlot - ns.RondelPosition.Value + 8) % 8;
-            if (dist > 3)
+            int dist = (targetSlot - ns.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
+            if (dist > RondelData.FreeMoveDistance)
             {
                 int pf = ns.Power / 5;
-                moveCost = (dist - 3) * (1 + pf);
+                moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
             }
         }
         return rlPlayer.Cash >= moveCost;

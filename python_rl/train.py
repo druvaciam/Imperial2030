@@ -4,8 +4,17 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
 from imperial_env import ImperialEnv
 
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+
+
+def make_env(bot_type, opponents_list):
+    """Factory for a single (Monitor-wrapped) env instance, for use with Subproc/DummyVecEnv.
+    Each instance opens its own TCP connection to the training server (port 5295), which handles
+    concurrent sessions independently, so these can run as genuinely parallel OS processes."""
+    def _init():
+        return Monitor(ImperialEnv(bot_type=bot_type, opponents=opponents_list))
+    return _init
 
 def linear_schedule(initial_value, final_value=1e-5):
     """Linear decay from initial_value to final_value over training."""
@@ -40,20 +49,46 @@ if __name__ == "__main__":
     parser.add_argument("--reset", action="store_true", help="Start training from scratch, ignoring any existing saved model.")
     parser.add_argument("--bot-type", type=str, default="RL", help="The name of the bot to train (e.g. RL, RL-2).")
     parser.add_argument("--opponents", type=str, help="Comma separated list of opponents to train against (e.g. Random,Default,RL).")
+    parser.add_argument("--n-envs", type=int, default=4, help="Number of parallel training environments (separate OS processes, each with its own TCP session to the C# server). 1 falls back to a single in-process env.")
     args = parser.parse_args()
 
     opponents_list = args.opponents.split(",") if args.opponents else []
 
-    env = Monitor(ImperialEnv(bot_type=args.bot_type, opponents=opponents_list))
-    
-    # Wrap in DummyVecEnv and VecNormalize
-    vec_env = DummyVecEnv([lambda: env])
+    # Total experience collected per PPO update, independent of how many parallel envs collect it (SB3's
+    # n_steps is PER env, so total buffer = n_steps * n_envs). Dividing by n_envs here keeps the update
+    # cadence/batch composition the same as the original single-env tuning — parallelizing only changes how
+    # fast that same amount of experience is collected in wall-clock time, not the PPO hyperparameters.
+    TOTAL_N_STEPS = 8192
+    n_steps_per_env = max(1, TOTAL_N_STEPS // args.n_envs)
+
+    env_fns = [make_env(args.bot_type, opponents_list) for _ in range(args.n_envs)]
+    # SubprocVecEnv runs each env in its own OS process for genuine parallelism (Python's GIL means
+    # DummyVecEnv would just interleave them on one core). Each worker opens its own socket to the training
+    # server, which handles concurrent sessions independently (see the ConcurrentDictionary session store).
+    vec_env = SubprocVecEnv(env_fns) if args.n_envs > 1 else DummyVecEnv(env_fns)
 
     MODEL_BASENAME = args.bot_type
     MODEL_PATH = f"{MODEL_BASENAME}.zip"
     VEC_NORM_PATH = "vec_normalize.pkl"
     BEST_VEC_NORM_PATH = "vec_normalize_best.pkl"
     BEST_REWARD_PATH = "best_reward.txt"
+
+    # Optional: TensorBoard logging for watching ep_rew_mean etc. trend over time. Degrades to plain console
+    # logging (instead of hard-crashing training) if the `tensorboard` package isn't installed — install it
+    # with `pip install tensorboard` (also listed in requirements.txt) to actually get the logs.
+    try:
+        import tensorboard  # noqa: F401
+        TENSORBOARD_LOG_DIR = "./tb_logs"
+    except ImportError:
+        print("WARNING: 'tensorboard' package not installed — skipping TensorBoard logging (pip install tensorboard to enable). Falling back to console-only logging.")
+        TENSORBOARD_LOG_DIR = None
+
+    # Exploration: 0.05 -> 0.015. Bumped up from the original 0.03 -> 0.005 (tuned back when the action space
+    # was 64) now that it's 205 and includes several newer decision types (Import placement, Factory
+    # build/destroy) that occur far less often per game than Rondel moves, so they need sustained exploration
+    # pressure for longer to collect enough samples, rather than collapsing onto the well-understood actions.
+    INITIAL_ENT_COEF = 0.05
+    FINAL_ENT_COEF = 0.015
 
     if not args.reset and os.path.exists(MODEL_PATH) and os.path.exists(VEC_NORM_PATH):
         print("Found existing model, resuming training...")
@@ -62,39 +97,41 @@ if __name__ == "__main__":
         vec_env.training = True
         custom_objects = {
             "learning_rate": linear_schedule(5e-5, 1e-5),
-            "n_steps": 8192,
+            "n_steps": n_steps_per_env,
             "batch_size": 512,
             "clip_range": 0.2,
-            "ent_coef": 0.03,
+            "ent_coef": INITIAL_ENT_COEF,
             "gamma": 0.995,
             "n_epochs": 6,
             "max_grad_norm": 0.5,
+            "tensorboard_log": TENSORBOARD_LOG_DIR,
         }
         model = MaskablePPO.load(MODEL_PATH, env=vec_env, custom_objects=custom_objects, verbose=1)
     else:
         print("No existing model found. Initializing new MaskablePPO Model...")
         # CRITICAL: norm_obs=False because state is now manually normalized in C#
         vec_env = VecNormalize(vec_env, norm_obs=False, norm_reward=True, clip_obs=10.0)
-        
+
         policy_kwargs = dict(
             net_arch=dict(
                 pi=[1024, 512],
                 vf=[1024, 512, 256],
             )
         )
-        
+
         model = MaskablePPO(
-            "MlpPolicy", 
-            vec_env, 
-            policy_kwargs=policy_kwargs, 
+            "MlpPolicy",
+            vec_env,
+            policy_kwargs=policy_kwargs,
             learning_rate=linear_schedule(5e-5, 1e-5),
-            n_steps=8192,
+            n_steps=n_steps_per_env,
             batch_size=512,
             clip_range=0.2,
-            ent_coef=0.03,           # Balanced exploration for 64-action masked space
+            ent_coef=INITIAL_ENT_COEF,  # See comment above: bumped up for the larger, more heterogeneous action space
             gamma=0.995,
             n_epochs=6,
             max_grad_norm=0.5,
+            tensorboard_log=TENSORBOARD_LOG_DIR,
             verbose=1
         )
 
@@ -149,11 +186,11 @@ if __name__ == "__main__":
     TOTAL_TIMESTEPS = 10_000_000
     
     save_callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
-    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=0.03, final_ent_coef=0.005, total_timesteps=TOTAL_TIMESTEPS)
+    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=INITIAL_ENT_COEF, final_ent_coef=FINAL_ENT_COEF, total_timesteps=TOTAL_TIMESTEPS)
     
     callback = CallbackList([save_callback, ent_coef_callback])
     
-    model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=False, callback=callback)
+    model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=False, callback=callback, tb_log_name=args.bot_type)
 
     print("Saving Final Model and VecNormalize statistics...")
     model.save(MODEL_BASENAME)

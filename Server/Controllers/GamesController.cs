@@ -593,303 +593,20 @@ public class GamesController : ControllerBase
 
         try
         {
-            // --- Initialization Logic ---
-            // PHASE 1: Create Entities
-            var newBonds = new List<Bond>();
-            var newNationStates = new List<NationState>();
+            // --- Initialization Logic (Official Imperial 2030 Rules) ---
+            // Deals starting bond packages, assigns nation controllers, the investor card holder, and starting
+            // cash. The nation->player distribution is randomized here and returned so it can be logged on the
+            // StartGame action — that's what lets a game be reproduced later from its action log alone.
+            var distribution = await GameSetupHelper.InitializeGameAsync(_context, gameId);
 
-            foreach (Nation nation in Enum.GetValues(typeof(Nation)))
-            {
-                newNationStates.Add(new NationState { Nation = nation, Treasury = 0, Power = 0, GameId = gameId });
-            }
-
-            // Init Territories
-            // Each nation starts with 2 factories (one Brown/Army, one LightBlue/Fleet) per Imperial 2030 rules.
-            // The remaining 2 home cities can have factories built via the Factory rondel action.
-            var startingFactories = new HashSet<string>
-            {
-                "Moscow", "Vladivostok",       // Russia
-                "Beijing", "Shanghai",         // China
-                "NewDelhi", "Mumbai",          // India
-                "Brasilia", "RioDeJaneiro",    // Brazil
-                "Chicago", "NewOrleans",       // USA
-                "Paris", "London"              // Europe
-            };
-            var territories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories;
-            var newTerritoryStates = new List<TerritoryState>();
-            foreach (var t in territories)
-            {
-                newTerritoryStates.Add(new TerritoryState { TerritoryId = t.Id, GameId = gameId, HasFactory = startingFactories.Contains(t.Id) });
-            }
-            _context.TerritoryStates.AddRange(newTerritoryStates);
-
-
-            var bondDefinitions = new[]
-            {
-                new { Cost = 2, Interest = 1 }, new { Cost = 4, Interest = 2 }, new { Cost = 6, Interest = 3 },
-                new { Cost = 9, Interest = 4 }, new { Cost = 12, Interest = 5 }, new { Cost = 16, Interest = 6 },
-                new { Cost = 20, Interest = 7 }, new { Cost = 25, Interest = 8 }, new { Cost = 30, Interest = 9 }
-            };
-
-            foreach (Nation nation in Enum.GetValues(typeof(Nation)))
-            {
-                foreach (var def in bondDefinitions)
-                {
-                    newBonds.Add(new Bond { Nation = nation, Cost = def.Cost, Interest = def.Interest, GameId = gameId });
-                }
-            }
-
-            _context.NationStates.AddRange(newNationStates);
-            _context.Bonds.AddRange(newBonds);
-            await _context.SaveChangesAsync();
-            _context.ChangeTracker.Clear();
-
-            // PHASE 2: Distribution Logic (Official Imperial 2030 Rules)
-            var bonds = await _context.Bonds.Where(b => b.GameId == gameId).ToListAsync();
-            var nationStates = await _context.NationStates.Where(ns => ns.GameId == gameId).ToListAsync();
-            var players = await _context.Players.Where(p => p.GameId == gameId).OrderBy(p => p.Id).ToListAsync();
-
-            var random = new Random();
-            var shuffledPlayers = players.OrderBy(p => random.Next()).ToList();
-
-            // Define Packages: Nation -> (Primary 9M Nation, Secondary 2M Nation)
-            // Table: 
-            // Russia -> Russia 9M, China 2M
-            // China -> China 9M, India 2M
-            // India -> India 9M, Brazil 2M
-            // Brazil -> Brazil 9M, USA 2M
-            // USA -> USA 9M, Europe 2M
-            // Europe -> Europe 9M, Russia 2M
-            var packages = new List<(Nation Primary, Nation Secondary)>
-            {
-                (Nation.Russia, Nation.China),
-                (Nation.China, Nation.India),
-                (Nation.India, Nation.Brazil),
-                (Nation.Brazil, Nation.USA),
-                (Nation.USA, Nation.Europe),
-                (Nation.Europe, Nation.Russia)
-            };
-
-            // Map: Which player gets which packages
-            var distribution = new Dictionary<Nation, Player>();
-            // Key = Primary Nation of the package, Value = Player who receives it
-
-            if (players.Count == 2)
-            {
-                // 2 Players: Deal China and Russia.
-                // Player A (China): Gets China + Europe + Brazil
-                // Player B (Russia): Gets Russia + India + USA
-                var p1 = shuffledPlayers[0];
-                var p2 = shuffledPlayers[1];
-
-                // Assign explicitly based on rules "China and Russia randomly dealt"
-                // Let's assume P1 got China, P2 got Russia (randomness is in shuffledPlayers)
-
-                // P1 Packages
-                distribution[Nation.China] = p1;
-                distribution[Nation.Europe] = p1;
-                distribution[Nation.Brazil] = p1;
-
-                // P2 Packages
-                distribution[Nation.Russia] = p2;
-                distribution[Nation.India] = p2;
-                distribution[Nation.USA] = p2;
-            }
-            else if (players.Count == 3)
-            {
-                // 3 Players: Deal India, Russia, China.
-                // 1 (p1): India -> Gets India + USA
-                // 2 (p2): Russia -> Gets Russia + Brazil
-                // 3 (p3): China -> Gets China + Europe
-                var p1 = shuffledPlayers[0];
-                var p2 = shuffledPlayers[1];
-                var p3 = shuffledPlayers[2];
-
-                distribution[Nation.India] = p1;
-                distribution[Nation.USA] = p1;
-
-                distribution[Nation.Russia] = p2;
-                distribution[Nation.Brazil] = p2;
-
-                distribution[Nation.China] = p3;
-                distribution[Nation.Europe] = p3;
-            }
-            else // 4-6 Players
-            {
-                // Each receive 1 card.
-                // Shuffle packages
-                var shuffledPackages = packages.OrderBy(x => random.Next()).ToList();
-                for (int i = 0; i < players.Count; i++)
-                {
-                    // Deal 1 package to each player
-                    var pkg = shuffledPackages[i];
-                    distribution[pkg.Primary] = shuffledPlayers[i];
-                }
-                // Remaining packages are "undealt".
-            }
-
-            // Execute Transactions for Distributed Packages
-            foreach (var kvp in distribution)
-            {
-                var primaryNation = kvp.Key;
-                var player = kvp.Value;
-
-                // Find definition to know secondary
-                var def = packages.First(p => p.Primary == primaryNation);
-
-                // Assign 9M Bond (Primary)
-                var bond9M = bonds.First(b => b.Nation == def.Primary && b.Cost == 9);
-                bond9M.HolderId = player.Id;
-                _context.Entry(bond9M).State = EntityState.Modified;
-
-                // Credit Treasury for Primary
-                var nsPrimary = nationStates.First(ns => ns.Nation == def.Primary);
-                nsPrimary.Treasury += 9;
-                _context.Entry(nsPrimary).State = EntityState.Modified;
-
-                // Assign 2M Bond (Secondary)
-                var bond2M = bonds.First(b => b.Nation == def.Secondary && b.Cost == 2);
-                bond2M.HolderId = player.Id;
-                _context.Entry(bond2M).State = EntityState.Modified;
-
-                // Credit Treasury for Secondary
-                var nsSecondary = nationStates.First(ns => ns.Nation == def.Secondary);
-                nsSecondary.Treasury += 2;
-                _context.Entry(nsSecondary).State = EntityState.Modified;
-            }
-
-            await _context.SaveChangesAsync();
-            _context.ChangeTracker.Clear();
-
-            // PHASE 3: Assign Controllers
-            // Rule: Controller is who holds the Flag Card.
-            // Initially, Flag Card follows the distribution.
-            // If not distributed, it goes to holder of 2M bond.
-            // If no 2M bond holder, stays in bank (Controller = null).
-
-            // Re-fetch bonds to see current holders
-            var bondsHeld = await _context.Bonds.Where(b => b.GameId == gameId && b.HolderId != null).ToListAsync();
-            var nationStatesToUpdate = await _context.NationStates.Where(ns => ns.GameId == gameId).ToListAsync();
-
-            foreach (var ns in nationStatesToUpdate)
-            {
-                Player? controller = null;
-
-                // 1. Check if this Nation package was distributed directly
-                if (distribution.ContainsKey(ns.Nation))
-                {
-                    controller = distribution[ns.Nation];
-                }
-                else
-                {
-                    // 2. Check who owns the 2M bond of this nation
-                    var bond2M = bondsHeld.FirstOrDefault(b => b.Nation == ns.Nation && b.Cost == 2);
-                    if (bond2M != null)
-                    {
-                        // Get the player object from our list (to avoid tracking issues, finding by Id)
-                        // Actually we need the ID.
-                        // bond2M.HolderId is loaded.
-                        // We set controllerId.
-                        ns.ControllerId = bond2M.HolderId;
-                        _context.Entry(ns).State = EntityState.Modified;
-                        continue; // Done
-                    }
-                }
-
-                // Reset Rondel Position to null (Off-Board)
-                ns.RondelPosition = null;
-
-                if (controller != null)
-                {
-                    ns.ControllerId = controller.Id;
-                    _context.Entry(ns).State = EntityState.Modified;
-                }
-            }
-
-            await _context.SaveChangesAsync();
-            await _context.SaveChangesAsync();
-            _context.ChangeTracker.Clear();
-
-            // Init Investor Card Holder (Player who holds "Austria/Europe" card? No, usually starts with player to left of... 
-            // Rules: "Start with Player 1" (or standard distribution).
-            // Let's assign to first player sorted by ID for simplicity.
-            if (players.Any())
-            {
-                var sorted = players.GetOrderedPlayers().ToList();
-                var gameToInit = await _context.Games.Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == gameId);
-                if (gameToInit != null)
-                {
-                    var russiaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.Russia);
-                    var chinaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.China);
-
-                    if (russiaNs != null && russiaNs.ControllerId.HasValue)
-                    {
-                        var index = sorted.FindIndex(p => p.Id == russiaNs.ControllerId.Value);
-                        var nextIndex = (index + 1) % sorted.Count;
-                        gameToInit.InvestorCardHolderId = sorted[nextIndex].Id;
-                    }
-                    else if (chinaNs != null && chinaNs.ControllerId.HasValue)
-                    {
-                        var index = sorted.FindIndex(p => p.Id == chinaNs.ControllerId.Value);
-                        var nextIndex = (index + 1) % sorted.Count;
-                        gameToInit.InvestorCardHolderId = sorted[nextIndex].Id;
-                    }
-                    else
-                    {
-                        gameToInit.InvestorCardHolderId = sorted[0].Id;
-                    }
-                    _context.Entry(gameToInit).State = EntityState.Modified;
-                }
-            }
-            await _context.SaveChangesAsync();
-
-
-
-            // PHASE 4: Update Game Status and Player Cash
-            var gameToUpdate = await _context.Games.Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == gameId);
-            var playersToUpdate = await _context.Players.Where(p => p.GameId == gameId).ToListAsync();
-            // Count allocated packages per player to deduct cost
-            // Cost per package is 11M (9M + 2M)
-
-            if (gameToUpdate != null)
-            {
-                gameToUpdate.Status = GameStatus.InProgress;
-
-                int advanceCount = 0;
-                while (gameToUpdate.NationStates.FirstOrDefault(ns => ns.Nation == gameToUpdate.CurrentTurnNation)?.ControllerId == null && advanceCount < 6)
-                {
-                    gameToUpdate.AdvanceTurn();
-                    advanceCount++;
-                }
-
-                _context.Entry(gameToUpdate).State = EntityState.Modified;
-
-                // Fire notification after starting the game
-                _ = _notificationService.NotifyGameStartedAsync(gameToUpdate);
-            }
-
-            int startingCash = playersToUpdate.Count switch
-            {
-                2 => 35,
-                3 => 24,
-                _ => 13
-            };
-
-            foreach (var p in playersToUpdate)
-            {
-                p.Cash = startingCash;
-                // Count how many packages this player received
-                int pkgCount = distribution.Values.Count(v => v.Id == p.Id);
-                p.Cash -= pkgCount * 11;
-                _context.Entry(p).State = EntityState.Modified;
-            }
-
-            await _context.SaveChangesAsync();
-
-            var startedGame = await _context.Games.FindAsync(gameId);
+            var startedGame = await _context.Games.Include(g => g.NationStates).FirstOrDefaultAsync(g => g.Id == gameId);
             if (startedGame != null)
             {
-                GameLogger.LogStartGame(_context, startedGame, User.Identity?.Name ?? "System");
+                // Fire notification after starting the game
+                _ = _notificationService.NotifyGameStartedAsync(startedGame);
+
+                var nationDistribution = distribution.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Id);
+                GameLogger.LogStartGame(_context, startedGame, User.Identity?.Name ?? "System", nationDistribution);
                 await _context.SaveChangesAsync();
             }
 
@@ -1196,7 +913,7 @@ public class GamesController : ControllerBase
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
         if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
         if (game.CurrentTurnNation != nation) return BadRequest($"It is {game.CurrentTurnNation}'s turn.");
-        if (targetSlot < 0 || targetSlot > 7) return BadRequest($"Invalid slot {targetSlot}. Must be 0-7.");
+        if (targetSlot < 0 || targetSlot >= RondelData.SlotCount) return BadRequest($"Invalid slot {targetSlot}. Must be 0-{RondelData.SlotCount - 1}.");
 
         var nationState = game.NationStates.First(n => n.Nation == nation);
 
@@ -1223,16 +940,16 @@ public class GamesController : ControllerBase
             // Standard Move Logic
             if (currentSlot.Value == targetSlot) return BadRequest("Must move to a different slot.");
 
-            int distance = (targetSlot - currentSlot.Value + 8) % 8;
+            int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
 
             if (distance == 0) return BadRequest("Must move at least 1 step."); // Should be covered by above equality check but safe.
-            if (distance > 6) return BadRequest("Cannot move more than 6 spaces on the rondel.");
-            if (distance > 3)
+            if (distance > RondelData.MaxMoveDistance) return BadRequest($"Cannot move more than {RondelData.MaxMoveDistance} spaces on the rondel.");
+            if (distance > RondelData.FreeMoveDistance)
             {
                 // Cost per additional step = 1 + Power Factor (Power / 5)
                 int powerFactor = nationState.Power / 5;
                 int costPerStep = 1 + powerFactor;
-                cost = (distance - 3) * costPerStep;
+                cost = (distance - RondelData.FreeMoveDistance) * costPerStep;
             }
         }
 
@@ -1240,12 +957,12 @@ public class GamesController : ControllerBase
 
         // --- Swiss Bank Intercept Logic ---
         bool crossingInvestor = false;
-        if (currentSlot != null && targetSlot != 4)
+        if (currentSlot != null && targetSlot != RondelData.InvestorSlot)
         {
-            int dist = (targetSlot - currentSlot.Value + 8) % 8;
+            int dist = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
             for (int i = 1; i < dist; i++) // Check intermediate steps
             {
-                if ((currentSlot.Value + i) % 8 == 4)
+                if ((currentSlot.Value + i) % RondelData.SlotCount == RondelData.InvestorSlot)
                 {
                     crossingInvestor = true;
                     break;
@@ -1317,11 +1034,11 @@ public class GamesController : ControllerBase
         {
             // Moving from currentSlot to targetSlot (clockwise)
             // Path: (current + 1) ... targetSlot
-            int dist = (targetSlot - currentSlot.Value + 8) % 8;
+            int dist = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
             for (int i = 1; i <= dist; i++)
             {
-                int step = (currentSlot.Value + i) % 8;
-                if (step == 4)
+                int step = (currentSlot.Value + i) % RondelData.SlotCount;
+                if (step == RondelData.InvestorSlot)
                 {
                     triggeredInvestor = true;
                     break;
@@ -1330,22 +1047,22 @@ public class GamesController : ControllerBase
         }
         else
         {
-            // First placement: if placed on 4
-            if (targetSlot == 4) triggeredInvestor = true;
+            // First placement: if placed on Investor
+            if (targetSlot == RondelData.InvestorSlot) triggeredInvestor = true;
         }
 
         if (triggeredInvestor)
         {
             // Calculate if landed on
-            // Note: The loop logic above is slightly flawed if we just check targetSlot==4 for "landedOn" 
+            // Note: The loop logic above is slightly flawed if we just check targetSlot==Investor for "landedOn"
             // because distinct "pass through" vs "land on" matters for 2M bonus.
             // But for now, sticking to existing logic structure.
-            bool landedOn = (targetSlot == 4);
+            bool landedOn = (targetSlot == RondelData.InvestorSlot);
             HandleInvestorPhase(_context, game, nationState, controller, landedOn);
         }
 
         // Initialize Maneuver Phase
-        if (targetSlot == 3 || targetSlot == 7)
+        if (RondelData.IsManeuverSlot(targetSlot))
         {
             game.CurrentManeuverPhase = ManeuverPhase.Fleets;
 
@@ -1409,7 +1126,7 @@ public class GamesController : ControllerBase
         if (controller.UserId != userId) return Forbid();
 
         // Check Rondel Position (Production slots: 2 and 6)
-        if (nationState.RondelPosition != 2 && nationState.RondelPosition != 6)
+        if (!RondelData.IsProductionSlot(nationState.RondelPosition ?? -1))
         {
             return BadRequest("Not on a Production slot.");
         }
@@ -1651,8 +1368,7 @@ public class GamesController : ControllerBase
         if (controller.UserId != userId) return Forbid();
 
         // 1. Validate Rondel Position
-        // Assuming slot 1 is Factory (based on Rondel.razor)
-        if (nationState.RondelPosition != 1) return BadRequest("Nation must be on 'Factory' slot.");
+        if (nationState.RondelPosition != RondelData.FactorySlot) return BadRequest("Nation must be on 'Factory' slot.");
 
         // 1b. Validate Per Turn Limit
         if (nationState.HasBuiltThisTurn) return BadRequest("Already built factory this turn.");
@@ -1771,9 +1487,8 @@ public class GamesController : ControllerBase
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
-        // Validate Rondel Position: Must be on Taxation (Slot 0)
-        // Assuming slot 0 is Taxation based on Rondel.razor
-        if (nationState.RondelPosition != 0) return BadRequest("Nation must be on 'Taxation' slot.");
+        // Validate Rondel Position: Must be on Taxation
+        if (nationState.RondelPosition != RondelData.TaxationSlot) return BadRequest("Nation must be on 'Taxation' slot.");
 
         int oldTreasury = nationState.Treasury;
         // --- Apply Centralized Taxation Logic ---
@@ -1854,8 +1569,7 @@ public class GamesController : ControllerBase
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
-        // 5 is Import slot
-        if (nationState.RondelPosition != 5) return BadRequest("Not in Import phase.");
+        if (nationState.RondelPosition != RondelData.ImportSlot) return BadRequest("Not in Import phase.");
         if (nationState.HasImportedThisTurn) return BadRequest("Already imported this turn.");
 
         if (request.Units.Count > 3) return BadRequest("Cannot import more than 3 units.");
@@ -1954,13 +1668,13 @@ public class GamesController : ControllerBase
 
         if (request.ForceStop)
         {
-            int targetSlot = 4;
+            int targetSlot = RondelData.InvestorSlot;
             int? currentSlot = nationState.RondelPosition;
             int cost = 0;
             if (currentSlot != null)
             {
-                int distance = (targetSlot - currentSlot.Value + 8) % 8;
-                if (distance > 3) cost = (distance - 3) * (1 + (nationState.Power / 5));
+                int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
+                if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
             }
 
             game.PendingSwissBankForceNation = null;
@@ -2005,8 +1719,8 @@ public class GamesController : ControllerBase
                 int cost = 0;
                 if (currentSlot != null)
                 {
-                    int distance = (targetSlot - currentSlot.Value + 8) % 8;
-                    if (distance > 3) cost = (distance - 3) * (1 + (nationState.Power / 5));
+                    int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
+                    if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
                 }
 
                 game.PendingSwissBankForceNation = null;

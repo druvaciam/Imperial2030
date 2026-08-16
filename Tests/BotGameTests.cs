@@ -24,6 +24,10 @@ namespace Imperial2030.Tests
 {
     public class BotGameTests
     {
+        // Hard wall-clock ceiling for long-running game-simulation loops, so a stuck/looping game
+        // fails the test quickly instead of hanging the whole suite.
+        private static readonly TimeSpan HardTestTimeout = TimeSpan.FromMinutes(5);
+
         private readonly ITestOutputHelper _output;
 
         public BotGameTests(ITestOutputHelper output)
@@ -72,7 +76,7 @@ namespace Imperial2030.Tests
                 // Return a new context instance with the same dbName
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
-                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(INotificationService))).Returns(new Moq.Mock<INotificationService>().Object);
 
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
@@ -130,7 +134,8 @@ namespace Imperial2030.Tests
             await context.SaveChangesAsync();
 
             int timeoutTicks = 0;
-            while (timeoutTicks < 2000)
+            var hardTimeout = System.Diagnostics.Stopwatch.StartNew();
+            while (timeoutTicks < 2000 && hardTimeout.Elapsed < HardTestTimeout)
             {
                 using var scope = mockScopeFactory.Object.CreateScope();
                 var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -156,6 +161,7 @@ namespace Imperial2030.Tests
                 await Task.Delay(10);
                 timeoutTicks++;
             }
+            Assert.True(hardTimeout.Elapsed < HardTestTimeout, $"Hard {HardTestTimeout.TotalMinutes}-minute timeout exceeded waiting for game to finish.");
 
             // Assert that the game is indeed finished
             var finalGame = context.Games.AsNoTracking().FirstOrDefault(g => g.Id == gameId);
@@ -195,7 +201,7 @@ namespace Imperial2030.Tests
                     var mockServiceProvider = new Mock<IServiceProvider>();
                     var scopeContext = GetDbContext(dbName);
                     mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
-                    mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                    mockServiceProvider.Setup(sp => sp.GetService(typeof(INotificationService))).Returns(new Moq.Mock<INotificationService>().Object);
                     scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                     return scope.Object;
                 });
@@ -243,7 +249,7 @@ namespace Imperial2030.Tests
 
                 // 5. Play game
                 int timeoutTicks = 0;
-                while (timeoutTicks < 2000)
+                while (timeoutTicks < 2000 && stopWatch.Elapsed < HardTestTimeout)
                 {
                     using var scope = mockScopeFactory.Object.CreateScope();
                     var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -311,7 +317,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
-                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(INotificationService))).Returns(new Moq.Mock<INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
@@ -369,7 +375,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
-                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(INotificationService))).Returns(new Moq.Mock<INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
@@ -438,7 +444,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
-                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(INotificationService))).Returns(new Moq.Mock<INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
@@ -497,7 +503,7 @@ namespace Imperial2030.Tests
             scopeFactory.Setup(f => f.CreateScope()).Returns(scope.Object);
             scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
             sp.Setup(s => s.GetService(typeof(ApplicationDbContext))).Returns(() => GetDbContext(dbName));
-            sp.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+            sp.Setup(sp => sp.GetService(typeof(INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
 
             var mockLogger = new Mock<ILogger<BotService>>();
 
@@ -551,14 +557,22 @@ namespace Imperial2030.Tests
         }
 
         [Theory]
-        [InlineData("RL")]
         [InlineData("RL-2")]
+        [InlineData("RL-3")]
         public async Task TestRLBotWinRate(string testBotType)
         {
             int rlWins = 0;
             int totalGames = 50;
+            int gamesPlayed = 0;
+            var hardTimeout = System.Diagnostics.Stopwatch.StartNew();
             for (int g = 0; g < totalGames; g++)
             {
+                if (hardTimeout.Elapsed >= HardTestTimeout)
+                {
+                    _output.WriteLine($"Hard {HardTestTimeout.TotalMinutes}-minute timeout exceeded after {gamesPlayed}/{totalGames} games.");
+                    break;
+                }
+                gamesPlayed++;
                 var dbName = Guid.NewGuid().ToString();
                 using var context = GetDbContext(dbName);
 
@@ -576,7 +590,7 @@ namespace Imperial2030.Tests
                     var mockServiceProvider = new Mock<IServiceProvider>();
                     var scopeContext = GetDbContext(dbName);
                     mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
-                    mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                    mockServiceProvider.Setup(sp => sp.GetService(typeof(INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
                     scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                     return scope.Object;
                 });
@@ -638,7 +652,7 @@ namespace Imperial2030.Tests
 
                 // The RL model is now correctly polled on state changes, so it should play out efficiently.
                 int timeoutTicks = 0;
-                while (timeoutTicks < 2000) // 100 * 50ms = 5 seconds timeout per game
+                while (timeoutTicks < 2000 && hardTimeout.Elapsed < HardTestTimeout) // 100 * 50ms = 5 seconds timeout per game
                 {
                     using var scope = mockScopeFactory.Object.CreateScope();
                     var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -677,6 +691,8 @@ namespace Imperial2030.Tests
                 _output.WriteLine($"Invalid Action Rate: {Math.Round((double)Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.InvalidActionCount / Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.TotalActionCount * 100, 2)}%");
             }
 
+            Assert.True(gamesPlayed >= totalGames, $"Hard {HardTestTimeout.TotalMinutes}-minute timeout exceeded after only {gamesPlayed}/{totalGames} games.");
+
             float winRate = (float)rlWins / totalGames * 100;
             _output.WriteLine($"{testBotType} Bot Win Rate: {rlWins}/{totalGames} ({winRate}%)");
             Assert.True(winRate >= 25);
@@ -701,7 +717,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
-                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(INotificationService))).Returns(new Moq.Mock<INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
@@ -779,7 +795,7 @@ namespace Imperial2030.Tests
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
-                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(INotificationService))).Returns(new Moq.Mock<INotificationService>().Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
