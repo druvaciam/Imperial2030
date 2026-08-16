@@ -30,6 +30,7 @@ public class TcpTrainingServer : BackgroundService
         public Guid RLPlayerId { get; set; }
         public string? ManeuverSelectedTerritoryId { get; set; } // Non-null when in Stage 2
         public string? PendingFactoryDestructionTerritoryId { get; set; } // Non-null while awaiting a Destroy/Keep decision
+        public int? PendingImportRemaining { get; set; } // Non-null while stepping through an Import decision sequence
 
         public int TotalSessionSteps { get; set; } = 0;
         public int LastTurnCount { get; set; } = -1;
@@ -513,7 +514,40 @@ public class TcpTrainingServer : BackgroundService
         float explicitBonusReward = 0f;
 
         bool wasManeuverAction = false;
-        if (session.PendingFactoryDestructionTerritoryId != null)
+        bool wasImportAction = false;
+        if (session.PendingImportRemaining.HasValue)
+        {
+            wasImportAction = true;
+            var ns = game.NationStates.First(n => n.Nation == game.CurrentTurnNation);
+
+            if (req.Action >= RLBotStrategy.ImportPlaceActionBase && req.Action < RLBotStrategy.ImportPlaceActionBase + RLBotStrategy.ImportPlaceActionCount && session.PendingImportRemaining > 0)
+            {
+                int idx = req.Action - RLBotStrategy.ImportPlaceActionBase;
+                int slotIndex = idx / 2;
+                var unitType = (idx % 2 == 0) ? UnitType.Army : UnitType.Fleet;
+                var (orderedHome, canArmy, canFleet) = GetImportOptions(game, ns);
+
+                if (slotIndex < orderedHome.Count && ((unitType == UnitType.Army && canArmy[slotIndex]) || (unitType == UnitType.Fleet && canFleet[slotIndex])))
+                {
+                    game.Units.Add(new Unit { GameId = game.Id, Nation = ns.Nation, TerritoryId = orderedHome[slotIndex].Id, UnitType = unitType, IsHostile = false });
+                    ns.Treasury -= 1;
+                    session.PendingImportRemaining--;
+                }
+
+                if (session.PendingImportRemaining <= 0)
+                {
+                    ns.HasImportedThisTurn = true;
+                    session.PendingImportRemaining = null;
+                }
+            }
+            else
+            {
+                // Stop action, or an invalid/unrecognized action for this stage — finalize either way
+                ns.HasImportedThisTurn = true;
+                session.PendingImportRemaining = null;
+            }
+        }
+        else if (session.PendingFactoryDestructionTerritoryId != null)
         {
             // Resolve a pending Destroy/Keep decision for a factory currently held under siege
             var pendingTerritoryId = session.PendingFactoryDestructionTerritoryId;
@@ -662,6 +696,22 @@ public class TcpTrainingServer : BackgroundService
             await TryPlayBotTurnAsync(game);
             RLBotStrategy.TrainingActionOverride.Value = null;
 
+            // A rondel move that landed on Import starts the step-by-step Import decision sequence
+            // (BotService.BotImport is a no-op for RL during training; see its early return).
+            var postMoveNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+            if (postMoveNs != null && postMoveNs.ControllerId == session.RLPlayerId && postMoveNs.RondelPosition == RondelData.ImportSlot && !postMoveNs.HasImportedThisTurn)
+            {
+                wasImportAction = true;
+                if (postMoveNs.Treasury >= 1)
+                {
+                    session.PendingImportRemaining = Math.Min(RLBotStrategy.MaxImportUnits, postMoveNs.Treasury);
+                }
+                else
+                {
+                    postMoveNs.HasImportedThisTurn = true; // Nothing to import; nothing to decide
+                }
+            }
+
             if (isInvestorTurn && oldMask != null)
             {
                 var winningNations = game.NationStates.Where(n => n.Power >= 15).Select(n => n.Nation).ToList();
@@ -717,6 +767,12 @@ public class TcpTrainingServer : BackgroundService
         if (wasManeuverAction && game.CurrentManeuverPhase == ManeuverPhase.None && game.Status == GameStatus.InProgress)
         {
             var nationState = game.NationStates.First(ns => ns.Nation == game.CurrentTurnNation);
+            game.AdvanceTurn();
+        }
+
+        // Same for the step-by-step Import decision sequence, once it's fully resolved
+        if (wasImportAction && !session.PendingImportRemaining.HasValue && game.Status == GameStatus.InProgress)
+        {
             game.AdvanceTurn();
         }
 
@@ -1386,6 +1442,26 @@ public class TcpTrainingServer : BackgroundService
             return mask;
         }
 
+        if (session.PendingImportRemaining.HasValue)
+        {
+            mask[RLBotStrategy.ImportStopAction] = true;
+
+            if (session.PendingImportRemaining > 0)
+            {
+                var importNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+                if (importNs != null)
+                {
+                    var (orderedHome, canArmy, canFleet) = GetImportOptions(game, importNs);
+                    for (int slotIdx = 0; slotIdx < orderedHome.Count && slotIdx < 4; slotIdx++)
+                    {
+                        if (canArmy[slotIdx]) mask[RLBotStrategy.ImportPlaceActionBase + slotIdx * 2] = true;
+                        if (canFleet[slotIdx]) mask[RLBotStrategy.ImportPlaceActionBase + slotIdx * 2 + 1] = true;
+                    }
+                }
+            }
+            return mask;
+        }
+
         if (game.PendingBattleDefenders.Any())
         {
             bool rlIsDefender = game.PendingBattleDefenders.Any(def =>
@@ -1535,5 +1611,30 @@ public class TcpTrainingServer : BackgroundService
             }
         }
         return rlPlayer.Cash >= moveCost;
+    }
+
+    // Home territories (ordered by Id, matching the encoding used elsewhere) for `ns.Nation`, with per-slot
+    // legality of importing an Army or a Fleet there right now.
+    private (List<Territory> OrderedHome, bool[] CanArmy, bool[] CanFleet) GetImportOptions(Game game, NationState ns)
+    {
+        var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation).OrderBy(t => t.Id).ToList();
+        int currentArmies = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Army);
+        int currentFleets = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Fleet);
+
+        var canArmy = new bool[orderedHome.Count];
+        var canFleet = new bool[orderedHome.Count];
+        for (int i = 0; i < orderedHome.Count; i++)
+        {
+            var t = orderedHome[i];
+            bool occupied = game.Units.Any(u => u.TerritoryId == t.Id && u.Nation != ns.Nation && u.UnitType == UnitType.Army && u.IsHostile);
+            if (occupied) continue;
+
+            // No London exclusion here: that's a heuristic-only guard in BotStrategyBase to keep the
+            // simple AI from stranding an army in a coastal city — the real game rules allow it, and the
+            // RL policy should be free to judge that trade-off itself (it may even be the only open slot).
+            canArmy[i] = currentArmies < NationData.GetMaxArmies(ns.Nation);
+            canFleet[i] = t.CityType == CityType.LightBlue && currentFleets < NationData.GetMaxFleets(ns.Nation);
+        }
+        return (orderedHome, canArmy, canFleet);
     }
 }

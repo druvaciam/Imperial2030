@@ -133,7 +133,9 @@ namespace Imperial2030.Tests
 
             // 6. Wait for game to finish
             int timeoutTicks = 0;
-            while (timeoutTicks < 5000)
+            var hardTimeout = System.Diagnostics.Stopwatch.StartNew();
+            var hardTestTimeout = TimeSpan.FromMinutes(5);
+            while (timeoutTicks < 5000 && hardTimeout.Elapsed < hardTestTimeout)
             {
                 using var scope = mockScopeFactory.Object.CreateScope();
                 var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();

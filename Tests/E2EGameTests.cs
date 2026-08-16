@@ -55,8 +55,10 @@ namespace Imperial2030.Tests
             startRes.EnsureSuccessStatusCode();
 
             int turnCount = 0;
+            var hardTimeout = System.Diagnostics.Stopwatch.StartNew();
+            var hardTestTimeout = TimeSpan.FromMinutes(5);
             // 5. Game Loop
-            while (turnCount < 2000)
+            while (turnCount < 2000 && hardTimeout.Elapsed < hardTestTimeout)
             {
                 var stateRes = await client.GetAsync($"/api/games/{gameId}");
                 if (!stateRes.IsSuccessStatusCode) break;

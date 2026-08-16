@@ -336,8 +336,9 @@ public class BotService
         await SaveChangesAsync(ctx);
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
-        // If not taxation (which auto-advances) and not in maneuver, end turn
-        if (targetSlot != RondelData.TaxationSlot && game.Status == GameStatus.InProgress && game.CurrentManeuverPhase == ManeuverPhase.None)
+        // If not taxation (which auto-advances), not in maneuver, and not mid-Import decision, end turn
+        bool importPending = targetSlot == RondelData.ImportSlot && !nationState.HasImportedThisTurn;
+        if (targetSlot != RondelData.TaxationSlot && game.Status == GameStatus.InProgress && game.CurrentManeuverPhase == ManeuverPhase.None && !importPending)
         {
             if (!SkipDelays) await Task.Delay(BotDelayMs);
             game = await ReloadGameAsync(ctx, game);
@@ -1031,14 +1032,29 @@ public class BotService
     private async Task BotImport(ApplicationDbContext? ctx, Game game, NationState ns)
     {
         var nation = ns.Nation;
-        if (ns.Treasury < 1) return;
+        var controller = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId);
+        if (controller == null)
+        {
+            ns.HasImportedThisTurn = true; // No controller to decide; don't get stuck on this slot
+            return;
+        }
+
+        var strategy = GetStrategy(controller);
+        if (strategy is RLBotStrategy && RLBotStrategy.TrainingActionOverride.Value.HasValue)
+        {
+            // During training, TcpTrainingServer handles Import directly step-by-step
+            return;
+        }
+
+        if (ns.Treasury < 1)
+        {
+            ns.HasImportedThisTurn = true; // Nothing to import; nothing left to decide
+            return;
+        }
         int maxImport = Math.Min(3, ns.Treasury);
 
         var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == nation).ToList();
-        var controller = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId);
-        if (controller == null) return;
-
-        var imports = GetStrategy(controller).ChooseImports(game, ns, maxImport, homeTerritories);
+        var imports = strategy.ChooseImports(game, ns, maxImport, homeTerritories);
 
         int imported = 0;
         var locationNames = new List<(UnitType UnitType, string TerritoryId)>();
@@ -1052,7 +1068,7 @@ public class BotService
 
         ns.Treasury -= imported;
         ns.HasImportedThisTurn = true;
-        var botName = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId)?.BotName ?? "Bot";
+        var botName = controller.BotName ?? "Bot";
         GameLogger.LogImport(ctx, game, imported, locationNames, nation, botName);
     }
 

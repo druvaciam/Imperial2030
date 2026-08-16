@@ -39,7 +39,15 @@ public class RLBotStrategy : BotStrategyBase
     // Factory destruction decision (asked after a hostile move stacks 3+ armies on an undefended foreign factory)
     public const int FactoryDestroyAction = 189;
     public const int FactoryKeepAction = 190;
-    public const int TotalActionSize = 191;
+
+    // Import decision: asked once per unit while on the Import rondel slot, up to MaxImportUnits times.
+    // ImportPlaceActionBase + (homeSlotIndex * 2) + (0=Army, 1=Fleet), homeSlotIndex in [0,3] over the
+    // nation's 4 home territories ordered by Id (same ordering used elsewhere for per-nation home-territory encoding).
+    public const int MaxImportUnits = 3;
+    public const int ImportStopAction = 191;
+    public const int ImportPlaceActionBase = 192;
+    public const int ImportPlaceActionCount = 8;
+    public const int TotalActionSize = 200;
 
     // Fixed ordered territory lists for map encoding
     public static readonly string[] HomeProvinceIds = new[]
@@ -525,6 +533,69 @@ public class RLBotStrategy : BotStrategyBase
 
         int action = GetActionFromOnnx(game, controller, mask, territoryId);
         return action == FactoryDestroyAction;
+    }
+
+    public override List<(UnitType Type, string TerritoryId)> ChooseImports(Game game, NationState ns, int maxImport, List<Territory> homeTerritories)
+    {
+        var controller = game.Players.First(p => p.Id == ns.ControllerId);
+
+        // During training, TcpTrainingServer handles Import directly step-by-step (see BotService.BotImport's early return).
+        // TrainingActionOverride is never set here since this method is skipped entirely in that path.
+        if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
+        {
+            throw new RlTrainingPauseException();
+        }
+
+        // Models exported before this decision existed don't have logits for it; fall back to the heuristic.
+        if (GetModelActionOutputSize() < TotalActionSize)
+        {
+            return base.ChooseImports(game, ns, maxImport, homeTerritories);
+        }
+
+        var result = new List<(UnitType Type, string TerritoryId)>();
+        var orderedHome = homeTerritories.OrderBy(t => t.Id).ToList();
+        int currentArmies = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Army);
+        int currentFleets = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Fleet);
+        int remaining = maxImport;
+
+        while (remaining > 0)
+        {
+            bool[] mask = new bool[TotalActionSize];
+            mask[ImportStopAction] = true;
+            bool anyPlaceable = false;
+
+            for (int slotIdx = 0; slotIdx < orderedHome.Count && slotIdx < 4; slotIdx++)
+            {
+                var t = orderedHome[slotIdx];
+                bool occupied = game.Units.Any(u => u.TerritoryId == t.Id && u.Nation != ns.Nation && u.UnitType == UnitType.Army && u.IsHostile);
+                if (occupied) continue;
+
+                // No London exclusion here: that's a heuristic-only guard in BotStrategyBase to keep the
+                // simple AI from stranding an army in a coastal city — the real game rules allow it, and the
+                // RL policy should be free to judge that trade-off itself (it may even be the only open slot).
+                bool canArmy = currentArmies < NationData.GetMaxArmies(ns.Nation);
+                bool canFleet = t.CityType == CityType.LightBlue && currentFleets < NationData.GetMaxFleets(ns.Nation);
+
+                if (canArmy) { mask[ImportPlaceActionBase + slotIdx * 2] = true; anyPlaceable = true; }
+                if (canFleet) { mask[ImportPlaceActionBase + slotIdx * 2 + 1] = true; anyPlaceable = true; }
+            }
+
+            if (!anyPlaceable) break;
+
+            int action = GetActionFromOnnx(game, controller, mask);
+            if (action < ImportPlaceActionBase || action >= ImportPlaceActionBase + ImportPlaceActionCount) break; // Stop (or invalid)
+
+            int idx = action - ImportPlaceActionBase;
+            int chosenSlot = idx / 2;
+            if (chosenSlot >= orderedHome.Count) break;
+
+            var chosenType = (idx % 2 == 0) ? UnitType.Army : UnitType.Fleet;
+            result.Add((chosenType, orderedHome[chosenSlot].Id));
+            if (chosenType == UnitType.Army) currentArmies++; else currentFleets++;
+            remaining--;
+        }
+
+        return result;
     }
 
     private ThreadLocal<(Guid UnitId, int ChosenAction)> _maneuverCache = new ThreadLocal<(Guid, int)>();
