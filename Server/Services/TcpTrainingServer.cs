@@ -795,6 +795,21 @@ public class TcpTrainingServer : BackgroundService
             if (!hasArmies) game.CurrentManeuverPhase = ManeuverPhase.None;
         }
 
+        // Stage 1 (explicit "which unit" selection, actions 64-125) is no longer used for training: which unit
+        // moves next barely matters strategically and asking for it doubled the number of steps per maneuver
+        // phase. Auto-pick the next unmoved unit here instead, and go straight to asking for its destination.
+        // The 64-125 action range and its dispatch/mask handling are left in place for backward compatibility
+        // (inference never used Stage 1 either — BotManeuver iterates units directly).
+        if (game.CurrentManeuverPhase != ManeuverPhase.None && session.ManeuverSelectedTerritoryId == null)
+        {
+            var autoSelectUnitType = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? UnitType.Fleet : UnitType.Army;
+            var nextUnit = game.Units.FirstOrDefault(u => u.Nation == game.CurrentTurnNation && u.UnitType == autoSelectUnitType && !u.HasMoved);
+            if (nextUnit != null)
+            {
+                session.ManeuverSelectedTerritoryId = nextUnit.TerritoryId;
+            }
+        }
+
         // If we were manually stepping through maneuver, and the maneuver phase just ended, we must advance the turn
         if (wasManeuverAction && game.CurrentManeuverPhase == ManeuverPhase.None && game.Status == GameStatus.InProgress)
         {
@@ -1578,6 +1593,7 @@ public class TcpTrainingServer : BackgroundService
             else // Stage 2
             {
                 mask[126] = true; // Do Not Move
+                mask[63] = true; // Pass (End Maneuver) — always available now that Stage 1 auto-selects
 
                 // Find valid destinations
                 var unitType = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? UnitType.Fleet : UnitType.Army;
