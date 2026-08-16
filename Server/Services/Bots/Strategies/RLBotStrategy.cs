@@ -103,7 +103,20 @@ public class RLBotStrategy : BotStrategyBase
             {
                 _onnxSession = _sessionCache.GetOrAdd(onnxPath, path =>
                 {
-                    var session = new InferenceSession(path);
+                    // Default SessionOptions let ONNX Runtime fan a single inference call out across every
+                    // logical core. That's fine in isolation, but during training the C# server handles several
+                    // concurrent game sessions at once (one per parallel training env), each independently
+                    // wanting every opponent bot's inference to use all cores — the outer (session-level)
+                    // concurrency is already the real source of parallelism here, so per-call fan-out just
+                    // means N sessions all fighting over the same cores. Capping both to 1 keeps each inference
+                    // call single-threaded and lets the OS scheduler cleanly give each concurrent session its
+                    // own core instead of oversubscribing.
+                    var options = new Microsoft.ML.OnnxRuntime.SessionOptions
+                    {
+                        IntraOpNumThreads = 1,
+                        InterOpNumThreads = 1
+                    };
+                    var session = new InferenceSession(path, options);
                     Console.WriteLine($"Loaded ONNX model: {modelFilename}");
                     return session;
                 });

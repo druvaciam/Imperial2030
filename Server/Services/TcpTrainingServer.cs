@@ -16,7 +16,9 @@ public class TcpTrainingServer : BackgroundService
     private readonly BotService _botService;
     private readonly ILogger<TcpTrainingServer> _logger;
 
-    private static readonly Dictionary<string, TrainingSession> _sessions = new();
+    // Concurrent because multiple training envs (e.g. SubprocVecEnv workers) each hold their own TCP
+    // connection to this server and can Reset/Step in parallel, all hitting this dictionary concurrently.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, TrainingSession> _sessions = new();
 
     public TcpTrainingServer(BotService botService, ILogger<TcpTrainingServer> logger)
     {
@@ -30,6 +32,10 @@ public class TcpTrainingServer : BackgroundService
         public Guid RLPlayerId { get; set; }
         public string? ManeuverSelectedTerritoryId { get; set; } // Non-null when in Stage 2
         public string? PendingFactoryDestructionTerritoryId { get; set; } // Non-null while awaiting a Destroy/Keep decision
+        // Territories already asked about this turn (destroyed or kept). Nothing about the board changes when
+        // the agent chooses Keep, so re-scanning for candidates without this would re-offer the exact same
+        // territory forever — this cap ensures each qualifying stack is asked at most once per turn.
+        public HashSet<string> DecidedFactoryDestructionTerritoriesThisTurn { get; set; } = new();
         public int? PendingImportRemaining { get; set; } // Non-null while stepping through an Import decision sequence
 
         public int TotalSessionSteps { get; set; } = 0;
@@ -594,16 +600,19 @@ public class TcpTrainingServer : BackgroundService
             // Resolve a pending Destroy/Keep decision for a factory currently held under siege
             var pendingTerritoryId = session.PendingFactoryDestructionTerritoryId;
             session.PendingFactoryDestructionTerritoryId = null;
+            session.DecidedFactoryDestructionTerritoriesThisTurn.Add(pendingTerritoryId);
 
             if (req.Action == RLBotStrategy.FactoryDestroyAction)
             {
                 _botService.ExecuteFactoryDestruction(null, game, pendingTerritoryId, game.CurrentTurnNation, player);
             }
 
-            // More stacks may still be awaiting a decision (e.g. multiple sieges resolved in the same move)
+            // More stacks may still be awaiting a decision (e.g. multiple sieges resolved in the same move).
+            // Excludes anything already decided this turn — Keep doesn't change the board, so the same
+            // territory would otherwise keep re-qualifying and get re-offered forever.
             session.PendingFactoryDestructionTerritoryId = _botService
                 .FindFactoryDestructionCandidates(game, game.CurrentTurnNation, player)
-                .FirstOrDefault();
+                .FirstOrDefault(t => !session.DecidedFactoryDestructionTerritoriesThisTurn.Contains(t));
         }
         else if (req.Action == 63 && game.CurrentManeuverPhase != ManeuverPhase.None)
         {
@@ -720,7 +729,7 @@ public class TcpTrainingServer : BackgroundService
                         {
                             session.PendingFactoryDestructionTerritoryId = _botService
                                 .FindFactoryDestructionCandidates(game, unit.Nation, player)
-                                .FirstOrDefault();
+                                .FirstOrDefault(t => !session.DecidedFactoryDestructionTerritoriesThisTurn.Contains(t));
                         }
                     }
                 }
@@ -825,6 +834,7 @@ public class TcpTrainingServer : BackgroundService
         {
             var nationState = game.NationStates.First(ns => ns.Nation == game.CurrentTurnNation);
             game.AdvanceTurn();
+            session.DecidedFactoryDestructionTerritoriesThisTurn.Clear();
         }
 
         // Same for the step-by-step Import decision sequence, once it's fully resolved
@@ -1084,7 +1094,7 @@ public class TcpTrainingServer : BackgroundService
 
             var stateResponse = GetStateVector(game, session.RLPlayerId);
 
-            _sessions.Remove(req.SessionId);
+            _sessions.TryRemove(req.SessionId, out _);
             return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[RLBotStrategy.TotalActionSize] };
         }
 
