@@ -206,11 +206,11 @@ public class BotService
             int cost = 0;
             if (nationState.RondelPosition != null)
             {
-                int distance = (targetSlot - nationState.RondelPosition.Value + 8) % 8;
-                if (distance > 3)
+                int distance = (targetSlot - nationState.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
+                if (distance > RondelData.FreeMoveDistance)
                 {
                     int powerFactor = nationState.Power / 5;
-                    cost = (distance - 3) * (1 + powerFactor);
+                    cost = (distance - RondelData.FreeMoveDistance) * (1 + powerFactor);
                 }
             }
 
@@ -218,12 +218,12 @@ public class BotService
 
             // --- Swiss Bank Intercept ---
             bool crossingInvestor = false;
-            if (oldPos != null && targetSlot != 4)
+            if (oldPos != null && targetSlot != RondelData.InvestorSlot)
             {
-                int dist = (targetSlot - oldPos.Value + 8) % 8;
+                int dist = (targetSlot - oldPos.Value + RondelData.SlotCount) % RondelData.SlotCount;
                 for (int i = 1; i < dist; i++)
                 {
-                    if ((oldPos.Value + i) % 8 == 4)
+                    if ((oldPos.Value + i) % RondelData.SlotCount == RondelData.InvestorSlot)
                     {
                         crossingInvestor = true;
                         break;
@@ -267,18 +267,18 @@ public class BotService
             bool triggeredInvestor = false;
             if (oldPos != null)
             {
-                int dist = (targetSlot - oldPos.Value + 8) % 8;
+                int dist = (targetSlot - oldPos.Value + RondelData.SlotCount) % RondelData.SlotCount;
                 for (int i = 1; i <= dist; i++)
                 {
-                    int step = (oldPos.Value + i) % 8;
-                    if (step == 4)
+                    int step = (oldPos.Value + i) % RondelData.SlotCount;
+                    if (step == RondelData.InvestorSlot)
                     {
                         triggeredInvestor = true;
                         break;
                     }
                 }
             }
-            else if (targetSlot == 4)
+            else if (targetSlot == RondelData.InvestorSlot)
             {
                 triggeredInvestor = true;
             }
@@ -287,12 +287,12 @@ public class BotService
 
             if (triggeredInvestor)
             {
-                bool landedOn = (targetSlot == 4);
+                bool landedOn = (targetSlot == RondelData.InvestorSlot);
                 Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, landedOn);
             }
 
             // Init maneuver phase
-            if (targetSlot == 3 || targetSlot == 7)
+            if (RondelData.IsManeuverSlot(targetSlot))
                 game.CurrentManeuverPhase = ManeuverPhase.Fleets;
             else
                 game.CurrentManeuverPhase = ManeuverPhase.None;
@@ -323,21 +323,21 @@ public class BotService
 
         switch (targetSlot)
         {
-            case 0: await BotTaxation(ctx, game, nationState, controller); break;
-            case 1: await BotBuildFactory(ctx, game, nationState, controller); break;
-            case 2:
-            case 6: await BotProduction(ctx, game, nationState); break;
-            case 3:
-            case 7: await BotManeuver(ctx, game, nationState, controller); break;
-            case 5: await BotImport(ctx, game, nationState); break;
-            case 4: break; // Investor handled separately
+            case RondelData.TaxationSlot: await BotTaxation(ctx, game, nationState, controller); break;
+            case RondelData.FactorySlot: await BotBuildFactory(ctx, game, nationState, controller); break;
+            case RondelData.ProductionSlot1:
+            case RondelData.ProductionSlot2: await BotProduction(ctx, game, nationState); break;
+            case RondelData.ManeuverSlot1:
+            case RondelData.ManeuverSlot2: await BotManeuver(ctx, game, nationState, controller); break;
+            case RondelData.ImportSlot: await BotImport(ctx, game, nationState); break;
+            case RondelData.InvestorSlot: break; // Investor handled separately
         }
 
         await SaveChangesAsync(ctx);
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
         // If not taxation (which auto-advances) and not in maneuver, end turn
-        if (targetSlot != 0 && game.Status == GameStatus.InProgress && game.CurrentManeuverPhase == ManeuverPhase.None)
+        if (targetSlot != RondelData.TaxationSlot && game.Status == GameStatus.InProgress && game.CurrentManeuverPhase == ManeuverPhase.None)
         {
             if (!SkipDelays) await Task.Delay(BotDelayMs);
             game = await ReloadGameAsync(ctx, game);
@@ -364,35 +364,37 @@ public class BotService
         var nation = ns.Nation;
         int factoryCount = CountFactories(game, nation);
         int unitCount = game.Units.Count(u => u.Nation == nation);
+        var strategy = GetStrategy(controller);
 
         var candidates = new List<(int Slot, double Score)>();
         double maxScore = -999;
-        int fallbackSlot = ns.RondelPosition.HasValue ? ((ns.RondelPosition.Value + 1) % 8) : 2;
+        int fallbackSlot = ns.RondelPosition.HasValue ? ((ns.RondelPosition.Value + 1) % RondelData.SlotCount) : RondelData.ProductionSlot1;
         int bestSlot = fallbackSlot;
 
-        for (int slot = 0; slot < 8; slot++)
+        for (int slot = 0; slot < RondelData.SlotCount; slot++)
         {
             if (ns.RondelPosition.HasValue && slot == ns.RondelPosition.Value) continue;
 
             int moveCost = 0;
             if (ns.RondelPosition.HasValue)
             {
-                int dist = (slot - ns.RondelPosition.Value + 8) % 8;
-                if (dist > 6) continue;
+                int dist = (slot - ns.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
+                if (dist > RondelData.MaxMoveDistance) continue;
 
-                if (dist > 3)
+                if (dist > RondelData.FreeMoveDistance)
                 {
                     int pf = ns.Power / 5;
-                    moveCost = (dist - 3) * (1 + pf);
+                    moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
                 }
             }
 
             if (moveCost > controller.Cash) continue;
 
-            // Prevent useless Import if treasury is 0
-            if (slot == 4 && ns.Treasury == 0) continue;
+            // Prevent useless Investor pass-through if treasury is 0 (heuristic bots only —
+            // the RL bot's own trained policy should be free to judge this trade-off itself)
+            if (slot == RondelData.InvestorSlot && ns.Treasury == 0 && !(strategy is RLBotStrategy)) continue;
 
-            double score = GetStrategy(controller).ScoreRondelSlot(slot, game, ns, controller, factoryCount, unitCount) - moveCost * 2;
+            double score = strategy.ScoreRondelSlot(slot, game, ns, controller, factoryCount, unitCount) - moveCost * 2;
 
             if (score > maxScore)
             {
@@ -851,15 +853,28 @@ public class BotService
     public async Task BotTryDestroyFactories(ApplicationDbContext? ctx, Game game, Nation nation, Player controller)
     {
         var strategy = GetStrategy(controller);
+
+        foreach (var territoryId in FindFactoryDestructionCandidates(game, nation, controller))
+        {
+            // Ask strategy if we should destroy
+            if (!strategy.ShouldDestroyFactory(game, nation, territoryId, controller)) continue;
+
+            ExecuteFactoryDestruction(ctx, game, territoryId, nation, controller);
+        }
+    }
+
+    // Territories where this nation has >= 3 undefended armies stacked on a destroyable foreign factory
+    public List<string> FindFactoryDestructionCandidates(Game game, Nation nation, Player controller)
+    {
         var friendlyNations = game.NationStates.Where(n => n.ControllerId == controller.Id).Select(n => n.Nation).ToHashSet();
 
-        // Find territories where this nation has >= 3 armies on a foreign factory with no defenders
         var armiesByTerritory = game.Units
             .Where(u => u.Nation == nation && u.UnitType == UnitType.Army)
             .GroupBy(u => u.TerritoryId)
             .Where(g => g.Count() >= 3)
             .ToList();
 
+        var candidates = new List<string>();
         foreach (var group in armiesByTerritory)
         {
             var territoryId = group.Key;
@@ -888,19 +903,30 @@ public class BotService
             });
             if (defenderFactoryCount <= 1) continue;
 
-            // Ask strategy if we should destroy
-            if (!strategy.ShouldDestroyFactory(game, nation, territoryId, controller)) continue;
-
-            // Execute destruction: remove 3 armies and the factory
-            var armiesToSacrifice = group.Take(3).ToList();
-            foreach (var army in armiesToSacrifice)
-            {
-                RemoveUnit(ctx, game, army);
-            }
-            tState.HasFactory = false;
-
-            GameLogger.LogFactoryDestruction(ctx, game, territoryId, nation, controller.BotName ?? "Bot");
+            candidates.Add(territoryId);
         }
+        return candidates;
+    }
+
+    // Executes an already-decided factory destruction: sacrifices 3 armies of `nation` in `territoryId` and removes the factory
+    public void ExecuteFactoryDestruction(ApplicationDbContext? ctx, Game game, string territoryId, Nation nation, Player controller)
+    {
+        var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == territoryId);
+        if (tState == null || !tState.HasFactory) return;
+
+        var armiesToSacrifice = game.Units
+            .Where(u => u.Nation == nation && u.UnitType == UnitType.Army && u.TerritoryId == territoryId)
+            .Take(3)
+            .ToList();
+        if (armiesToSacrifice.Count < 3) return;
+
+        foreach (var army in armiesToSacrifice)
+        {
+            RemoveUnit(ctx, game, army);
+        }
+        tState.HasFactory = false;
+
+        GameLogger.LogFactoryDestruction(ctx, game, territoryId, nation, controller.BotName ?? "Bot");
     }
 
     private async Task BotUpdateTerritoryControl(ApplicationDbContext? ctx, Game game, string botName)
@@ -1227,13 +1253,13 @@ public class BotService
 
             if (request.ForceStop)
             {
-                int targetSlot = 4;
+                int targetSlot = RondelData.InvestorSlot;
                 int? currentSlot = nationState.RondelPosition;
                 int cost = 0;
                 if (currentSlot != null)
                 {
-                    int distance = (targetSlot - currentSlot.Value + 8) % 8;
-                    if (distance > 3) cost = (distance - 3) * (1 + (nationState.Power / 5));
+                    int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
+                    if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
                 }
 
                 game.PendingSwissBankForceNation = null;
@@ -1276,8 +1302,8 @@ public class BotService
                     int cost = 0;
                     if (currentSlot != null)
                     {
-                        int distance = (targetSlot - currentSlot.Value + 8) % 8;
-                        if (distance > 3) cost = (distance - 3) * (1 + (nationState.Power / 5));
+                        int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
+                        if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
                     }
 
                     game.PendingSwissBankForceNation = null;

@@ -2,6 +2,24 @@ namespace Imperial2030.Shared.Constants;
 
 public static class RondelData
 {
+    // The Rondel has 8 slots; Production and Maneuver each appear twice (once on either side of the wheel).
+    public const int TaxationSlot = 0;
+    public const int FactorySlot = 1;
+    public const int ProductionSlot1 = 2;
+    public const int ManeuverSlot1 = 3;
+    public const int InvestorSlot = 4;
+    public const int ImportSlot = 5;
+    public const int ProductionSlot2 = 6;
+    public const int ManeuverSlot2 = 7;
+    public const int SlotCount = 8;
+
+    // Moving up to 3 slots clockwise is free; each slot beyond that costs money (scaled by power).
+    public const int FreeMoveDistance = 3;
+    public const int MaxMoveDistance = 6;
+
+    public static bool IsProductionSlot(int index) => index == ProductionSlot1 || index == ProductionSlot2;
+    public static bool IsManeuverSlot(int index) => index == ManeuverSlot1 || index == ManeuverSlot2;
+
     public static string GetSlotName(int index) => index switch
     {
         0 => "Taxation",

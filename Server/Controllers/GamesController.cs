@@ -1196,7 +1196,7 @@ public class GamesController : ControllerBase
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
         if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
         if (game.CurrentTurnNation != nation) return BadRequest($"It is {game.CurrentTurnNation}'s turn.");
-        if (targetSlot < 0 || targetSlot > 7) return BadRequest($"Invalid slot {targetSlot}. Must be 0-7.");
+        if (targetSlot < 0 || targetSlot >= RondelData.SlotCount) return BadRequest($"Invalid slot {targetSlot}. Must be 0-{RondelData.SlotCount - 1}.");
 
         var nationState = game.NationStates.First(n => n.Nation == nation);
 
@@ -1223,16 +1223,16 @@ public class GamesController : ControllerBase
             // Standard Move Logic
             if (currentSlot.Value == targetSlot) return BadRequest("Must move to a different slot.");
 
-            int distance = (targetSlot - currentSlot.Value + 8) % 8;
+            int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
 
             if (distance == 0) return BadRequest("Must move at least 1 step."); // Should be covered by above equality check but safe.
-            if (distance > 6) return BadRequest("Cannot move more than 6 spaces on the rondel.");
-            if (distance > 3)
+            if (distance > RondelData.MaxMoveDistance) return BadRequest($"Cannot move more than {RondelData.MaxMoveDistance} spaces on the rondel.");
+            if (distance > RondelData.FreeMoveDistance)
             {
                 // Cost per additional step = 1 + Power Factor (Power / 5)
                 int powerFactor = nationState.Power / 5;
                 int costPerStep = 1 + powerFactor;
-                cost = (distance - 3) * costPerStep;
+                cost = (distance - RondelData.FreeMoveDistance) * costPerStep;
             }
         }
 
@@ -1240,12 +1240,12 @@ public class GamesController : ControllerBase
 
         // --- Swiss Bank Intercept Logic ---
         bool crossingInvestor = false;
-        if (currentSlot != null && targetSlot != 4)
+        if (currentSlot != null && targetSlot != RondelData.InvestorSlot)
         {
-            int dist = (targetSlot - currentSlot.Value + 8) % 8;
+            int dist = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
             for (int i = 1; i < dist; i++) // Check intermediate steps
             {
-                if ((currentSlot.Value + i) % 8 == 4)
+                if ((currentSlot.Value + i) % RondelData.SlotCount == RondelData.InvestorSlot)
                 {
                     crossingInvestor = true;
                     break;
@@ -1317,11 +1317,11 @@ public class GamesController : ControllerBase
         {
             // Moving from currentSlot to targetSlot (clockwise)
             // Path: (current + 1) ... targetSlot
-            int dist = (targetSlot - currentSlot.Value + 8) % 8;
+            int dist = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
             for (int i = 1; i <= dist; i++)
             {
-                int step = (currentSlot.Value + i) % 8;
-                if (step == 4)
+                int step = (currentSlot.Value + i) % RondelData.SlotCount;
+                if (step == RondelData.InvestorSlot)
                 {
                     triggeredInvestor = true;
                     break;
@@ -1330,22 +1330,22 @@ public class GamesController : ControllerBase
         }
         else
         {
-            // First placement: if placed on 4
-            if (targetSlot == 4) triggeredInvestor = true;
+            // First placement: if placed on Investor
+            if (targetSlot == RondelData.InvestorSlot) triggeredInvestor = true;
         }
 
         if (triggeredInvestor)
         {
             // Calculate if landed on
-            // Note: The loop logic above is slightly flawed if we just check targetSlot==4 for "landedOn" 
+            // Note: The loop logic above is slightly flawed if we just check targetSlot==Investor for "landedOn"
             // because distinct "pass through" vs "land on" matters for 2M bonus.
             // But for now, sticking to existing logic structure.
-            bool landedOn = (targetSlot == 4);
+            bool landedOn = (targetSlot == RondelData.InvestorSlot);
             HandleInvestorPhase(_context, game, nationState, controller, landedOn);
         }
 
         // Initialize Maneuver Phase
-        if (targetSlot == 3 || targetSlot == 7)
+        if (RondelData.IsManeuverSlot(targetSlot))
         {
             game.CurrentManeuverPhase = ManeuverPhase.Fleets;
 
@@ -1409,7 +1409,7 @@ public class GamesController : ControllerBase
         if (controller.UserId != userId) return Forbid();
 
         // Check Rondel Position (Production slots: 2 and 6)
-        if (nationState.RondelPosition != 2 && nationState.RondelPosition != 6)
+        if (!RondelData.IsProductionSlot(nationState.RondelPosition ?? -1))
         {
             return BadRequest("Not on a Production slot.");
         }
@@ -1651,8 +1651,7 @@ public class GamesController : ControllerBase
         if (controller.UserId != userId) return Forbid();
 
         // 1. Validate Rondel Position
-        // Assuming slot 1 is Factory (based on Rondel.razor)
-        if (nationState.RondelPosition != 1) return BadRequest("Nation must be on 'Factory' slot.");
+        if (nationState.RondelPosition != RondelData.FactorySlot) return BadRequest("Nation must be on 'Factory' slot.");
 
         // 1b. Validate Per Turn Limit
         if (nationState.HasBuiltThisTurn) return BadRequest("Already built factory this turn.");
@@ -1771,9 +1770,8 @@ public class GamesController : ControllerBase
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
-        // Validate Rondel Position: Must be on Taxation (Slot 0)
-        // Assuming slot 0 is Taxation based on Rondel.razor
-        if (nationState.RondelPosition != 0) return BadRequest("Nation must be on 'Taxation' slot.");
+        // Validate Rondel Position: Must be on Taxation
+        if (nationState.RondelPosition != RondelData.TaxationSlot) return BadRequest("Nation must be on 'Taxation' slot.");
 
         int oldTreasury = nationState.Treasury;
         // --- Apply Centralized Taxation Logic ---
@@ -1854,8 +1852,7 @@ public class GamesController : ControllerBase
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
-        // 5 is Import slot
-        if (nationState.RondelPosition != 5) return BadRequest("Not in Import phase.");
+        if (nationState.RondelPosition != RondelData.ImportSlot) return BadRequest("Not in Import phase.");
         if (nationState.HasImportedThisTurn) return BadRequest("Already imported this turn.");
 
         if (request.Units.Count > 3) return BadRequest("Cannot import more than 3 units.");
@@ -1954,13 +1951,13 @@ public class GamesController : ControllerBase
 
         if (request.ForceStop)
         {
-            int targetSlot = 4;
+            int targetSlot = RondelData.InvestorSlot;
             int? currentSlot = nationState.RondelPosition;
             int cost = 0;
             if (currentSlot != null)
             {
-                int distance = (targetSlot - currentSlot.Value + 8) % 8;
-                if (distance > 3) cost = (distance - 3) * (1 + (nationState.Power / 5));
+                int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
+                if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
             }
 
             game.PendingSwissBankForceNation = null;
@@ -2005,8 +2002,8 @@ public class GamesController : ControllerBase
                 int cost = 0;
                 if (currentSlot != null)
                 {
-                    int distance = (targetSlot - currentSlot.Value + 8) % 8;
-                    if (distance > 3) cost = (distance - 3) * (1 + (nationState.Power / 5));
+                    int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
+                    if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
                 }
 
                 game.PendingSwissBankForceNation = null;

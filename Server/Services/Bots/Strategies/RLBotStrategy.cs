@@ -32,6 +32,15 @@ public class RLBotStrategy : BotStrategyBase
 
     public static readonly int StateSize = 3164;
 
+    // Base action space (0-63): 0-5=Rondel distance, 6=unused, 7=Fight, 8=Retreat, 9-62=BuyBond, 63=Pass
+    public const int FightAction = 7;
+    public const int RetreatAction = 8;
+
+    // Factory destruction decision (asked after a hostile move stacks 3+ armies on an undefended foreign factory)
+    public const int FactoryDestroyAction = 189;
+    public const int FactoryKeepAction = 190;
+    public const int TotalActionSize = 191;
+
     // Fixed ordered territory lists for map encoding
     public static readonly string[] HomeProvinceIds = new[]
     {
@@ -98,6 +107,33 @@ public class RLBotStrategy : BotStrategyBase
 
     private float[]? _lastState = null;
     private int _cachedAction = -1;
+    private int? _modelActionOutputSize;
+
+    // Older exported models (e.g. RL-2.onnx) predate the Destroy/Keep Factory actions and only
+    // output logits for the original action space. Detect that from the ONNX graph's static output
+    // shape so we never index past the end of the model's actual output tensor.
+    private int GetModelActionOutputSize()
+    {
+        if (_modelActionOutputSize.HasValue) return _modelActionOutputSize.Value;
+
+        if (_onnxSession == null)
+        {
+            _modelActionOutputSize = 0;
+            return 0;
+        }
+
+        try
+        {
+            var dims = _onnxSession.OutputMetadata.Values.First().Dimensions;
+            _modelActionOutputSize = (dims.Length > 1 && dims[1] > 0) ? dims[1] : int.MaxValue;
+        }
+        catch
+        {
+            _modelActionOutputSize = int.MaxValue; // Unknown/dynamic shape: assume it's safe
+        }
+
+        return _modelActionOutputSize.Value;
+    }
 
     private bool IsSameState(float[] s1, float[] s2)
     {
@@ -132,7 +168,7 @@ public class RLBotStrategy : BotStrategyBase
 
         int distance = _cachedAction + 1; // Actions 0-5 map to distance 1-6
         int currentPos = ns.RondelPosition ?? 0;
-        int targetSlot = (currentPos + distance) % 8;
+        int targetSlot = (currentPos + distance) % RondelData.SlotCount;
 
         if (slot == targetSlot)
         {
@@ -167,7 +203,7 @@ public class RLBotStrategy : BotStrategyBase
             {
                 state[i++] = ns.Power / 25.0f;
                 state[i++] = ns.Treasury / 30.0f;
-                state[i++] = ns.RondelPosition.HasValue ? ns.RondelPosition.Value / 7.0f : -1.0f;
+                state[i++] = ns.RondelPosition.HasValue ? ns.RondelPosition.Value / (float)(RondelData.SlotCount - 1) : -1.0f;
 
                 var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
                 foreach (var cost in bondCosts)
@@ -305,10 +341,10 @@ public class RLBotStrategy : BotStrategyBase
                 continue;
             }
 
-            int targetSlot = (actingNs.RondelPosition.GetValueOrDefault() + act + 1) % 8;
+            int targetSlot = (actingNs.RondelPosition.GetValueOrDefault() + act + 1) % RondelData.SlotCount;
             bool isPenalized = false;
 
-            if (targetSlot == 1) // Factory
+            if (targetSlot == RondelData.FactorySlot)
             {
                 bool noMoney = actingNs.Treasury < 5;
                 bool allBuiltOrBlocked = false;
@@ -325,11 +361,11 @@ public class RLBotStrategy : BotStrategyBase
                 }
                 if (noMoney || allBuiltOrBlocked) isPenalized = true;
             }
-            else if (targetSlot == 5) // Import
+            else if (targetSlot == RondelData.ImportSlot)
             {
                 if (actingNs.Treasury < 1) isPenalized = true;
             }
-            else if (targetSlot == 3 || targetSlot == 7) // Maneuver
+            else if (RondelData.IsManeuverSlot(targetSlot))
             {
                 bool hasUnits = game.Units.Any(u => u.Nation == actingNs.Nation);
                 if (!hasUnits) isPenalized = true;
@@ -454,7 +490,7 @@ public class RLBotStrategy : BotStrategyBase
 
         if (TrainingActionOverride.Value.HasValue)
         {
-            return TrainingActionOverride.Value.Value == 8; // 8 = Retreat, 7 = Fight
+            return TrainingActionOverride.Value.Value == RetreatAction;
         }
         else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
         {
@@ -463,7 +499,32 @@ public class RLBotStrategy : BotStrategyBase
 
         var mask = GetActionMask(game, controller.Id);
         int action = GetActionFromOnnx(game, controller, mask);
-        return action == 8;
+        return action == RetreatAction;
+    }
+
+    public override bool ShouldDestroyFactory(Game game, Nation nation, string territoryId, Player controller)
+    {
+        if (TrainingActionOverride.Value.HasValue)
+        {
+            return TrainingActionOverride.Value.Value == FactoryDestroyAction;
+        }
+        else if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
+        {
+            throw new RlTrainingPauseException();
+        }
+
+        // Models exported before this decision existed don't have logits for it; fall back to the heuristic.
+        if (GetModelActionOutputSize() < TotalActionSize)
+        {
+            return base.ShouldDestroyFactory(game, nation, territoryId, controller);
+        }
+
+        bool[] mask = new bool[TotalActionSize];
+        mask[FactoryDestroyAction] = true;
+        mask[FactoryKeepAction] = true;
+
+        int action = GetActionFromOnnx(game, controller, mask, territoryId);
+        return action == FactoryDestroyAction;
     }
 
     private ThreadLocal<(Guid UnitId, int ChosenAction)> _maneuverCache = new ThreadLocal<(Guid, int)>();
@@ -678,8 +739,8 @@ public class RLBotStrategy : BotStrategyBase
 
             if (rlIsDefender)
             {
-                mask[7] = true; // Fight
-                mask[8] = true; // Retreat
+                mask[FightAction] = true;
+                mask[RetreatAction] = true;
                 return mask;
             }
         }
@@ -713,16 +774,16 @@ public class RLBotStrategy : BotStrategyBase
 
         int currentPos = ns.RondelPosition ?? 0;
 
-        for (int dist = 1; dist <= 6; dist++)
+        for (int dist = 1; dist <= RondelData.MaxMoveDistance; dist++)
         {
-            int targetSlot = (currentPos + dist) % 8;
+            int targetSlot = (currentPos + dist) % RondelData.SlotCount;
             mask[dist - 1] = IsSlotValid(ns, rlPlayer, targetSlot);
         }
 
-        mask[6] = false; // Action 6 is unused for Rondel (moving 7 spaces is illegal in Imperial 2030)
+        mask[RondelData.MaxMoveDistance] = false; // Action 6 is unused for Rondel (moving 7 spaces is illegal in Imperial 2030)
 
         // Failsafe: if no actions are somehow valid, just force action 0 (move 1 space)
-        if (!mask.Take(6).Any(m => m)) mask[0] = true;
+        if (!mask.Take(RondelData.MaxMoveDistance).Any(m => m)) mask[0] = true;
 
         return mask;
     }
@@ -734,11 +795,11 @@ public class RLBotStrategy : BotStrategyBase
         int moveCost = 0;
         if (ns.RondelPosition.HasValue)
         {
-            int dist = (targetSlot - ns.RondelPosition.Value + 8) % 8;
-            if (dist > 3)
+            int dist = (targetSlot - ns.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
+            if (dist > RondelData.FreeMoveDistance)
             {
                 int pf = ns.Power / 5;
-                moveCost = (dist - 3) * (1 + pf);
+                moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
             }
         }
         return rlPlayer.Cash >= moveCost;

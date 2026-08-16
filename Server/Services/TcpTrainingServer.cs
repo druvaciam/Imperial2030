@@ -29,6 +29,11 @@ public class TcpTrainingServer : BackgroundService
         public Game Game { get; set; } = default!;
         public Guid RLPlayerId { get; set; }
         public string? ManeuverSelectedTerritoryId { get; set; } // Non-null when in Stage 2
+        public string? PendingFactoryDestructionTerritoryId { get; set; } // Non-null while awaiting a Destroy/Keep decision
+
+        public int TotalSessionSteps { get; set; } = 0;
+        public int LastTurnCount { get; set; } = -1;
+        public int ConsecutiveSameTurnSteps { get; set; } = 0;
     }
 
     public class TcpRequest
@@ -426,6 +431,26 @@ public class TcpTrainingServer : BackgroundService
         var game = session.Game;
         if (game == null) return null;
 
+        session.TotalSessionSteps++;
+        if (session.TotalSessionSteps > 2000)
+        {
+            throw new InvalidOperationException($"Game session {req.SessionId} exceeded 2000 steps without finishing. Halting stuck session.");
+        }
+
+        if (session.LastTurnCount == game.TurnCount)
+        {
+            session.ConsecutiveSameTurnSteps++;
+            if (session.ConsecutiveSameTurnSteps > 50)
+            {
+                throw new InvalidOperationException($"Game session {req.SessionId} stalled on turn #{game.TurnCount} ({game.CurrentTurnNation}) for {session.ConsecutiveSameTurnSteps} consecutive steps without advancing turn. Halting stuck session.");
+            }
+        }
+        else
+        {
+            session.LastTurnCount = game.TurnCount;
+            session.ConsecutiveSameTurnSteps = 0;
+        }
+
         var player = game.Players.First(p => p.Id == session.RLPlayerId);
         string rlPlayerName = player.BotName ?? "Bot";
 
@@ -454,8 +479,8 @@ public class TcpTrainingServer : BackgroundService
 
             if (wasRondelTurn && req.Action >= 0 && req.Action <= 5 && preRondelPos.HasValue)
             {
-                int targetSlot = (preRondelPos.Value + req.Action + 1) % 8;
-                if (targetSlot == 0) // Taxation slot
+                int targetSlot = (preRondelPos.Value + req.Action + 1) % RondelData.SlotCount;
+                if (targetSlot == RondelData.TaxationSlot)
                 {
                     isTaxationAction = true;
                     var taxPreview = Imperial2030.Server.Helpers.TaxationHelper.PreviewTaxation(game, preNs);
@@ -488,7 +513,23 @@ public class TcpTrainingServer : BackgroundService
         float explicitBonusReward = 0f;
 
         bool wasManeuverAction = false;
-        if (req.Action == 63 && game.CurrentManeuverPhase != ManeuverPhase.None)
+        if (session.PendingFactoryDestructionTerritoryId != null)
+        {
+            // Resolve a pending Destroy/Keep decision for a factory currently held under siege
+            var pendingTerritoryId = session.PendingFactoryDestructionTerritoryId;
+            session.PendingFactoryDestructionTerritoryId = null;
+
+            if (req.Action == RLBotStrategy.FactoryDestroyAction)
+            {
+                _botService.ExecuteFactoryDestruction(null, game, pendingTerritoryId, game.CurrentTurnNation, player);
+            }
+
+            // More stacks may still be awaiting a decision (e.g. multiple sieges resolved in the same move)
+            session.PendingFactoryDestructionTerritoryId = _botService
+                .FindFactoryDestructionCandidates(game, game.CurrentTurnNation, player)
+                .FirstOrDefault();
+        }
+        else if (req.Action == 63 && game.CurrentManeuverPhase != ManeuverPhase.None)
         {
             wasManeuverAction = true;
             // Pass Maneuver
@@ -601,7 +642,9 @@ public class TcpTrainingServer : BackgroundService
 
                         if (!game.PendingBattleDefenders.Any())
                         {
-                            await _botService.BotTryDestroyFactories(null, game, unit.Nation, player);
+                            session.PendingFactoryDestructionTerritoryId = _botService
+                                .FindFactoryDestructionCandidates(game, unit.Nation, player)
+                                .FirstOrDefault();
                         }
                     }
                 }
@@ -818,25 +861,25 @@ public class TcpTrainingServer : BackgroundService
         // Rondel slots: 0=Taxation, 1=Factory, 2=Production, 3=Maneuver, 4=Investor, 5=Import, 6=Production, 7=Maneuver
         if (wasRondelTurn && req.Action >= 0 && req.Action <= 5 && preRondelPos.HasValue)
         {
-            int targetSlot = (preRondelPos.Value + req.Action + 1) % 8;
-            int dist = (targetSlot - preRondelPos.Value + 8) % 8;
+            int targetSlot = (preRondelPos.Value + req.Action + 1) % RondelData.SlotCount;
+            int dist = (targetSlot - preRondelPos.Value + RondelData.SlotCount) % RondelData.SlotCount;
             int moveCost = 0;
-            if (dist > 3 && preNs != null)
+            if (dist > RondelData.FreeMoveDistance && preNs != null)
             {
                 int pf = preNs.Power / 5;
-                moveCost = (dist - 3) * (1 + pf);
+                moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
             }
 
             // Heavy penalty for paying for a long move to first Prod/Man when the second one was closer
-            if (dist >= 5 && (targetSlot == 2 || targetSlot == 3))
+            if (dist >= 5 && (targetSlot == RondelData.ProductionSlot1 || targetSlot == RondelData.ManeuverSlot1))
             {
-                string targetName = targetSlot == 2 ? "Production" : "Maneuver";
+                string targetName = targetSlot == RondelData.ProductionSlot1 ? "Production" : "Maneuver";
                 _logger.LogWarning($"[RL PENALTY] {preNs?.Nation} paid for long move ({dist} steps) to {targetName} 1, skipping a closer {targetName} 2. Cost: {moveCost}M");
                 reward -= 40.0f; // Heavy penalty
             }
 
             // Factory (slot 1) wasted: not enough treasury OR no valid cities to build in
-            if (targetSlot == 1 && preNs != null)
+            if (targetSlot == RondelData.FactorySlot && preNs != null)
             {
                 bool noMoney = preTreasury.HasValue && preTreasury < 5;
                 bool allBuiltOrBlocked = false;
@@ -865,19 +908,19 @@ public class TcpTrainingServer : BackgroundService
                     reward -= moveCost * 10.0f; // Extra penalty for wasting money on useless move
                 }
             }
-            if (targetSlot == 5 && preTreasury.HasValue && preTreasury < 1)
+            if (targetSlot == RondelData.ImportSlot && preTreasury.HasValue && preTreasury < 1)
             {
                 _logger.LogWarning($"[RL PENALTY] Wasted Import action by {preNs?.Nation}. Treasury < 1, Cost: {moveCost}M");
                 reward -= 7.0f;
                 reward -= moveCost * 10.0f;
             }
             // Maneuver (slot 3 or 7) with 0 units = wasted turn
-            if ((targetSlot == 3 || targetSlot == 7) && preNs != null)
+            if (RondelData.IsManeuverSlot(targetSlot) && preNs != null)
             {
                 bool hasUnits = game.Units.Any(u => u.Nation == preNs.Nation);
                 if (!hasUnits)
                 {
-                    if (targetSlot == 7 && dist >= 3)
+                    if (targetSlot == RondelData.ManeuverSlot2 && dist >= 3)
                     {
                         _logger.LogWarning($"[RL PENALTY] Strategic positioning to Maneuver 2 by {preNs.Nation}. No units, but getting closer to Tax. Cost: {moveCost}M");
                         reward -= 2.0f;
@@ -898,7 +941,11 @@ public class TcpTrainingServer : BackgroundService
 
         if (game.Status == GameStatus.Finished)
         {
-            _logger.LogInformation($"Finished! RL player scored {rlScore} and max of others score is {maxOfOthersScore}, intermediate score: {newVP}, reward: {reward}");
+            var winner = allScores.OrderByDescending(s => s.Score).First();
+            var winnerPlayer = game.Players.First(p => p.Id == winner.Id);
+            string winnerName = winnerPlayer.Id == session.RLPlayerId ? $"{winnerPlayer.BotName ?? "RL"} (RL)" : (winnerPlayer.BotName ?? "Bot");
+
+            _logger.LogInformation($"Finished! Winner: {winnerName} (score {winner.Score}). RL player scored {rlScore} and max of others score is {maxOfOthersScore}, intermediate score: {newVP}, reward: {reward}");
 
             // At the end of the game, reward perfectly aligns with the final VP difference
             reward += (rlScore - maxOfOthersScore) * 1.0f;
@@ -918,7 +965,7 @@ public class TcpTrainingServer : BackgroundService
             var stateResponse = GetStateVector(game, session.RLPlayerId);
 
             _sessions.Remove(req.SessionId);
-            return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[189] };
+            return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[RLBotStrategy.TotalActionSize] };
         }
 
         return new StepResponse { State = GetStateVector(game, session.RLPlayerId, session.ManeuverSelectedTerritoryId), Reward = reward, Done = false, ActionMask = GetActionMask(game, session) };
@@ -1000,9 +1047,9 @@ public class TcpTrainingServer : BackgroundService
                     if (nation.ControllerId == playerId)
                     {
                         float flagValue = 0.02f;
-                        int distanceToTax = (8 - (nation.RondelPosition ?? 0)) % 8;
-                        if (distanceToTax == 0) distanceToTax = 8; // If currently on Taxation, it's 8 steps away
-                        if (distanceToTax <= 3) flagValue = 0.04f; // More valuable when close to tax
+                        int distanceToTax = (RondelData.SlotCount - (nation.RondelPosition ?? 0)) % RondelData.SlotCount;
+                        if (distanceToTax == 0) distanceToTax = RondelData.SlotCount; // If currently on Taxation, it's 8 steps away
+                        if (distanceToTax <= RondelData.FreeMoveDistance) flagValue = 0.04f; // More valuable when close to tax
 
                         denseFactor += factoryScore
                                      + (flagCount * flagValue)
@@ -1056,7 +1103,7 @@ public class TcpTrainingServer : BackgroundService
             {
                 state[i++] = ns.Power / 25.0f;
                 state[i++] = ns.Treasury / 30.0f;
-                state[i++] = ns.RondelPosition.HasValue ? ns.RondelPosition.Value / 7.0f : -1.0f;
+                state[i++] = ns.RondelPosition.HasValue ? ns.RondelPosition.Value / (float)(RondelData.SlotCount - 1) : -1.0f;
 
                 var bondCosts = new[] { 2, 4, 6, 9, 12, 16, 20, 25, 30 };
                 foreach (var cost in bondCosts)
@@ -1195,10 +1242,10 @@ public class TcpTrainingServer : BackgroundService
                 continue;
             }
 
-            int targetSlot = (actingNs.RondelPosition.GetValueOrDefault() + act + 1) % 8;
+            int targetSlot = (actingNs.RondelPosition.GetValueOrDefault() + act + 1) % RondelData.SlotCount;
             bool isPenalized = false;
 
-            if (targetSlot == 1) // Factory
+            if (targetSlot == RondelData.FactorySlot)
             {
                 bool noMoney = actingNs.Treasury < 5;
                 bool allBuiltOrBlocked = false;
@@ -1215,11 +1262,11 @@ public class TcpTrainingServer : BackgroundService
                 }
                 if (noMoney || allBuiltOrBlocked) isPenalized = true;
             }
-            else if (targetSlot == 5) // Import
+            else if (targetSlot == RondelData.ImportSlot)
             {
                 if (actingNs.Treasury < 1) isPenalized = true;
             }
-            else if (targetSlot == 3 || targetSlot == 7) // Maneuver
+            else if (RondelData.IsManeuverSlot(targetSlot))
             {
                 bool hasUnits = game.Units.Any(u => u.Nation == actingNs.Nation);
                 if (!hasUnits) isPenalized = true;
@@ -1325,12 +1372,19 @@ public class TcpTrainingServer : BackgroundService
 
     private bool[] GetActionMask(Game game, TrainingSession session)
     {
-        var mask = new bool[189];
+        var mask = new bool[RLBotStrategy.TotalActionSize];
         var rlPlayerId = session.RLPlayerId;
         if (game == null) return mask;
 
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
         if (rlPlayer == null) return mask;
+
+        if (session.PendingFactoryDestructionTerritoryId != null)
+        {
+            mask[RLBotStrategy.FactoryDestroyAction] = true;
+            mask[RLBotStrategy.FactoryKeepAction] = true;
+            return mask;
+        }
 
         if (game.PendingBattleDefenders.Any())
         {
@@ -1339,8 +1393,8 @@ public class TcpTrainingServer : BackgroundService
 
             if (rlIsDefender)
             {
-                mask[7] = true; // Fight
-                mask[8] = true; // Retreat
+                mask[RLBotStrategy.FightAction] = true;
+                mask[RLBotStrategy.RetreatAction] = true;
                 return mask;
             }
         }
@@ -1452,16 +1506,16 @@ public class TcpTrainingServer : BackgroundService
 
         int currentPos = ns.RondelPosition ?? 0;
 
-        for (int dist = 1; dist <= 6; dist++)
+        for (int dist = 1; dist <= RondelData.MaxMoveDistance; dist++)
         {
-            int targetSlot = (currentPos + dist) % 8;
+            int targetSlot = (currentPos + dist) % RondelData.SlotCount;
             mask[dist - 1] = IsSlotValid(ns, rlPlayer, targetSlot);
         }
 
-        mask[6] = false; // Action 6 is unused for Rondel (moving 7 spaces is illegal in Imperial 2030)
+        mask[RondelData.MaxMoveDistance] = false; // Action 6 is unused for Rondel (moving 7 spaces is illegal in Imperial 2030)
 
         // Failsafe: if no actions are somehow valid, just force action 0 (move 1 space)
-        if (!mask.Take(6).Any(m => m)) mask[0] = true;
+        if (!mask.Take(RondelData.MaxMoveDistance).Any(m => m)) mask[0] = true;
 
         return mask;
     }
@@ -1473,11 +1527,11 @@ public class TcpTrainingServer : BackgroundService
         int moveCost = 0;
         if (ns.RondelPosition.HasValue)
         {
-            int dist = (targetSlot - ns.RondelPosition.Value + 8) % 8;
-            if (dist > 3)
+            int dist = (targetSlot - ns.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
+            if (dist > RondelData.FreeMoveDistance)
             {
                 int pf = ns.Power / 5;
-                moveCost = (dist - 3) * (1 + pf);
+                moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
             }
         }
         return rlPlayer.Cash >= moveCost;

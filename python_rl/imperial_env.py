@@ -18,8 +18,9 @@ class ImperialEnv(gym.Env):
         
         self._connect_socket()
         
-        # Actions: 0-6=Rondel, 7=Fight, 8=Retreat, 9-62=BuyBond, 63=Pass, 64-125=Maneuver Select, 126=Maneuver DoNotMove, 127-188=Maneuver Move
-        self.action_space = spaces.Discrete(189)
+        # Actions: 0-6=Rondel, 7=Fight, 8=Retreat, 9-62=BuyBond, 63=Pass, 64-125=Maneuver Select, 126=Maneuver DoNotMove,
+        # 127-188=Maneuver Move, 189=DestroyFactory, 190=KeepFactory
+        self.action_space = spaces.Discrete(191)
         
         # State: 3164 floats
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(3164,), dtype=np.float32)
