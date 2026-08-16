@@ -542,6 +542,16 @@ public class TcpTrainingServer : BackgroundService
                     }
                     ns.Treasury -= 5;
                     ts.HasFactory = true;
+
+                    // Immediate reward for growing production capacity. Without this, the only reward signal for
+                    // a new factory comes from the dense VP term's factoryScore, discounted by Power/5 — which is
+                    // near-zero early game (when Power is low) i.e. exactly when this decision matters most. That
+                    // starves the agent of any timely feedback for investing, so it tends to under-build and just
+                    // cycle Taxation/Investor instead. This is deliberately unconditional (unlike the destroy/occupy
+                    // rewards below, which only pay out when it visibly hurts a specific leading rival) — growth is
+                    // valuable to the acting nation on its own merits, not contingent on comparing to a rival's interest.
+                    explicitBonusReward += 3.0f;
+                    _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +3");
                 }
             }
 
@@ -948,13 +958,14 @@ public class TcpTrainingServer : BackgroundService
                     {
                         if (meta.PersonalContribution > 0)
                         {
-                            explicitBonusReward -= 40.0f; // Heavy penalty for paying out of pocket
-                            _logger.LogWarning($"[RL PENALTY] {rlPlayerName} personally contributed {meta.PersonalContribution}M to interest. Penalty: -40");
+                            float penalty = MathF.Min(80.0f, MathF.Max(25.0f, meta.PersonalContribution.Value * 10.0f));
+                            explicitBonusReward -= penalty; // Heavy penalty for paying out of pocket
+                            _logger.LogWarning($"[RL PENALTY] {rlPlayerName} personally contributed {meta.PersonalContribution}M to interest. Penalty: -{penalty}");
                         }
                         if (meta.MissedInterest == true)
                         {
                             explicitBonusReward -= 20.0f; // Heavy penalty for missing own interest
-                            _logger.LogWarning($"[RL PENALTY] {rlPlayerName} missed interest payment due to empty treasury. Penalty: -30");
+                            _logger.LogWarning($"[RL PENALTY] {rlPlayerName} missed interest payment due to empty treasury. Penalty: -20");
                         }
                     }
                 }
@@ -1460,6 +1471,39 @@ public class TcpTrainingServer : BackgroundService
         state[i++] = game.CurrentManeuverPhase == ManeuverPhase.None ? 1.0f : 0.0f;
         state[i++] = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? 1.0f : 0.0f;
         state[i++] = game.CurrentManeuverPhase == ManeuverPhase.Armies ? 1.0f : 0.0f;
+
+        // === INVESTOR RISK CONTEXT (8 floats) ===
+        // Appended at the end, not spliced into the per-nation block above, on purpose: this keeps every float
+        // before this point at the exact same index it had before this feature existed, so an older model (one
+        // whose input layer expects fewer floats) can be fed a plain prefix of this vector — via GetActionFromOnnx's
+        // truncation — and still receive a byte-for-byte reproduction of the exact input it was trained on. Any
+        // future state additions should follow the same append-only rule to preserve that.
+        //
+        // 1. Total interest owed per nation (6 floats). Range is fixed by the bond table (interests 1..9 sum to
+        //    45), so this normalizes cleanly to [0,1] without clamping. Unlike Treasury, it isn't something the
+        //    agent's own action can directly change, so it's given raw rather than as a pre-subtracted "deficit".
+        foreach (var nation in imperial2030Nations)
+        {
+            state[i++] = bonds.Where(b => b.Nation == nation && b.HolderId != null).Sum(b => b.Interest) / 45.0f;
+        }
+
+        // 2. Investor outcome preview for the acting nation's controller (2 floats), mirroring the taxation
+        // preview elsewhere in this vector. NetControllerCashDelta ranges [-45, 45] for the same reason as
+        // above. The boolean is included separately because it's a much easier signal to key off of than
+        // reading the exact float — the network doesn't need to calibrate "is this delta close enough to what's
+        // owed" itself.
+        var actingController = actingNs?.ControllerId != null ? game.Players.FirstOrDefault(p => p.Id == actingNs.ControllerId) : null;
+        if (actingNs != null && actingController != null)
+        {
+            var investorPreview = Helpers.InvestorHelper.PreviewInterestPayment(game, actingNs, actingController);
+            state[i++] = investorPreview.NetControllerCashDelta / 45.0f;
+            state[i++] = investorPreview.WillGetFullOwnInterest ? 1.0f : 0.0f;
+        }
+        else
+        {
+            state[i++] = 0f;
+            state[i++] = 0f;
+        }
 
         return state;
     }

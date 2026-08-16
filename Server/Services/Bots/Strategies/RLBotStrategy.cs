@@ -30,7 +30,7 @@ public class RLBotStrategy : BotStrategyBase
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, InferenceSession> _sessionCache = new();
     private InferenceSession? _onnxSession;
 
-    public static readonly int StateSize = 3164;
+    public static readonly int StateSize = 3172;
 
     // Base action space (0-63): 0-5=Rondel distance, 6=unused, 7=Fight, 8=Retreat, 9-62=BuyBond, 63=Pass
     public const int FightAction = 7;
@@ -147,6 +147,35 @@ public class RLBotStrategy : BotStrategyBase
         }
 
         return _modelActionOutputSize.Value;
+    }
+
+    private int? _modelInputSize;
+
+    // Older exported models predate later additions to the state vector (e.g. the per-nation interest-owed
+    // features) and expect a narrower input than the current encoding produces. Detect that from the ONNX
+    // graph's static input shape — feeding a mismatched-width tensor doesn't throw cleanly in all cases, it
+    // can leave the caller's bot turn stuck mid-task, so this must be checked before every inference call.
+    private int GetModelInputSize()
+    {
+        if (_modelInputSize.HasValue) return _modelInputSize.Value;
+
+        if (_onnxSession == null)
+        {
+            _modelInputSize = 0;
+            return 0;
+        }
+
+        try
+        {
+            var dims = _onnxSession.InputMetadata.Values.First().Dimensions;
+            _modelInputSize = (dims.Length > 1 && dims[1] > 0) ? dims[1] : int.MaxValue;
+        }
+        catch
+        {
+            _modelInputSize = int.MaxValue; // Unknown/dynamic shape: assume it's safe
+        }
+
+        return _modelInputSize.Value;
     }
 
     private bool IsSameState(float[] s1, float[] s2)
@@ -418,6 +447,39 @@ public class RLBotStrategy : BotStrategyBase
         state[i++] = game.CurrentManeuverPhase == ManeuverPhase.None ? 1.0f : 0.0f;
         state[i++] = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? 1.0f : 0.0f;
         state[i++] = game.CurrentManeuverPhase == ManeuverPhase.Armies ? 1.0f : 0.0f;
+
+        // === INVESTOR RISK CONTEXT (8 floats) ===
+        // Appended at the end, not spliced into the per-nation block above, on purpose: this keeps every float
+        // before this point at the exact same index it had before this feature existed, so an older model (one
+        // whose input layer expects fewer floats) can be fed a plain prefix of this vector — via GetActionFromOnnx's
+        // truncation — and still receive a byte-for-byte reproduction of the exact input it was trained on. Any
+        // future state additions should follow the same append-only rule to preserve that.
+        //
+        // 1. Total interest owed per nation (6 floats). Range is fixed by the bond table (interests 1..9 sum to
+        //    45), so this normalizes cleanly to [0,1] without clamping. Unlike Treasury, it isn't something the
+        //    agent's own action can directly change, so it's given raw rather than as a pre-subtracted "deficit".
+        foreach (var nation in imperial2030Nations)
+        {
+            state[i++] = game.Bonds.Where(b => b.Nation == nation && b.HolderId != null).Sum(b => b.Interest) / 45.0f;
+        }
+
+        // 2. Investor outcome preview for the acting nation's controller (2 floats), mirroring the taxation
+        // preview elsewhere in this vector. NetControllerCashDelta ranges [-45, 45] for the same reason as
+        // above. The boolean is included separately because it's a much easier signal to key off of than
+        // reading the exact float — the network doesn't need to calibrate "is this delta close enough to what's
+        // owed" itself.
+        var actingController = actingNs?.ControllerId != null ? game.Players.FirstOrDefault(p => p.Id == actingNs.ControllerId) : null;
+        if (actingNs != null && actingController != null)
+        {
+            var investorPreview = Imperial2030.Server.Helpers.InvestorHelper.PreviewInterestPayment(game, actingNs, actingController);
+            state[i++] = investorPreview.NetControllerCashDelta / 45.0f;
+            state[i++] = investorPreview.WillGetFullOwnInterest ? 1.0f : 0.0f;
+        }
+        else
+        {
+            state[i++] = 0f;
+            state[i++] = 0f;
+        }
 
         return state;
     }
@@ -761,10 +823,33 @@ public class RLBotStrategy : BotStrategyBase
 
         if (_onnxSession == null)
         {
-            // Fallback to random if model isn't loaded
+            // Fallback to random if no model is loaded at all
             var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();
             if (validIndices.Count == 0) return 0;
             return validIndices[Random.Shared.Next(validIndices.Count)];
+        }
+
+        int modelInputSize = GetModelInputSize();
+        if (modelInputSize != state.Length)
+        {
+            if (modelInputSize > 0 && modelInputSize < state.Length)
+            {
+                // Older model trained on a shorter state vector. Every new field is appended, never spliced in
+                // (see the "INVESTOR RISK CONTEXT" comment in GetStateVector), so the model's own input size is
+                // always an exact prefix of the current vector — truncating reproduces precisely what it was
+                // trained on, with no loss of information on anything it actually knows about. This is what
+                // keeps older exported models fully playable at unchanged strength as the state vector grows.
+                state = state[..modelInputSize];
+            }
+            else
+            {
+                // Model expects a shape we can't safely reconstruct a prefix for (larger than the current
+                // vector, or an unreadable/dynamic shape) — fall back to random rather than risk a shape
+                // mismatch at inference time.
+                var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();
+                if (validIndices.Count == 0) return 0;
+                return validIndices[Random.Shared.Next(validIndices.Count)];
+            }
         }
 
         // Create Tensor

@@ -557,8 +557,8 @@ namespace Imperial2030.Tests
         }
 
         [Theory]
-        [InlineData("RL")]
         [InlineData("RL-2")]
+        [InlineData("RL-3")]
         public async Task TestRLBotWinRate(string testBotType)
         {
             int rlWins = 0;

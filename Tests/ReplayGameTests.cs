@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Threading.Tasks;
 using Imperial2030.Server.Controllers;
 using Imperial2030.Server.Data;
+using Imperial2030.Server.Helpers;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
@@ -117,12 +118,15 @@ namespace Imperial2030.Tests
             // 3. Start Game
             await gamesController.StartGame(gameId);
 
-            // 4. Capture Initial State (Snapshot)
+            // 4. Capture Initial State
+            // Only initialStatePlayers is actually needed to seed the replay below — everything else here is
+            // captured purely as a baseline to prove the action-log reconstruction (step 9) reproduces it
+            // exactly. The player roster is the one piece not yet reconstructable purely from the action log:
+            // JoinGame doesn't record player identity/order, so replay still needs it seeded directly.
             var initialStateGame = await context.Games.AsNoTracking().FirstOrDefaultAsync(g => g.Id == gameId);
             var initialStateNationStates = await context.NationStates.AsNoTracking().Where(ns => ns.GameId == gameId).ToListAsync();
             var initialStateBonds = await context.Bonds.AsNoTracking().Where(b => b.GameId == gameId).ToListAsync();
             var initialStatePlayers = await context.Players.AsNoTracking().Where(p => p.GameId == gameId).ToListAsync();
-            var initialStateTerritories = await context.TerritoryStates.AsNoTracking().Where(t => t.GameId == gameId).ToListAsync();
             var initialStateUnits = await context.Units.AsNoTracking().Where(u => u.GameId == gameId).ToListAsync();
 
             // 5. Convert players to bots and trigger bot turn to play full game
@@ -165,35 +169,25 @@ namespace Imperial2030.Tests
             // Use a separate InMemory DB but preserve ALL original IDs.
             // This ensures HandleInvestorPhase, GetNextPlayerId, etc. produce
             // identical results since they depend on Player GUID ordering.
+            //
+            // Setup (NationStates/Bonds/TerritoryStates/controllers/investor card holder/starting cash) is
+            // reconstructed purely from the action log via GameSetupHelper — the same code StartGame itself
+            // runs — fed with the nation->player distribution recorded on the "StartGame" action's metadata.
+            // No DB snapshot of setup-derived state is used; only the player roster is seeded directly (see
+            // note at the initial-state capture above for why).
             string replayDbName = Guid.NewGuid().ToString();
             var replayContext = GetDbContext(replayDbName);
 
             var replayGameId = gameId; // Same game ID — no conflicts since separate DB
-            var clonedGame = new Game
-            {
-                Id = replayGameId,
-                Name = "Replayed Game",
-                Status = GameStatus.InProgress,
-                TurnCount = initialStateGame.TurnCount,
-                CurrentTurnNation = initialStateGame.CurrentTurnNation,
-                VariantBonusOnlyForTaxIncreases = initialStateGame.VariantBonusOnlyForTaxIncreases,
-                StartedAt = initialStateGame.StartedAt,
-                IsInvestorTurn = initialStateGame.IsInvestorTurn,
-                CurrentManeuverPhase = initialStateGame.CurrentManeuverPhase,
-                PendingBattleTerritoryId = initialStateGame.PendingBattleTerritoryId,
-                PendingBattleAggressorNation = initialStateGame.PendingBattleAggressorNation,
-                PendingBattleDefenders = initialStateGame.PendingBattleDefenders,
-                PendingSwissBankForceTargetSlot = initialStateGame.PendingSwissBankForceTargetSlot,
-                PendingSwissBankForceNation = initialStateGame.PendingSwissBankForceNation,
-                InvestorCardHolderId = initialStateGame.InvestorCardHolderId,
-                ActingPlayerId = initialStateGame.ActingPlayerId,
-                PendingInvestorIds = initialStateGame.PendingInvestorIds.ToList(),
-                PendingSwissBankResponders = initialStateGame.PendingSwissBankResponders.ToList()
-            };
 
-            replayContext.Games.Add(clonedGame);
+            var startGameAction = actions.First(a => a.ActionType == "StartGame");
+            var setupMeta = JsonSerializer.Deserialize<GameSetupMetadata>(startGameAction.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            Assert.NotNull(setupMeta);
+            Assert.NotEmpty(setupMeta.NationDistribution);
 
-            // Clone players with original IDs
+            replayContext.Games.Add(new Game { Id = replayGameId, Name = "Replayed Game", Status = GameStatus.Lobby });
+
+            // Seed the player roster with original IDs (not yet reconstructable from the action log alone)
             foreach (var p in initialStatePlayers)
             {
                 replayContext.Players.Add(new Player
@@ -203,72 +197,47 @@ namespace Imperial2030.Tests
                     UserId = p.UserId,
                     BotName = p.BotName,
                     IsBot = false, // Prevent BotService from auto-playing
-                    Cash = p.Cash,
                     IsHost = p.IsHost
                 });
             }
-
-            foreach (var ns in initialStateNationStates)
-            {
-                replayContext.NationStates.Add(new NationState
-                {
-                    Id = ns.Id,
-                    GameId = replayGameId,
-                    Nation = ns.Nation,
-                    Treasury = ns.Treasury,
-                    Power = ns.Power,
-                    TaxRevenue = ns.TaxRevenue,
-                    PreviousTaxRevenue = ns.PreviousTaxRevenue,
-                    RondelPosition = ns.RondelPosition,
-                    HasBuiltThisTurn = ns.HasBuiltThisTurn,
-                    HasProducedThisTurn = ns.HasProducedThisTurn,
-                    HasMovedThisTurn = ns.HasMovedThisTurn,
-                    HasImportedThisTurn = ns.HasImportedThisTurn,
-                    ControllerId = ns.ControllerId
-                });
-            }
-
-            foreach (var b in initialStateBonds)
-            {
-                replayContext.Bonds.Add(new Bond
-                {
-                    Id = b.Id,
-                    GameId = replayGameId,
-                    Nation = b.Nation,
-                    Cost = b.Cost,
-                    Interest = b.Interest,
-                    HolderId = b.HolderId
-                });
-            }
-
-            foreach (var t in initialStateTerritories)
-            {
-                replayContext.TerritoryStates.Add(new TerritoryState
-                {
-                    Id = t.Id,
-                    GameId = replayGameId,
-                    TerritoryId = t.TerritoryId,
-                    HasFactory = t.HasFactory,
-                    Controller = t.Controller
-                });
-            }
-
-            foreach (var u in initialStateUnits)
-            {
-                replayContext.Units.Add(new Unit
-                {
-                    Id = u.Id,
-                    GameId = replayGameId,
-                    Nation = u.Nation,
-                    UnitType = u.UnitType,
-                    TerritoryId = u.TerritoryId,
-                    IsHostile = u.IsHostile,
-                    HasMoved = u.HasMoved,
-                    HasConvoyed = u.HasConvoyed
-                });
-            }
-
             await replayContext.SaveChangesAsync();
+
+            // Reconstruct setup deterministically from the logged distribution — same code path a live StartGame uses.
+            await GameSetupHelper.InitializeGameAsync(replayContext, replayGameId, setupMeta.NationDistribution);
+            replayContext.ChangeTracker.Clear();
+
+            // Prove the reconstruction is faithful: it should match the original live game's initial state exactly.
+            var reconstructedGame = await replayContext.Games.AsNoTracking().FirstAsync(g => g.Id == replayGameId);
+            Assert.Equal(initialStateGame.InvestorCardHolderId, reconstructedGame.InvestorCardHolderId);
+            Assert.Equal(initialStateGame.CurrentTurnNation, reconstructedGame.CurrentTurnNation);
+            Assert.Equal(initialStateGame.TurnCount, reconstructedGame.TurnCount);
+
+            var reconstructedNationStates = await replayContext.NationStates.AsNoTracking().Where(ns => ns.GameId == replayGameId).ToListAsync();
+            foreach (var origNs in initialStateNationStates)
+            {
+                var reconNs = reconstructedNationStates.First(n => n.Nation == origNs.Nation);
+                Assert.Equal(origNs.Treasury, reconNs.Treasury);
+                Assert.Equal(origNs.ControllerId, reconNs.ControllerId);
+                Assert.Equal(origNs.RondelPosition, reconNs.RondelPosition);
+            }
+
+            var reconstructedBonds = await replayContext.Bonds.AsNoTracking().Where(b => b.GameId == replayGameId).ToListAsync();
+            foreach (var origBond in initialStateBonds)
+            {
+                var reconBond = reconstructedBonds.First(b => b.Nation == origBond.Nation && b.Cost == origBond.Cost);
+                Assert.Equal(origBond.HolderId, reconBond.HolderId);
+            }
+
+            var reconstructedPlayers = await replayContext.Players.AsNoTracking().Where(p => p.GameId == replayGameId).ToListAsync();
+            foreach (var origP in initialStatePlayers)
+            {
+                var reconP = reconstructedPlayers.First(p => p.Id == origP.Id);
+                Assert.Equal(origP.Cash, reconP.Cash);
+            }
+
+            Assert.Empty(initialStateUnits); // No units exist before the first Production/Import action
+
+            _output.WriteLine($"[TEST {totalPlayerCount}p] Setup reconstructed from action log matches the original exactly.");
 
             // Set up Replay Controllers
             var replayGamesController = new GamesController(replayContext, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);

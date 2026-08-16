@@ -24,8 +24,8 @@ class ImperialEnv(gym.Env):
         # 200=SkipFactoryBuild, 201-204=BuildFactory (4 home slots, same slot order)
         self.action_space = spaces.Discrete(205)
         
-        # State: 3164 floats
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(3164,), dtype=np.float32)
+        # State: 3172 floats (per-nation totalInterestOwed x6, plus acting-nation investor payment preview x2)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(3172,), dtype=np.float32)
 
     def _connect_socket(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

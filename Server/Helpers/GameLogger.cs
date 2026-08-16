@@ -2,6 +2,7 @@ using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Models;
 using System;
+using System.Collections.Generic;
 using Imperial2030.Shared.Constants;
 
 namespace Imperial2030.Server.Helpers;
@@ -254,9 +255,10 @@ public static class GameLogger
         LogAction(context, game, "LeaveGame", null, playerName);
     }
 
-    public static void LogStartGame(ApplicationDbContext? context, Game game, string playerName)
+    public static void LogStartGame(ApplicationDbContext? context, Game game, string playerName, Dictionary<Nation, Guid>? nationDistribution = null)
     {
-        LogAction(context, game, "StartGame", null, playerName);
+        var metadata = nationDistribution != null ? new GameSetupMetadata { NationDistribution = nationDistribution } : null;
+        LogAction(context, game, "StartGame", null, playerName, metadata);
     }
 
     public static void LogPauseGame(ApplicationDbContext? context, Game game, string playerName)
