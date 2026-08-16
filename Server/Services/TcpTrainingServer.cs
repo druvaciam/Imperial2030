@@ -515,7 +515,39 @@ public class TcpTrainingServer : BackgroundService
 
         bool wasManeuverAction = false;
         bool wasImportAction = false;
-        if (session.PendingImportRemaining.HasValue)
+        bool wasFactoryBuildAction = false;
+
+        var factoryBuildNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+        bool isFactoryBuildPending = factoryBuildNs != null && factoryBuildNs.ControllerId == session.RLPlayerId
+            && factoryBuildNs.RondelPosition == RondelData.FactorySlot && !factoryBuildNs.HasBuiltThisTurn;
+
+        if (isFactoryBuildPending)
+        {
+            wasFactoryBuildAction = true;
+            var ns = factoryBuildNs!;
+
+            if (req.Action >= RLBotStrategy.FactoryBuildActionBase && req.Action < RLBotStrategy.FactoryBuildActionBase + RLBotStrategy.FactoryBuildActionCount && ns.Treasury >= 5)
+            {
+                int slotIndex = req.Action - RLBotStrategy.FactoryBuildActionBase;
+                var (orderedHome, canBuild) = GetFactoryBuildOptions(game, ns);
+
+                if (slotIndex < orderedHome.Count && canBuild[slotIndex])
+                {
+                    var cityId = orderedHome[slotIndex].Id;
+                    var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == cityId);
+                    if (ts == null)
+                    {
+                        ts = new TerritoryState { TerritoryId = cityId, GameId = game.Id };
+                        game.TerritoryStates.Add(ts);
+                    }
+                    ns.Treasury -= 5;
+                    ts.HasFactory = true;
+                }
+            }
+
+            ns.HasBuiltThisTurn = true; // Resolved either way (built, or explicitly/implicitly skipped)
+        }
+        else if (session.PendingImportRemaining.HasValue)
         {
             wasImportAction = true;
             var ns = game.NationStates.First(n => n.Nation == game.CurrentTurnNation);
@@ -772,6 +804,12 @@ public class TcpTrainingServer : BackgroundService
 
         // Same for the step-by-step Import decision sequence, once it's fully resolved
         if (wasImportAction && !session.PendingImportRemaining.HasValue && game.Status == GameStatus.InProgress)
+        {
+            game.AdvanceTurn();
+        }
+
+        // Same for the Factory build decision, which always resolves in a single step
+        if (wasFactoryBuildAction && game.Status == GameStatus.InProgress)
         {
             game.AdvanceTurn();
         }
@@ -1442,6 +1480,23 @@ public class TcpTrainingServer : BackgroundService
             return mask;
         }
 
+        var factoryBuildNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+        if (factoryBuildNs != null && factoryBuildNs.ControllerId == rlPlayerId
+            && factoryBuildNs.RondelPosition == RondelData.FactorySlot && !factoryBuildNs.HasBuiltThisTurn)
+        {
+            mask[RLBotStrategy.FactorySkipAction] = true;
+
+            if (factoryBuildNs.Treasury >= 5)
+            {
+                var (orderedHome, canBuild) = GetFactoryBuildOptions(game, factoryBuildNs);
+                for (int slotIdx = 0; slotIdx < orderedHome.Count && slotIdx < RLBotStrategy.FactoryBuildActionCount; slotIdx++)
+                {
+                    if (canBuild[slotIdx]) mask[RLBotStrategy.FactoryBuildActionBase + slotIdx] = true;
+                }
+            }
+            return mask;
+        }
+
         if (session.PendingImportRemaining.HasValue)
         {
             mask[RLBotStrategy.ImportStopAction] = true;
@@ -1636,5 +1691,23 @@ public class TcpTrainingServer : BackgroundService
             canFleet[i] = t.CityType == CityType.LightBlue && currentFleets < NationData.GetMaxFleets(ns.Nation);
         }
         return (orderedHome, canArmy, canFleet);
+    }
+
+    // Home territories (ordered by Id, same convention as GetImportOptions) with per-slot legality of
+    // building a factory there right now (not already built, not blocked by a hostile foreign army).
+    private (List<Territory> OrderedHome, bool[] CanBuild) GetFactoryBuildOptions(Game game, NationState ns)
+    {
+        var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation).OrderBy(t => t.Id).ToList();
+        var canBuild = new bool[orderedHome.Count];
+        for (int i = 0; i < orderedHome.Count; i++)
+        {
+            var t = orderedHome[i];
+            var ts = game.TerritoryStates.FirstOrDefault(x => x.TerritoryId == t.Id);
+            if (ts != null && ts.HasFactory) continue;
+
+            bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == t.Id && u.UnitType == UnitType.Army && u.Nation != ns.Nation && u.IsHostile);
+            canBuild[i] = !hasHostileForeignArmy;
+        }
+        return (orderedHome, canBuild);
     }
 }

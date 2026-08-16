@@ -47,7 +47,13 @@ public class RLBotStrategy : BotStrategyBase
     public const int ImportStopAction = 191;
     public const int ImportPlaceActionBase = 192;
     public const int ImportPlaceActionCount = 8;
-    public const int TotalActionSize = 200;
+
+    // Factory build decision: asked once while on the Factory rondel slot. FactoryBuildActionBase + homeSlotIndex,
+    // homeSlotIndex in [0,3] over the nation's 4 home territories ordered by Id (same convention as Import).
+    public const int FactorySkipAction = 200;
+    public const int FactoryBuildActionBase = 201;
+    public const int FactoryBuildActionCount = 4;
+    public const int TotalActionSize = 205;
 
     // Fixed ordered territory lists for map encoding
     public static readonly string[] HomeProvinceIds = new[]
@@ -596,6 +602,40 @@ public class RLBotStrategy : BotStrategyBase
         }
 
         return result;
+    }
+
+    public override string? ChooseCityForFactory(Game game, Nation nation, List<Territory> validCities)
+    {
+        var ns = game.NationStates.First(n => n.Nation == nation);
+        var controller = game.Players.First(p => p.Id == ns.ControllerId);
+
+        // During training, TcpTrainingServer handles this directly (see BotService.BotBuildFactory's early return).
+        if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
+        {
+            throw new RlTrainingPauseException();
+        }
+
+        // Models exported before this decision existed don't have logits for it; fall back to the heuristic.
+        if (GetModelActionOutputSize() < TotalActionSize)
+        {
+            return base.ChooseCityForFactory(game, nation, validCities);
+        }
+
+        var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == nation).OrderBy(t => t.Id).ToList();
+        var validIds = validCities.Select(c => c.Id).ToHashSet();
+
+        bool[] mask = new bool[TotalActionSize];
+        mask[FactorySkipAction] = true;
+        for (int slotIdx = 0; slotIdx < orderedHome.Count && slotIdx < FactoryBuildActionCount; slotIdx++)
+        {
+            if (validIds.Contains(orderedHome[slotIdx].Id)) mask[FactoryBuildActionBase + slotIdx] = true;
+        }
+
+        int action = GetActionFromOnnx(game, controller, mask);
+        if (action < FactoryBuildActionBase || action >= FactoryBuildActionBase + FactoryBuildActionCount) return null; // Skip (or invalid)
+
+        int chosenSlot = action - FactoryBuildActionBase;
+        return chosenSlot < orderedHome.Count ? orderedHome[chosenSlot].Id : null;
     }
 
     private ThreadLocal<(Guid UnitId, int ChosenAction)> _maneuverCache = new ThreadLocal<(Guid, int)>();

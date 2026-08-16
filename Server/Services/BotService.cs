@@ -336,9 +336,10 @@ public class BotService
         await SaveChangesAsync(ctx);
         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
-        // If not taxation (which auto-advances), not in maneuver, and not mid-Import decision, end turn
+        // If not taxation (which auto-advances), not in maneuver, and not mid-Import/Build decision, end turn
         bool importPending = targetSlot == RondelData.ImportSlot && !nationState.HasImportedThisTurn;
-        if (targetSlot != RondelData.TaxationSlot && game.Status == GameStatus.InProgress && game.CurrentManeuverPhase == ManeuverPhase.None && !importPending)
+        bool buildPending = targetSlot == RondelData.FactorySlot && !nationState.HasBuiltThisTurn;
+        if (targetSlot != RondelData.TaxationSlot && game.Status == GameStatus.InProgress && game.CurrentManeuverPhase == ManeuverPhase.None && !importPending && !buildPending)
         {
             if (!SkipDelays) await Task.Delay(BotDelayMs);
             game = await ReloadGameAsync(ctx, game);
@@ -442,7 +443,19 @@ public class BotService
 
     private async Task BotBuildFactory(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
     {
-        if (ns.Treasury < 5) return;
+        var strategy = GetStrategy(controller);
+        if (strategy is RLBotStrategy && RLBotStrategy.TrainingActionOverride.Value.HasValue)
+        {
+            // During training, TcpTrainingServer handles Factory building directly step-by-step
+            return;
+        }
+
+        if (ns.Treasury < 5)
+        {
+            ns.HasBuiltThisTurn = true; // Nothing to build; nothing left to decide
+            return;
+        }
+
         var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation && t.CityType != CityType.None).ToList();
 
         var validCities = homeCities.Where(city =>
@@ -453,24 +466,21 @@ public class BotService
             return !hasHostileForeignArmy;
         }).ToList();
 
-        if (validCities.Any())
+        var chosenCityId = validCities.Any() ? strategy.ChooseCityForFactory(game, ns.Nation, validCities) : null;
+        if (chosenCityId != null)
         {
-            var chosenCityId = GetStrategy(controller).ChooseCityForFactory(game, ns.Nation, validCities);
-            if (chosenCityId != null)
+            var city = validCities.First(c => c.Id == chosenCityId);
+            var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
+            if (ts == null)
             {
-                var city = validCities.First(c => c.Id == chosenCityId);
-                var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
-                if (ts == null)
-                {
-                    ts = new TerritoryState { TerritoryId = city.Id, GameId = game.Id };
-                    AddTerritoryState(ctx, game, ts);
-                }
-                ns.Treasury -= 5;
-                ts.HasFactory = true;
-                ns.HasBuiltThisTurn = true;
-                GameLogger.LogFactoryBuild(ctx, game, city.Name, ns.Nation, controller.BotName ?? "Bot");
+                ts = new TerritoryState { TerritoryId = city.Id, GameId = game.Id };
+                AddTerritoryState(ctx, game, ts);
             }
+            ns.Treasury -= 5;
+            ts.HasFactory = true;
+            GameLogger.LogFactoryBuild(ctx, game, city.Name, ns.Nation, controller.BotName ?? "Bot");
         }
+        ns.HasBuiltThisTurn = true; // Resolved either way (built, or explicitly/implicitly skipped)
     }
 
     private async Task BotProduction(ApplicationDbContext? ctx, Game game, NationState ns)

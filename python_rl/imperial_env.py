@@ -20,8 +20,9 @@ class ImperialEnv(gym.Env):
         
         # Actions: 0-6=Rondel, 7=Fight, 8=Retreat, 9-62=BuyBond, 63=Pass, 64-125=Maneuver Select, 126=Maneuver DoNotMove,
         # 127-188=Maneuver Move, 189=DestroyFactory, 190=KeepFactory, 191=StopImport,
-        # 192-199=ImportPlace (4 home slots x [Army, Fleet], slot order = nation's home territories sorted by Id)
-        self.action_space = spaces.Discrete(200)
+        # 192-199=ImportPlace (4 home slots x [Army, Fleet], slot order = nation's home territories sorted by Id),
+        # 200=SkipFactoryBuild, 201-204=BuildFactory (4 home slots, same slot order)
+        self.action_space = spaces.Discrete(205)
         
         # State: 3164 floats
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(3164,), dtype=np.float32)
