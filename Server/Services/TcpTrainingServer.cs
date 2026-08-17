@@ -117,6 +117,7 @@ public class TcpTrainingServer : BackgroundService
         using (var writer = new StreamWriter(networkStream) { AutoFlush = true })
         {
             _logger.LogInformation("RL Client connected");
+            string? currentSessionId = null;
             try
             {
                 while (!stoppingToken.IsCancellationRequested)
@@ -130,10 +131,12 @@ public class TcpTrainingServer : BackgroundService
                     if (req.Command == "reset")
                     {
                         var res = await HandleResetAsync(req);
+                        currentSessionId = res.SessionId;
                         await writer.WriteLineAsync(JsonSerializer.Serialize(res));
                     }
                     else if (req.Command == "step")
                     {
+                        currentSessionId = req.SessionId;
                         var res = await HandleStepAsync(req);
                         if (res != null)
                         {
@@ -149,6 +152,20 @@ public class TcpTrainingServer : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling RL client");
+            }
+            finally
+            {
+                // If the connection drops mid-episode (crash, killed Python worker, any of the disconnects
+                // this session has been debugging) before the game reaches GameStatus.Finished, the normal
+                // cleanup path near the end of HandleStepAsync never runs. Without this, the orphaned
+                // TrainingSession (its whole in-memory Game graph) and that game's RLBotStrategy cache
+                // entries would leak for the life of the server process. TryRemove is a safe no-op if the
+                // session already cleaned itself up normally (the common case).
+                if (currentSessionId != null && _sessions.TryRemove(currentSessionId, out var orphanedSession))
+                {
+                    _botService.ClearStrategyCache(orphanedSession.Game.Players);
+                    _logger.LogWarning($"[RL DIAGNOSTIC] Cleaned up orphaned training session {currentSessionId} on disconnect (game never reached Finished).");
+                }
             }
             _logger.LogInformation("RL Client disconnected");
         }
@@ -1136,6 +1153,7 @@ public class TcpTrainingServer : BackgroundService
             var stateResponse = GetStateVector(game, session.RLPlayerId);
 
             _sessions.TryRemove(req.SessionId, out _);
+            _botService.ClearStrategyCache(game.Players);
             return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[RLBotStrategy.TotalActionSize] };
         }
 

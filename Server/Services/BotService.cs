@@ -53,6 +53,22 @@ public class BotService
                ?? new Bots.Strategies.DefaultBotStrategy(); // Fallback if not registered
     }
 
+    // Per-(type, player.Id) keying in GetStrategy fixes a cross-game data race (see comment above) but means
+    // _rlStrategies grows one entry per bot per training episode, since each RL_Training_ game mints fresh
+    // Player GUIDs on every reset. Call this whenever a training session ends (normally or via a dropped
+    // connection) to release that game's entries instead of leaking them for the life of the server process.
+    public void ClearStrategyCache(IEnumerable<Player> players)
+    {
+        foreach (var player in players)
+        {
+            var type = player.BotType ?? "Default";
+            if (type.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
+            {
+                _rlStrategies.TryRemove($"{type}:{player.Id}", out _);
+            }
+        }
+    }
+
     public void TriggerBotTurn(Guid gameId, int delayMs = BotDelayMs)
     {
         _ = Task.Run(async () =>
