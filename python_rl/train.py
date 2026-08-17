@@ -95,6 +95,11 @@ if __name__ == "__main__":
         vec_env = VecNormalize.load(VEC_NORM_PATH, vec_env)
         # We must disable training mode when not training, but here we ARE training
         vec_env.training = True
+        # A brief experiment at linear_schedule(1.5e-4, 2e-5) (~3.6x this) caused a sustained ep_rew_mean
+        # regression starting right at the resume step (tb_logs: -73 plateau -> steady decline to -141 over
+        # the next 1.2M steps, with approx_kl/clip_fraction both jumping ~2-3x at the same point) — too large
+        # an update for an already-partially-converged policy. Back to the last value that was stable
+        # (plateaued, not regressing).
         custom_objects = {
             "learning_rate": linear_schedule(6e-5, 2e-5),
             "n_steps": n_steps_per_env,
@@ -183,8 +188,16 @@ if __name__ == "__main__":
     print("Starting Training...")
     # Train for a larger number of timesteps.
     # It will automatically save every 5,000 steps to the current directory
-    TOTAL_TIMESTEPS = 10_000_000
-    
+    # Both the LR schedule above and EntCoefScheduleCallback below decay linearly as a fraction of this
+    # constant (num_timesteps / TOTAL_TIMESTEPS), and that fraction is CUMULATIVE across resumed runs
+    # (reset_num_timesteps=False). RL-3 hit ~84% of the original 10M here, meaning both LR and entropy
+    # were nearly fully decayed right around when RL-2 was added as an opponent (see tb_logs: ep_rew_mean
+    # regressed hard at step ~3M and never reclaimed its pre-regression peak over the following 5M+ steps).
+    # That's the schedules starving the agent of both step-size and exploration exactly when the harder
+    # opponent needed more of both. Raised to give real runway for both schedules to operate at
+    # meaningfully higher values again, rather than continuing to taper toward an already-reached floor.
+    TOTAL_TIMESTEPS = 20_000_000
+
     save_callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
     ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=INITIAL_ENT_COEF, final_ent_coef=FINAL_ENT_COEF, total_timesteps=TOTAL_TIMESTEPS)
     

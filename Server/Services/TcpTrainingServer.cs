@@ -708,7 +708,21 @@ public class TcpTrainingServer : BackgroundService
                         {
                             var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, session.ManeuverSelectedTerritoryId, unit.Nation);
                             var destInfo = destinations.FirstOrDefault(d => d.TerritoryId == target);
-                            if (destInfo.IsConvoy && destInfo.ConvoyFleets != null)
+                            if (destInfo == null)
+                            {
+                                // Chosen destination isn't among the freshly-recomputed reachable set (e.g. board
+                                // state shifted between when the mask was built and when this move resolves) —
+                                // root cause not yet confirmed. Logged at Error (not Warning) so it surfaces
+                                // the same way the crash this replaced did, since it's still worth tracking down:
+                                // the move itself (unit.TerritoryId = target above) already happened regardless,
+                                // but skipping convoy-fleet bookkeeping here means a fleet that convoyed this
+                                // army won't be marked HasConvoyed=true, which could let it convoy a second army
+                                // later this turn — a rules deviation, not just a cosmetic gap. Goes to both
+                                // console and the rolling log file (see nlog.config) — checkable on demand
+                                // instead of relying on catching one line scrolling past live.
+                                _logger.LogError($"[RL DIAGNOSTIC] Maneuver destination '{target}' for {unit.Nation} army not found among {destinations.Count} reachable destinations from '{session.ManeuverSelectedTerritoryId}' ({string.Join(", ", destinations.Select(d => d.TerritoryId))}).");
+                            }
+                            else if (destInfo.IsConvoy && destInfo.ConvoyFleets != null)
                             {
                                 foreach (var f in destInfo.ConvoyFleets) f.HasConvoyed = true;
                             }
