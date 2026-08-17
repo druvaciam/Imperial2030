@@ -96,7 +96,7 @@ if __name__ == "__main__":
         # We must disable training mode when not training, but here we ARE training
         vec_env.training = True
         custom_objects = {
-            "learning_rate": linear_schedule(5e-5, 1e-5),
+            "learning_rate": linear_schedule(6e-5, 2e-5),
             "n_steps": n_steps_per_env,
             "batch_size": 512,
             "clip_range": 0.2,
@@ -123,7 +123,7 @@ if __name__ == "__main__":
             "MlpPolicy",
             vec_env,
             policy_kwargs=policy_kwargs,
-            learning_rate=linear_schedule(5e-5, 1e-5),
+            learning_rate=linear_schedule(6e-5, 2e-5),
             n_steps=n_steps_per_env,
             batch_size=512,
             clip_range=0.2,

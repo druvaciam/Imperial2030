@@ -37,7 +37,15 @@ public class BotService
         // Handle RL bots dynamically
         if (type.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
         {
-            return _rlStrategies.GetOrAdd(type, t => new Bots.Strategies.RLBotStrategy(t));
+            // Keyed by (type, player.Id), not type alone: RLBotStrategy carries non-thread-safe per-decision
+            // caching state (_lastState/_cachedAction/_maneuverCache). Keying by type alone made every
+            // concurrent game with the same bot type (e.g. "RL-2") share one instance process-wide — harmless
+            // with a single training env (only one game steps at a time) but a genuine data race with
+            // multiple parallel envs, where two games' opponent-bot decisions could interleave on the same
+            // mutable fields and corrupt each other's cached action. The underlying ONNX InferenceSession
+            // stays shared via _sessionCache (keyed by model path) regardless, so this costs nothing extra.
+            var key = $"{type}:{player.Id}";
+            return _rlStrategies.GetOrAdd(key, _ => new Bots.Strategies.RLBotStrategy(type));
         }
 
         return _botStrategies.FirstOrDefault(s => s.Name.Equals(type, StringComparison.OrdinalIgnoreCase))

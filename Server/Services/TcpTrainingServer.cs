@@ -476,6 +476,8 @@ public class TcpTrainingServer : BackgroundService
         int expectedTaxBonus = 0;
         int expectedTaxRevenue = 0;
         int expectedTaxCosts = 0;
+        int expectedTaxTreasuryGain = 0;
+        int expectedTaxPowerGain = 0;
         bool isTaxationAction = false;
 
         if (preNs != null && preNs.ControllerId == session.RLPlayerId)
@@ -492,6 +494,8 @@ public class TcpTrainingServer : BackgroundService
                     isTaxationAction = true;
                     var taxPreview = Imperial2030.Server.Helpers.TaxationHelper.PreviewTaxation(game, preNs);
                     expectedTaxBonus = taxPreview.ExpectedBonus;
+                    expectedTaxTreasuryGain = taxPreview.ExpectedTreasuryGain;
+                    expectedTaxPowerGain = taxPreview.ExpectedPowerGain;
 
                     int factoryRevenue = 0;
                     var territoriesWithFactories = game.TerritoryStates.Where(ts => ts.HasFactory).ToList();
@@ -556,8 +560,8 @@ public class TcpTrainingServer : BackgroundService
                     // cycle Taxation/Investor instead. This is deliberately unconditional (unlike the destroy/occupy
                     // rewards below, which only pay out when it visibly hurts a specific leading rival) — growth is
                     // valuable to the acting nation on its own merits, not contingent on comparing to a rival's interest.
-                    explicitBonusReward += 3.0f;
-                    _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +3");
+                    explicitBonusReward += 5.0f;
+                    _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +5");
                 }
             }
 
@@ -952,6 +956,11 @@ public class TcpTrainingServer : BackgroundService
                 {
                     reward -= 5.0f; // Penalty if revenue < costs
                 }
+
+                if (expectedTaxTreasuryGain <= 0 && expectedTaxPowerGain == 0)
+                {
+                    reward -= 3.0f; // Penalty for a fully wasted Taxation turn: no treasury gain, no power gain
+                }
             }
         }
 
@@ -1044,6 +1053,38 @@ public class TcpTrainingServer : BackgroundService
                 reward -= 7.0f;
                 reward -= moveCost * 10.0f;
             }
+            // Production (slot 2 or 6) wasted: no existing factory can currently produce. Note that
+            // blockade alone can NEVER fully explain this: the game engine forbids hostile entry into a
+            // nation's last unoccupied factory (ManeuverController's "Cannot enter the last unoccupied
+            // factory hostilely" check), so at least one factory always stays unblockaded whenever the
+            // nation has any factory at all. So a fully wasted turn always requires that every currently
+            // unblockaded factory's unit type (army/fleet) is already at the nation's max cap — blockade
+            // can only ever narrow which *other* factories are unavailable when 2+ exist, never eliminate
+            // the last one. Production itself is free, so this isn't about affordability.
+            if (RondelData.IsProductionSlot(targetSlot) && preNs != null)
+            {
+                var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == preNs.Nation);
+                int currentArmies = game.Units.Count(u => u.Nation == preNs.Nation && u.UnitType == UnitType.Army);
+                int currentFleets = game.Units.Count(u => u.Nation == preNs.Nation && u.UnitType == UnitType.Fleet);
+                int maxArmies = NationData.GetMaxArmies(preNs.Nation);
+                int maxFleets = NationData.GetMaxFleets(preNs.Nation);
+
+                bool canProduceAnything = homeCities.Any(city =>
+                {
+                    var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
+                    if (ts == null || !ts.HasFactory) return false;
+                    bool isBlockaded = game.Units.Any(u => u.TerritoryId == city.Id && u.Nation != preNs.Nation && u.UnitType == UnitType.Army && u.IsHostile);
+                    if (isBlockaded) return false;
+                    return city.CityType == CityType.LightBlue ? currentFleets < maxFleets : currentArmies < maxArmies;
+                });
+
+                if (!canProduceAnything)
+                {
+                    _logger.LogWarning($"[RL PENALTY] Wasted Production action by {preNs.Nation}. No factory can produce (blockaded or at max unit cap). Cost: {moveCost}M");
+                    reward -= 10.0f;
+                    reward -= moveCost * 10.0f;
+                }
+            }
             // Maneuver (slot 3 or 7) with 0 units = wasted turn
             if (RondelData.IsManeuverSlot(targetSlot) && preNs != null)
             {
@@ -1122,7 +1163,23 @@ public class TcpTrainingServer : BackgroundService
                 if (ns != null && ns.ControllerId == rlPlayerId) return false;
             }
 
-            await TryPlayBotTurnAsync(g);
+            try
+            {
+                await TryPlayBotTurnAsync(g);
+            }
+            catch (Bots.Strategies.RlTrainingPauseException) { throw; }
+            catch (Exception ex)
+            {
+                // Every call here is for an OPPONENT bot's decision, never the RL trainee's own (the loop
+                // only reaches this line when the "it's the RL player's turn" exit checks above are false).
+                // Log rich context before it propagates and kills this TCP session/SubprocVecEnv worker, so
+                // an exact repro (bot type, nation, decision point) is available on the next occurrence
+                // instead of just a stack trace pointing at what may be a JIT-collapsed frame.
+                var actingNs = g.NationStates.FirstOrDefault(n => n.Nation == g.CurrentTurnNation);
+                var actingPlayer = g.Players.FirstOrDefault(p => p.Id == (g.ActingPlayerId ?? actingNs?.ControllerId));
+                _logger.LogError(ex, $"[RL DIAGNOSTIC] Opponent bot turn resolution threw. Nation={g.CurrentTurnNation}, ActingPlayerId={g.ActingPlayerId}, BotName={actingPlayer?.BotName}, BotType={actingPlayer?.BotType}, IsInvestorTurn={g.IsInvestorTurn}, PendingBattle={g.PendingBattleDefenders.Any()}, PendingSwissBankForce={g.PendingSwissBankForceNation}");
+                throw;
+            }
         }
         return true;
     }
@@ -1152,6 +1209,7 @@ public class TcpTrainingServer : BackgroundService
                 {
                     var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == nation.Nation).Select(t => t.Id).ToList();
                     float factoryScore = 0;
+                    int unoccupiedFactoryCount = 0;
 
                     foreach (var terrId in homeTerritories)
                     {
@@ -1161,7 +1219,7 @@ public class TcpTrainingServer : BackgroundService
                         if (ts != null && ts.HasFactory)
                         {
                             if (isOccupied) factoryScore += 0.02f; // Suppressed factory
-                            else factoryScore += 0.2f; // Healthy factory
+                            else { factoryScore += 0.2f; unoccupiedFactoryCount++; } // Healthy factory
                         }
                         else
                         {
@@ -1171,6 +1229,14 @@ public class TcpTrainingServer : BackgroundService
 
                     int flagCount = game.TerritoryStates.Count(t => t.Controller == nation.Nation);
                     int unitCount = game.Units.Count(u => u.Nation == nation.Nation);
+                    // Only reward units up to what the nation's economy can actually sustain (mirrors the
+                    // taxation revenue formula: 2M/unoccupied factory + 1M/flag), hard-capped at the nation's
+                    // real maximum unit count (armies + fleets, always 16 per NationData). Without this,
+                    // raw unit count was a free, uncapped reward for stockpiling idle units regardless of
+                    // whether they were ever used (real CalculateScore doesn't count units at all).
+                    int maxUnitCount = NationData.GetMaxArmies(nation.Nation) + NationData.GetMaxFleets(nation.Nation);
+                    int sustainableUnitCapacity = Math.Min(maxUnitCount, unoccupiedFactoryCount * 2 + flagCount);
+                    int usefulUnitCount = Math.Min(unitCount, sustainableUnitCapacity);
 
                     float denseFactor = (nation.Power / 5.0f);
 
@@ -1183,7 +1249,7 @@ public class TcpTrainingServer : BackgroundService
 
                         denseFactor += factoryScore
                                      + (flagCount * flagValue)
-                                     + (unitCount * 0.01f)
+                                     + (usefulUnitCount * 0.01f)
                                      + (nation.Treasury * 0.005f);
                     }
 
