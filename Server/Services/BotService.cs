@@ -562,6 +562,9 @@ public class BotService
         var fleets = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved).ToList();
         foreach (var fleet in fleets)
         {
+            // Captured before any mutation below — see GameLogger.LogUnitMove call sites for why this
+            // pre-move hostility snapshot is threaded through to the action log.
+            bool sourceWasHostile = fleet.IsHostile;
             if (!MapConnectivity.Adjacency.TryGetValue(fleet.TerritoryId, out var neighbors)) continue;
             var seaNeighbors = neighbors.Where(n =>
             {
@@ -614,12 +617,12 @@ public class BotService
                         }
                         else
                         {
-                            GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, target, nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, sourceWasHostile, target, nation, controller.BotName ?? "Bot");
                         }
                     }
                     else
                     {
-                        GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, target, nation, controller.BotName ?? "Bot");
+                        GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, sourceWasHostile, target, nation, controller.BotName ?? "Bot");
                     }
                     await BotUnitActionDelay(ctx, game);
                     continue;
@@ -686,7 +689,7 @@ public class BotService
 
                             if (enemyFleet != null)
                             {
-                                GameLogger.LogUnitMove(ctx, game, fleet.UnitType, originalTerritoryId, target, true, nation, controller.BotName ?? "Bot");
+                                GameLogger.LogUnitMove(ctx, game, fleet.UnitType, sourceWasHostile, originalTerritoryId, target, true, nation, controller.BotName ?? "Bot");
                                 RemoveUnit(ctx, game, fleet);
                                 RemoveUnit(ctx, game, enemyFleet);
                                 GameLogger.LogBattleDestruction(ctx, game, fleet.UnitType, targetNation, enemyFleet.UnitType, target, nation, controller.BotName ?? "Bot");
@@ -701,7 +704,7 @@ public class BotService
                             game.PendingBattleAggressorNation = nation;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, originalTerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, sourceWasHostile, originalTerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -711,7 +714,7 @@ public class BotService
                     }
                 }
 
-                GameLogger.LogUnitMove(ctx, game, UnitType.Fleet, originalTerritoryId, target, isHostileMove, nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Fleet, sourceWasHostile, originalTerritoryId, target, isHostileMove, nation, controller.BotName ?? "Bot");
                 await BotUnitActionDelay(ctx, game);
             }
         }
@@ -724,6 +727,9 @@ public class BotService
         var armies = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved).ToList();
         foreach (var army in armies)
         {
+            // Captured before any mutation below — see GameLogger.LogUnitMove call sites for why this
+            // pre-move hostility snapshot is threaded through to the action log.
+            bool sourceWasHostile = army.IsHostile;
             var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, army.TerritoryId, army.Nation);
             var convoyPaths = new Dictionary<string, List<Unit>>();
             var landNeighbors = new HashSet<string>();
@@ -765,12 +771,12 @@ public class BotService
                         }
                         else
                         {
-                            GameLogger.LogUnitStay(ctx, game, UnitType.Army, best, nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitStay(ctx, game, UnitType.Army, sourceWasHostile, best, nation, controller.BotName ?? "Bot");
                         }
                     }
                     else
                     {
-                        GameLogger.LogUnitStay(ctx, game, UnitType.Army, best, nation, controller.BotName ?? "Bot");
+                        GameLogger.LogUnitStay(ctx, game, UnitType.Army, sourceWasHostile, best, nation, controller.BotName ?? "Bot");
                     }
                     await BotUnitActionDelay(ctx, game);
                     continue;
@@ -846,7 +852,7 @@ public class BotService
 
                             if (enemyUnit != null)
                             {
-                                GameLogger.LogUnitMove(ctx, game, army.UnitType, originalTerritoryId, best, true, nation, controller.BotName ?? "Bot");
+                                GameLogger.LogUnitMove(ctx, game, army.UnitType, sourceWasHostile, originalTerritoryId, best, true, nation, controller.BotName ?? "Bot");
                                 RemoveUnit(ctx, game, army);
                                 RemoveUnit(ctx, game, enemyUnit);
                                 GameLogger.LogBattleDestruction(ctx, game, army.UnitType, targetNation, enemyUnit.UnitType, best, nation, controller.BotName ?? "Bot");
@@ -861,7 +867,7 @@ public class BotService
                             game.PendingBattleAggressorNation = nation;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -871,7 +877,7 @@ public class BotService
                     }
                 }
 
-                GameLogger.LogUnitMove(ctx, game, UnitType.Army, originalTerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot");
                 await BotUnitActionDelay(ctx, game);
             }
         }
@@ -906,7 +912,7 @@ public class BotService
         var armiesByTerritory = game.Units
             .Where(u => u.Nation == nation && u.UnitType == UnitType.Army)
             .GroupBy(u => u.TerritoryId)
-            .Where(g => g.Count() >= 3)
+            .Where(g => g.Count() >= ManeuverRules.DestroyFactoryArmyCost)
             .ToList();
 
         var candidates = new List<string>();
@@ -943,7 +949,8 @@ public class BotService
         return candidates;
     }
 
-    // Executes an already-decided factory destruction: sacrifices 3 armies of `nation` in `territoryId` and removes the factory
+    // Executes an already-decided factory destruction: sacrifices ManeuverRules.DestroyFactoryArmyCost
+    // armies of `nation` in `territoryId` and removes the factory
     public void ExecuteFactoryDestruction(ApplicationDbContext? ctx, Game game, string territoryId, Nation nation, Player controller)
     {
         var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == territoryId);
@@ -951,9 +958,9 @@ public class BotService
 
         var armiesToSacrifice = game.Units
             .Where(u => u.Nation == nation && u.UnitType == UnitType.Army && u.TerritoryId == territoryId)
-            .Take(3)
+            .Take(ManeuverRules.DestroyFactoryArmyCost)
             .ToList();
-        if (armiesToSacrifice.Count < 3) return;
+        if (armiesToSacrifice.Count < ManeuverRules.DestroyFactoryArmyCost) return;
 
         foreach (var army in armiesToSacrifice)
         {

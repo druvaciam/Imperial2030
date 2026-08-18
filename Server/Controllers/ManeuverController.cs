@@ -21,6 +21,13 @@ public class ManeuverController : ControllerBase
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
     private readonly Imperial2030.Server.Services.BotService _botService;
 
+    /// <summary>
+    /// When true, suppresses all SignalR broadcasts from this controller instance. Set by
+    /// GameReplayService while replaying actions (e.g. during ImportGame) so a large replay doesn't
+    /// spam every connected browser with GameUpdated/etc. events for a game they can't see yet.
+    /// </summary>
+    public bool SuppressBroadcasts { get; set; } = false;
+
     public ManeuverController(ApplicationDbContext context, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.BotService botService)
     {
         _context = context;
@@ -62,11 +69,16 @@ public class ManeuverController : ControllerBase
 
         if (unit.HasMoved) return BadRequest("Unit already moved.");
 
+        // Captured before any mutation below — this is the unit's hostility at its ORIGIN territory,
+        // used by GameReplayService to disambiguate which specific unit moved when several otherwise-
+        // identical units (same Nation/UnitType/FromTerritory) sit at the same origin.
+        bool sourceWasHostile = unit.IsHostile;
+
         if (unit.TerritoryId == request.DestinationId)
         {
             unit.HasMoved = true;
             _context.Entry(unit).State = EntityState.Modified;
-            GameLogger.LogUnitMove(_context, game, unit.UnitType, unit.TerritoryId, request.DestinationId, false, nation, User.Identity?.Name ?? "System");
+            GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, unit.TerritoryId, request.DestinationId, false, nation, User.Identity?.Name ?? "System");
             await _context.SaveChangesAsync();
             return Ok();
         }
@@ -184,7 +196,7 @@ public class ManeuverController : ControllerBase
 
             if (enemyFleet != null)
             {
-                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
+                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
                 // Destroy Both
                 _context.Units.Remove(unit);
                 _context.Units.Remove(enemyFleet);
@@ -215,7 +227,7 @@ public class ManeuverController : ControllerBase
 
                     if (enemyFleet != null)
                     {
-                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
+                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
                         // Destroy Both
                         _context.Units.Remove(unit);
                         _context.Units.Remove(enemyFleet);
@@ -232,7 +244,7 @@ public class ManeuverController : ControllerBase
                     game.PendingBattleDefenders = foreignFleets.ToList();
 
                     string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
-                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Fleet, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignFleets), nation, User.Identity?.Name ?? "System");
+                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Fleet, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignFleets), nation, User.Identity?.Name ?? "System");
                 }
             }
         }
@@ -241,13 +253,13 @@ public class ManeuverController : ControllerBase
         {
             // Only log standard move and TryAutoAdvance if there's no pending battle blocking the phase.
             // If Pending, advancement and standard logging is delayed.
-            GameLogger.LogUnitMove(_context, game, UnitType.Fleet, sourceTerritory, request.DestinationId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
+            GameLogger.LogUnitMove(_context, game, UnitType.Fleet, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
         }
         await UpdateTerritoryControl(game);
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
         if (game.PendingBattleDefenders.Any())
         {
@@ -313,7 +325,7 @@ public class ManeuverController : ControllerBase
         await TryAutoAdvanceManeuver(game, nation);
 
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
         return Ok();
     }
@@ -352,11 +364,16 @@ public class ManeuverController : ControllerBase
 
         if (unit.HasMoved) return BadRequest("Unit already moved.");
 
+        // Captured before any mutation below — this is the unit's hostility at its ORIGIN territory,
+        // used by GameReplayService to disambiguate which specific unit moved when several otherwise-
+        // identical units (same Nation/UnitType/FromTerritory) sit at the same origin.
+        bool sourceWasHostile = unit.IsHostile;
+
         if (unit.TerritoryId == request.DestinationId)
         {
             unit.HasMoved = true;
             _context.Entry(unit).State = EntityState.Modified;
-            GameLogger.LogUnitMove(_context, game, unit.UnitType, unit.TerritoryId, request.DestinationId, false, nation, User.Identity?.Name ?? "System");
+            GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, unit.TerritoryId, request.DestinationId, false, nation, User.Identity?.Name ?? "System");
             await _context.SaveChangesAsync();
             return Ok();
         }
@@ -496,7 +513,7 @@ public class ManeuverController : ControllerBase
 
             if (enemyUnit != null)
             {
-                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
+                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
                 // Destroy Both
                 _context.Units.Remove(unit);
                 _context.Units.Remove(enemyUnit);
@@ -527,7 +544,7 @@ public class ManeuverController : ControllerBase
 
                     if (enemyUnit != null)
                     {
-                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
+                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
                         // Destroy Both
                         _context.Units.Remove(unit);
                         _context.Units.Remove(enemyUnit);
@@ -544,20 +561,20 @@ public class ManeuverController : ControllerBase
                     game.PendingBattleDefenders = foreignDefenders.ToList();
 
                     string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
-                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Army, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignDefenders), nation, User.Identity?.Name ?? "System");
+                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignDefenders), nation, User.Identity?.Name ?? "System");
                 }
             }
         }
 
         if (!game.PendingBattleDefenders.Any())
         {
-            GameLogger.LogUnitMove(_context, game, UnitType.Army, sourceTerritory, request.DestinationId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
+            GameLogger.LogUnitMove(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
         }
         await UpdateTerritoryControl(game);
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
         if (game.PendingBattleDefenders.Any())
         {
@@ -601,7 +618,7 @@ public class ManeuverController : ControllerBase
         GameLogger.LogHostilityToggle(_context, game, unit.UnitType, unit.TerritoryId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
 
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
         return Ok();
     }
@@ -648,8 +665,8 @@ public class ManeuverController : ControllerBase
         bool hasDefenders = game.Units.Any(u => u.TerritoryId == request.TerritoryId && u.Nation == defenderNation);
         if (hasDefenders) return BadRequest("Cannot destroy factory while defenders are present.");
 
-        // 6. Check 3 Armies provided
-        if (request.UnitIds == null || request.UnitIds.Count != 3) return BadRequest("Must provide exactly 3 armies.");
+        // 6. Check the required number of armies were provided
+        if (request.UnitIds == null || request.UnitIds.Count != ManeuverRules.DestroyFactoryArmyCost) return BadRequest($"Must provide exactly {ManeuverRules.DestroyFactoryArmyCost} armies.");
 
         var attackingUnits = new List<Unit>();
         foreach (var uid in request.UnitIds)
@@ -694,7 +711,7 @@ public class ManeuverController : ControllerBase
         await TryAutoAdvanceManeuver(game, nation);
 
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
         return Ok();
     }
@@ -755,7 +772,7 @@ public class ManeuverController : ControllerBase
             GameLogger.LogEndManeuverPhase(_context, game, oldPhase.ToString(), nation, playerName);
 
             await _context.SaveChangesAsync();
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
             return Ok();
         }
@@ -822,7 +839,7 @@ public class ManeuverController : ControllerBase
                 game.Units.Remove(aggUnit);
 
                 GameLogger.LogBattleResponseDestruction(_context, game, respondingNation, myUnit.UnitType, aggressorNation, aggUnit.UnitType, territoryId, User.Identity?.Name ?? "System");
-                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} chose FIGHT against {aggressorNation}!", false);
+                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} chose FIGHT against {aggressorNation}!", false); }
             }
 
                 game.PendingBattleTerritoryId = null;
@@ -841,7 +858,7 @@ public class ManeuverController : ControllerBase
             game.PendingBattleDefenders = defenders;
             _context.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
             GameLogger.LogBattleResponsePeace(_context, game, respondingNation, game.PendingBattleAggressorNation.Value, game.PendingBattleTerritoryId, User.Identity?.Name ?? "System");
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} agreed to PEACE.", false);
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} agreed to PEACE.", false); }
 
             var territoryId = game.PendingBattleTerritoryId;
             var aggressorNation = game.PendingBattleAggressorNation.Value;
@@ -862,7 +879,7 @@ public class ManeuverController : ControllerBase
         }
         await UpdateTerritoryControl(game);
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
         if (game.PendingBattleDefenders.Any())
         {

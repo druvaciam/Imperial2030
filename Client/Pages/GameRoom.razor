@@ -391,7 +391,7 @@ else
                                 if (CanBuildFactory() && !alreadyBuilt) noActionsLeft = false;
                                 if (CanImport() && ns != null && !ns.HasImportedThisTurn) noActionsLeft = false;
                                 if (CanProduce()) noActionsLeft = false;
-                                if (ns?.RondelPosition == 3 || ns?.RondelPosition == 7)
+                                if (RondelData.IsManeuverSlot(ns?.RondelPosition ?? -1))
                                 {
                                     if (game.ManeuverState?.Phase != ManeuverPhase.None)
                                     {
@@ -1727,18 +1727,18 @@ else
             int current = ns.RondelPosition.Value;
             if (current == slotIndex) return; // Same slot, ignore
 
-            int dist = (slotIndex - current + 8) % 8;
-            if (dist > 6)
+            int dist = (slotIndex - current + RondelData.SlotCount) % RondelData.SlotCount;
+            if (dist > RondelData.MaxMoveDistance)
             {
-                _ = ShowToast("You cannot move more than 6 spaces on the rondel!", true);
+                _ = ShowToast($"You cannot move more than {RondelData.MaxMoveDistance} spaces on the rondel!", true);
                 return;
             }
 
-            if (dist > 3)
+            if (dist > RondelData.FreeMoveDistance)
             {
                 int powerFactor = ns.Power / 5;
                 int costPerStep = 1 + powerFactor;
-                cost = (dist - 3) * costPerStep;
+                cost = (dist - RondelData.FreeMoveDistance) * costPerStep;
             }
         }
 
@@ -1752,7 +1752,7 @@ else
         string warningMessage = string.Empty;
 
         // 1. Factory (Slot 1)
-        if (slotIndex == 1)
+        if (slotIndex == RondelData.FactorySlot)
         {
             if (ns.Treasury < 5)
             {
@@ -1769,7 +1769,7 @@ else
             }
         }
         // 2 & 6. Production
-        else if (slotIndex == 2 || slotIndex == 6)
+        else if (RondelData.IsProductionSlot(slotIndex))
         {
             var homeProvinces = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.Where(t => t.Nation == nation);
             var myFactories = game.Territories.Where(ts => homeProvinces.Any(hp => hp.Id == ts.TerritoryId) && ts.HasFactory);
@@ -1796,7 +1796,7 @@ else
             }
         }
         // 3 & 7. Maneuver
-        else if (slotIndex == 3 || slotIndex == 7)
+        else if (RondelData.IsManeuverSlot(slotIndex))
         {
             int myUnitsCount = game.Units.Count(u => u.Nation == nation);
             if (myUnitsCount == 0)
@@ -1805,7 +1805,7 @@ else
             }
         }
         // 4. Investor
-        else if (slotIndex == 4)
+        else if (slotIndex == RondelData.InvestorSlot)
         {
             var bondsForNation = game.Players.SelectMany(p => p.Bonds).Where(b => b.Nation == nation).ToList();
             int totalOwedToOthers = bondsForNation.Where(b => b.HolderName != MyPlayer?.UserName).Sum(b => b.Interest);
@@ -1817,7 +1817,7 @@ else
             }
         }
         // 5. Import
-        else if (slotIndex == 5)
+        else if (slotIndex == RondelData.ImportSlot)
         {
             if (ns.Treasury < 1)
             {
@@ -1939,8 +1939,7 @@ else
     {
         if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        // Assuming slot 1 is Factory
-        return ns?.RondelPosition == 1 && ns.Treasury >= 5;
+        return ns?.RondelPosition == RondelData.FactorySlot && ns.Treasury >= 5;
     }
 
     private List<Imperial2030.Shared.Models.Territory> GetValidFactoryTerritories()
@@ -1983,7 +1982,7 @@ else
     {
         if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        return ns?.RondelPosition == 0; // Slot 0 is Taxation
+        return ns?.RondelPosition == RondelData.TaxationSlot;
     }
 
     private async Task CollectTaxation()
@@ -2026,7 +2025,7 @@ else
     {
         if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        return (ns?.RondelPosition == 2 || ns?.RondelPosition == 6) && !ns.HasProducedThisTurn; // Slots 2 and 6 are Production
+        return RondelData.IsProductionSlot(ns?.RondelPosition ?? -1) && !ns.HasProducedThisTurn;
     }
 
     private async Task ExecuteProduction()
@@ -2086,7 +2085,7 @@ else
     {
         if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        return ns?.RondelPosition == 5 && !ns.HasImportedThisTurn && ns?.Treasury >= 1;
+        return ns?.RondelPosition == RondelData.ImportSlot && !ns.HasImportedThisTurn && ns?.Treasury >= 1;
     }
 
     private void AddImportUnit()
