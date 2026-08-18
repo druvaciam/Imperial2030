@@ -653,6 +653,87 @@ namespace Imperial2030.Tests
             }
         }
         [Fact]
+        public async Task MoveArmy_ThreeNationEncounter_OnlyCorrectDefenderCanRespond()
+        {
+            // Russia's army peacefully enters Beijing (China's home territory), where an India army is
+            // already sitting (itself a foreign occupier there). Per the rules, the nation whose units are
+            // already present (India) is the one offered the choice to fight the newcomer — not the
+            // territory's owner (China), who has zero units there. This reproduces a scenario observed live
+            // where a replay of this exact three-nation situation tried to authorize China's controller
+            // instead of India's and was incorrectly Forbidden.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+
+            var gameId = Guid.NewGuid();
+            var russiaPlayerId = Guid.NewGuid();
+            var chinaPlayerId = Guid.NewGuid();
+            var indiaPlayerId = Guid.NewGuid();
+            const string russiaUserId = "russia-user";
+            const string chinaUserId = "china-user";
+            const string indiaUserId = "india-user";
+
+            var game = new Game
+            {
+                Id = gameId,
+                Status = GameStatus.InProgress,
+                CurrentTurnNation = Nation.Russia,
+                CurrentManeuverPhase = ManeuverPhase.Armies,
+                Players = new List<Player>
+                {
+                    new Player { Id = russiaPlayerId, UserId = russiaUserId, GameId = gameId },
+                    new Player { Id = chinaPlayerId, UserId = chinaUserId, GameId = gameId },
+                    new Player { Id = indiaPlayerId, UserId = indiaUserId, GameId = gameId },
+                },
+                NationStates = new List<NationState>
+                {
+                    new NationState { Nation = Nation.Russia, ControllerId = russiaPlayerId, GameId = gameId },
+                    new NationState { Nation = Nation.China, ControllerId = chinaPlayerId, GameId = gameId },
+                    new NationState { Nation = Nation.India, ControllerId = indiaPlayerId, GameId = gameId },
+                },
+                Units = new List<Unit>(),
+                TerritoryStates = new List<TerritoryState>()
+            };
+
+            var russiaArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = "Vladivostok", HasMoved = false };
+            var indiaArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.India, UnitType = UnitType.Army, TerritoryId = "Beijing", IsHostile = true };
+            game.Units.Add(russiaArmy);
+            game.Units.Add(indiaArmy);
+
+            await context.Games.AddAsync(game);
+            await context.SaveChangesAsync();
+
+            var russiaController = GetController(context, russiaUserId);
+            var moveResult = await russiaController.MoveArmy(gameId, new MoveUnitRequest
+            {
+                UnitId = russiaArmy.Id,
+                DestinationId = "Beijing",
+                IsHostile = false // Peaceful entry so it doesn't auto-resolve, leaving India the choice to respond.
+            });
+
+            if (moveResult is Microsoft.AspNetCore.Mvc.BadRequestObjectResult badReq)
+            {
+                throw new Exception($"BadRequest: {badReq.Value}");
+            }
+            Assert.IsType<OkResult>(moveResult);
+
+            var updatedGame = await context.Games.FirstAsync(g => g.Id == gameId);
+            Assert.Equal("Beijing", updatedGame.PendingBattleTerritoryId);
+            Assert.Equal(Nation.Russia, updatedGame.PendingBattleAggressorNation);
+            Assert.Contains(Nation.India, updatedGame.PendingBattleDefenders);
+            Assert.DoesNotContain(Nation.China, updatedGame.PendingBattleDefenders); // China has no units here.
+
+            // The territory owner (China) has zero units present and must NOT be authorized to respond.
+            var chinaController = GetController(context, chinaUserId);
+            var chinaResult = await chinaController.BattleResponse(gameId, new BattleResponseRequest { IsFight = false });
+            Assert.IsType<ForbidResult>(chinaResult);
+
+            // India, whose army is the one actually present, is the correct responder and must be authorized.
+            var indiaController = GetController(context, indiaUserId);
+            var indiaResult = await indiaController.BattleResponse(gameId, new BattleResponseRequest { IsFight = false, Nation = Nation.India });
+            Assert.IsType<OkResult>(indiaResult);
+        }
+
+        [Fact]
         public async Task BattleResponse_Peace_UnitsSurvive()
         {
             // Arrange

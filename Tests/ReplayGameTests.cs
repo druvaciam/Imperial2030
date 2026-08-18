@@ -41,6 +41,263 @@ namespace Imperial2030.Tests
             return new ApplicationDbContext(options);
         }
 
+        private static void SetControllerUser(ControllerBase controller, string userId)
+        {
+            var httpContext = new DefaultHttpContext();
+            var claims = new List<Claim> { new Claim(ClaimTypes.NameIdentifier, userId) };
+            var identity = new ClaimsIdentity(claims, "TestAuthType");
+            httpContext.User = new ClaimsPrincipal(identity);
+            var routeData = new Microsoft.AspNetCore.Routing.RouteData();
+            var actionDescriptor = new Microsoft.AspNetCore.Mvc.Controllers.ControllerActionDescriptor();
+            var actionContext = new ActionContext(httpContext, routeData, actionDescriptor);
+            controller.ControllerContext = new ControllerContext(actionContext);
+        }
+
+        [Fact]
+        public async Task ReplayThreeNationBattle_DeterministicRepro()
+        {
+            // Directly constructs (no random bot play, so this reproduces every single run instead of
+            // waiting on a random full game to happen to hit it) the exact 3-nation encounter that broke
+            // replay intermittently: Russia peacefully enters Beijing (China's home territory) where an
+            // India army already sits. Runs the REAL MoveArmy/BattleResponse endpoints to generate real
+            // logged actions, then replays those exact actions through the same replay-injection logic
+            // TestReplayabilityFromActions uses (see its "MoveArmy"/"BattleResponse" cases), to check
+            // whether the replay path — not just the live controllers — handles it correctly.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            var mockClientProxy = new Mock<IClientProxy>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+            mockClients.Setup(c => c.All).Returns(mockClientProxy.Object);
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var mockServiceProvider = new Mock<IServiceProvider>();
+                var scopeContext = GetDbContext(dbName);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                return scope.Object;
+            });
+            var mockLogger = new Mock<Microsoft.Extensions.Logging.ILogger<BotService>>();
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object);
+            botService.SkipDelays = true;
+
+            var gameId = Guid.NewGuid();
+            var russiaPlayerId = Guid.NewGuid();
+            var chinaPlayerId = Guid.NewGuid();
+            var indiaPlayerId = Guid.NewGuid();
+            const string russiaUserId = "russia-user";
+            const string chinaUserId = "china-user";
+            const string indiaUserId = "india-user";
+            var forcedDistribution = new Dictionary<Nation, Guid>
+            {
+                { Nation.Russia, russiaPlayerId },
+                { Nation.China, chinaPlayerId },
+                { Nation.India, indiaPlayerId },
+            };
+
+            // --- Phase 1: Play the real scenario for real, generating real logged GameActions ---
+            context.Games.Add(new Game { Id = gameId, Name = "ThreeNationBattleTest_Original", Status = GameStatus.Lobby });
+            context.Players.AddRange(
+                new Player { Id = russiaPlayerId, GameId = gameId, UserId = russiaUserId, BotName = russiaUserId, IsHost = true },
+                new Player { Id = chinaPlayerId, GameId = gameId, UserId = chinaUserId, BotName = chinaUserId },
+                new Player { Id = indiaPlayerId, GameId = gameId, UserId = indiaUserId, BotName = indiaUserId });
+            await context.SaveChangesAsync();
+
+            await GameSetupHelper.InitializeGameAsync(context, gameId, forcedDistribution);
+            context.ChangeTracker.Clear();
+
+            var game = await context.Games.FirstAsync(g => g.Id == gameId);
+            game.Status = GameStatus.InProgress;
+            game.CurrentTurnNation = Nation.Russia;
+            game.CurrentManeuverPhase = ManeuverPhase.Armies;
+
+            var russiaArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = "Vladivostok", HasMoved = false };
+            var indiaArmy = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.India, UnitType = UnitType.Army, TerritoryId = "Beijing", IsHostile = true };
+            context.Units.AddRange(russiaArmy, indiaArmy);
+            await context.SaveChangesAsync();
+
+            var maneuverController = new ManeuverController(context, mockHub.Object, botService);
+
+            SetControllerUser(maneuverController, russiaUserId);
+            var moveResult = await maneuverController.MoveArmy(gameId, new MoveUnitRequest { UnitId = russiaArmy.Id, DestinationId = "Beijing", IsHostile = false });
+            if (moveResult is BadRequestObjectResult moveBad) throw new Exception($"Original MoveArmy failed: {moveBad.Value}");
+            Assert.IsType<OkResult>(moveResult);
+
+            SetControllerUser(maneuverController, indiaUserId);
+            var responseResult = await maneuverController.BattleResponse(gameId, new BattleResponseRequest { IsFight = false, Nation = Nation.India });
+            if (responseResult is BadRequestObjectResult respBad) throw new Exception($"Original BattleResponse failed: {respBad.Value}");
+            Assert.IsType<OkResult>(responseResult);
+
+            var originalActions = await context.GameActions.Where(a => a.GameId == gameId).OrderBy(a => a.OrderIndex).ToListAsync();
+            var moveAction = originalActions.First(a => a.ActionType == "MoveArmy");
+            var battleResponseAction = originalActions.First(a => a.ActionType == "BattleResponse");
+
+            // --- Phase 2: Fresh DB, reconstruct the same setup, replay just these two logged actions ---
+            string replayDbName = Guid.NewGuid().ToString();
+            var replayContext = GetDbContext(replayDbName);
+            replayContext.Games.Add(new Game { Id = gameId, Name = "ThreeNationBattleTest_Replay", Status = GameStatus.Lobby });
+            replayContext.Players.AddRange(
+                new Player { Id = russiaPlayerId, GameId = gameId, UserId = russiaUserId, BotName = russiaUserId, IsBot = false, IsHost = true },
+                new Player { Id = chinaPlayerId, GameId = gameId, UserId = chinaUserId, BotName = chinaUserId, IsBot = false },
+                new Player { Id = indiaPlayerId, GameId = gameId, UserId = indiaUserId, BotName = indiaUserId, IsBot = false });
+            await replayContext.SaveChangesAsync();
+
+            await GameSetupHelper.InitializeGameAsync(replayContext, gameId, forcedDistribution);
+            replayContext.ChangeTracker.Clear();
+
+            var replayGame = await replayContext.Games.FirstAsync(g => g.Id == gameId);
+            replayGame.Status = GameStatus.InProgress;
+            replayGame.CurrentTurnNation = Nation.Russia;
+            replayGame.CurrentManeuverPhase = ManeuverPhase.Armies;
+
+            var replayRussiaArmy = new Unit { Id = russiaArmy.Id, GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = "Vladivostok", HasMoved = false };
+            var replayIndiaArmy = new Unit { Id = indiaArmy.Id, GameId = gameId, Nation = Nation.India, UnitType = UnitType.Army, TerritoryId = "Beijing", IsHostile = true };
+            replayContext.Units.AddRange(replayRussiaArmy, replayIndiaArmy);
+            await replayContext.SaveChangesAsync();
+
+            var replayManeuverController = new ManeuverController(replayContext, mockHub.Object, botService);
+
+            // Replay "MoveArmy" exactly like TestReplayabilityFromActions's case for it.
+            var armyMeta = JsonSerializer.Deserialize<ActionMetadata>(moveAction.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            Assert.NotNull(armyMeta);
+            SetControllerUser(replayManeuverController, russiaUserId);
+            var replayMoveResult = await replayManeuverController.MoveArmy(gameId, new MoveUnitRequest { UnitId = replayRussiaArmy.Id, DestinationId = armyMeta!.ToTerritoryId, IsHostile = armyMeta.IsHostileMove ?? false });
+            if (replayMoveResult is ForbidResult) Assert.Fail("Replayed MoveArmy returned Forbid.");
+            if (replayMoveResult is BadRequestObjectResult replayMoveBad) throw new Exception($"Replayed MoveArmy returned BadRequest: {replayMoveBad.Value}");
+            Assert.IsType<OkResult>(replayMoveResult);
+
+            var afterReplayMove = await replayContext.Games.FirstAsync(g => g.Id == gameId);
+            Assert.Contains(Nation.India, afterReplayMove.PendingBattleDefenders);
+            Assert.DoesNotContain(Nation.China, afterReplayMove.PendingBattleDefenders);
+
+            // Replay "BattleResponse" exactly like TestReplayabilityFromActions's case for it — this is the
+            // exact call that returned Forbid intermittently in the wild.
+            SetControllerUser(replayManeuverController, indiaUserId);
+            var replayResponseResult = await replayManeuverController.BattleResponse(gameId, new BattleResponseRequest { IsFight = false, Nation = battleResponseAction.Nation });
+            if (replayResponseResult is ForbidResult) Assert.Fail($"Replayed BattleResponse returned Forbid. Expected Player: {battleResponseAction.PlayerName}, Nation: {battleResponseAction.Nation}.");
+            if (replayResponseResult is BadRequestObjectResult replayRespBad) throw new Exception($"Replayed BattleResponse returned BadRequest: {replayRespBad.Value}");
+            Assert.IsType<OkResult>(replayResponseResult);
+
+            var finalGame = await replayContext.Games.FirstAsync(g => g.Id == gameId);
+            Assert.Empty(finalGame.PendingBattleDefenders);
+            Assert.Null(finalGame.PendingBattleTerritoryId);
+        }
+
+        [Fact]
+        public async Task ReplayInvestmentControlChange_DeterministicRepro()
+        {
+            // Directly constructs (no random bot play, so this reproduces every single run) an Investment
+            // that transfers a nation's control: Player A starts controlling Russia via a 4M bond; Player B
+            // (the acting Investor-card holder) buys the 9M Russia bond, which — per UpdateNationController's
+            // highest-credit-sum rule — should hand control of Russia to Player B. Runs the real
+            // PerformInvestment endpoint to generate a real logged "Investment" action, then replays that
+            // exact action through the same replay-injection logic TestReplayabilityFromActions uses (see
+            // its "Investment" case), to check whether the replay path reproduces the control transfer.
+            // This is the leading remaining suspect for the intermittent replay "No factory here"/Forbid
+            // failures: if control transfer drifts from the original here, later actions (DestroyFactory,
+            // BattleResponse) that depend on "who currently controls this nation" would diverge downstream.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            var mockClientProxy = new Mock<IClientProxy>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+            mockClients.Setup(c => c.All).Returns(mockClientProxy.Object);
+
+            var mockPresenceTracker = new Mock<PresenceTracker>();
+            var store = new Mock<Microsoft.AspNetCore.Identity.IUserStore<ApplicationUser>>();
+            var mockUserManager = new Mock<Microsoft.AspNetCore.Identity.UserManager<ApplicationUser>>(store.Object, null, null, null, null, null, null, null, null);
+            var mockLogger = new Mock<Microsoft.Extensions.Logging.ILogger<BotService>>();
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var mockServiceProvider = new Mock<IServiceProvider>();
+                var scopeContext = GetDbContext(dbName);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                return scope.Object;
+            });
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object);
+            botService.SkipDelays = true;
+
+            var gameId = Guid.NewGuid();
+            var playerAId = Guid.NewGuid();
+            var playerBId = Guid.NewGuid();
+            const string playerAUserId = "player-a";
+            const string playerBUserId = "player-b";
+
+            // --- Phase 1: Play the real scenario for real, generating a real logged "Investment" action ---
+            context.Games.Add(new Game { Id = gameId, Name = "InvestmentControlChangeTest_Original", Status = GameStatus.InProgress, IsInvestorTurn = true, ActingPlayerId = playerBId });
+            context.Players.AddRange(
+                new Player { Id = playerAId, GameId = gameId, UserId = playerAUserId, BotName = playerAUserId, Cash = 2, IsHost = true },
+                new Player { Id = playerBId, GameId = gameId, UserId = playerBUserId, BotName = playerBUserId, Cash = 20 });
+            context.NationStates.Add(new NationState { Nation = Nation.Russia, GameId = gameId, ControllerId = playerAId, Treasury = 10 });
+            var russia4M = new Bond { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, Cost = 4, Interest = 2, HolderId = playerAId };
+            var russia9M = new Bond { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, Cost = 9, Interest = 4, HolderId = null };
+            context.Bonds.AddRange(russia4M, russia9M);
+            await context.SaveChangesAsync();
+
+            var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, new Mock<INotificationService>().Object);
+            SetControllerUser(gamesController, playerBUserId);
+
+            var investResult = await gamesController.PerformInvestment(gameId, new GamesController.InvestmentActionDto { ActionType = "Buy", BondId = russia9M.Id });
+            if (investResult is BadRequestObjectResult investBad) throw new Exception($"Original PerformInvestment failed: {investBad.Value}");
+            Assert.IsType<OkResult>(investResult);
+
+            var afterOriginalInvest = await context.NationStates.FirstAsync(n => n.GameId == gameId && n.Nation == Nation.Russia);
+            Assert.Equal(playerBId, afterOriginalInvest.ControllerId); // Sanity: control really did transfer in the original.
+
+            var investmentAction = await context.GameActions.Where(a => a.GameId == gameId && a.ActionType == "Investment").OrderBy(a => a.OrderIndex).FirstAsync();
+
+            // --- Phase 2: Fresh DB, reconstruct the same pre-investment setup, replay just this action ---
+            string replayDbName = Guid.NewGuid().ToString();
+            var replayContext = GetDbContext(replayDbName);
+            replayContext.Games.Add(new Game { Id = gameId, Name = "InvestmentControlChangeTest_Replay", Status = GameStatus.InProgress, IsInvestorTurn = true, ActingPlayerId = playerBId });
+            replayContext.Players.AddRange(
+                new Player { Id = playerAId, GameId = gameId, UserId = playerAUserId, BotName = playerAUserId, Cash = 2, IsBot = false, IsHost = true },
+                new Player { Id = playerBId, GameId = gameId, UserId = playerBUserId, BotName = playerBUserId, Cash = 20, IsBot = false });
+            replayContext.NationStates.Add(new NationState { Nation = Nation.Russia, GameId = gameId, ControllerId = playerAId, Treasury = 10 });
+            var replayRussia4M = new Bond { Id = russia4M.Id, GameId = gameId, Nation = Nation.Russia, Cost = 4, Interest = 2, HolderId = playerAId };
+            var replayRussia9M = new Bond { Id = russia9M.Id, GameId = gameId, Nation = Nation.Russia, Cost = 9, Interest = 4, HolderId = null };
+            replayContext.Bonds.AddRange(replayRussia4M, replayRussia9M);
+            await replayContext.SaveChangesAsync();
+
+            var replayGamesController = new GamesController(replayContext, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, new Mock<INotificationService>().Object);
+
+            // Replay "Investment" exactly like TestReplayabilityFromActions's case for it.
+            var invMeta = JsonSerializer.Deserialize<InvestmentMetadata>(investmentAction.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            Assert.NotNull(invMeta);
+            Enum.TryParse<Nation>(invMeta!.Nation, out var invNation);
+            var replayGame = await replayContext.Games.FirstAsync(g => g.Id == gameId);
+            var actualInvestingPlayer = replayContext.Players.FirstOrDefault(p => (p.BotName ?? p.UserId) == investmentAction.PlayerName || p.UserId == investmentAction.PlayerName)
+                ?? replayContext.Players.FirstOrDefault(p => p.Id == replayGame.ActingPlayerId);
+            Assert.NotNull(actualInvestingPlayer);
+            replayGame.ActingPlayerId = actualInvestingPlayer!.Id;
+            var replayBondToBuy = replayContext.Bonds.FirstOrDefault(b => b.GameId == gameId && b.Nation == invNation && b.Cost == invMeta.Cost && b.HolderId == null);
+            Assert.NotNull(replayBondToBuy);
+            await replayContext.SaveChangesAsync();
+
+            SetControllerUser(replayGamesController, actualInvestingPlayer.UserId!);
+            var replayInvestResult = await replayGamesController.PerformInvestment(gameId, new GamesController.InvestmentActionDto { ActionType = "Buy", BondId = replayBondToBuy!.Id });
+            if (replayInvestResult is ForbidResult) Assert.Fail($"Replayed Investment returned Forbid. Expected Player: {investmentAction.PlayerName}, ActingPlayerId matched: {actualInvestingPlayer.Id == replayGame.ActingPlayerId}.");
+            if (replayInvestResult is BadRequestObjectResult replayInvestBad) throw new Exception($"Replayed Investment returned BadRequest: {replayInvestBad.Value}");
+            Assert.IsType<OkResult>(replayInvestResult);
+
+            var afterReplayInvest = await replayContext.NationStates.FirstAsync(n => n.GameId == gameId && n.Nation == Nation.Russia);
+            Assert.Equal(playerBId, afterReplayInvest.ControllerId); // The actual bug check: did control transfer correctly on replay too?
+        }
+
         [Theory]
         [InlineData(2)]
         [InlineData(3)]
@@ -127,6 +384,7 @@ namespace Imperial2030.Tests
             var initialStateNationStates = await context.NationStates.AsNoTracking().Where(ns => ns.GameId == gameId).ToListAsync();
             var initialStateBonds = await context.Bonds.AsNoTracking().Where(b => b.GameId == gameId).ToListAsync();
             var initialStatePlayers = await context.Players.AsNoTracking().Where(p => p.GameId == gameId).ToListAsync();
+            var initialStateTerritoryStates = await context.TerritoryStates.AsNoTracking().Where(ts => ts.GameId == gameId).ToListAsync();
             var initialStateUnits = await context.Units.AsNoTracking().Where(u => u.GameId == gameId).ToListAsync();
 
             // 5. Convert players to bots and trigger bot turn to play full game
@@ -235,6 +493,15 @@ namespace Imperial2030.Tests
                 Assert.Equal(origP.Cash, reconP.Cash);
             }
 
+            var reconstructedTerritoryStates = await replayContext.TerritoryStates.AsNoTracking().Where(ts => ts.GameId == replayGameId).ToListAsync();
+            Assert.Equal(initialStateTerritoryStates.Count, reconstructedTerritoryStates.Count);
+            foreach (var origTs in initialStateTerritoryStates)
+            {
+                var matches = reconstructedTerritoryStates.Where(ts => ts.TerritoryId == origTs.TerritoryId).ToList();
+                Assert.True(matches.Count == 1, $"Territory '{origTs.TerritoryId}' has {matches.Count} TerritoryState rows in the replay setup (expected exactly 1).");
+                Assert.True(origTs.HasFactory == matches[0].HasFactory, $"Territory '{origTs.TerritoryId}': original HasFactory={origTs.HasFactory}, reconstructed HasFactory={matches[0].HasFactory}.");
+            }
+
             Assert.Empty(initialStateUnits); // No units exist before the first Production/Import action
 
             _output.WriteLine($"[TEST {totalPlayerCount}p] Setup reconstructed from action log matches the original exactly.");
@@ -249,6 +516,12 @@ namespace Imperial2030.Tests
             _output.WriteLine("Starting Replay");
             for (int i = 0; i < actions.Count; i++)
             {
+                // Unlike production (a fresh DI-scoped DbContext per HTTP request), this replay reuses one
+                // long-lived DbContext across all 800+ actions via the controllers constructed above. Clearing
+                // the change tracker each iteration prevents stale/detached entity state from a much earlier
+                // action leaking into a later, unrelated one's query results — the leading hypothesis for the
+                // intermittent "No factory here" divergence this loop was built to catch (see [DIAG] output).
+                replayContext.ChangeTracker.Clear();
                 var action = actions[i];
                 // Skip system actions that are consequences or just informational
                 if (action.ActionType == "JoinGame" || action.ActionType == "LeaveGame" || 
@@ -368,10 +641,18 @@ namespace Imperial2030.Tests
                                 replayContext.SaveChanges();
                             }
                             var armyMeta = JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                            var armyUnit = replayContext.Units.FirstOrDefault(u => u.GameId == replayGameId && u.Nation == action.Nation && u.TerritoryId == armyMeta.FromTerritoryId && u.UnitType == UnitType.Army && !u.HasMoved)
+                            var armyUnitExact = replayContext.Units.FirstOrDefault(u => u.GameId == replayGameId && u.Nation == action.Nation && u.TerritoryId == armyMeta.FromTerritoryId && u.UnitType == UnitType.Army && !u.HasMoved);
+                            var armyUnit = armyUnitExact
                                 ?? replayContext.Units.FirstOrDefault(u => u.GameId == replayGameId && u.Nation == action.Nation && u.TerritoryId == armyMeta.FromTerritoryId && u.UnitType == UnitType.Army)
                                 ?? replayContext.Units.FirstOrDefault(u => u.GameId == replayGameId && u.Nation == action.Nation && u.UnitType == UnitType.Army && !u.HasMoved)
                                 ?? replayContext.Units.FirstOrDefault(u => u.GameId == replayGameId && u.Nation == action.Nation && u.UnitType == UnitType.Army);
+                            if (armyUnit != null && armyUnit != armyUnitExact)
+                            {
+                                // The exact expected unit (right nation, right FROM territory, not yet moved this
+                                // turn) wasn't found — this fell back to a less-precise match, which is a strong
+                                // signal the board already diverged from the original before this action even ran.
+                                _output.WriteLine($"  [DIAG] MoveArmy fallback: no exact match for {action.Nation} army at '{armyMeta.FromTerritoryId}' (unmoved) — substituted unit {armyUnit.Id} currently at '{armyUnit.TerritoryId}' (HasMoved={armyUnit.HasMoved}) instead.");
+                            }
                             if (armyUnit != null)
                             {
                                 armyUnit.TerritoryId = armyMeta.FromTerritoryId;
@@ -772,13 +1053,51 @@ namespace Imperial2030.Tests
                     var replayGame = replayContext.Games.First(g => g.Id == replayGameId);
                     var allUnits = replayContext.Units.Where(u => u.GameId == replayGameId).ToList();
                     _output.WriteLine($"FAILED with {br.Value}. Units: {string.Join(", ", allUnits.Select(u => $"{u.UnitType} {u.Nation} in {u.TerritoryId} (Hostile={u.IsHostile})"))}");
+
+                    // Diagnostic for the intermittent "No factory here" DestroyFactory replay failure: trace
+                    // every Factory/DestroyFactory action against this exact territory from the ORIGINAL log
+                    // (in order), plus the replay's current TerritoryState for it, to distinguish "the build
+                    // for this territory never got replayed" from "this territory's factory was already
+                    // destroyed earlier in the replay" without needing another repro cycle.
+                    if ((action.ActionType == "Factory" || action.ActionType == "DestroyFactory") && !string.IsNullOrEmpty(action.Metadata))
+                    {
+                        var diagMeta = JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (diagMeta?.TerritoryId != null)
+                        {
+                            var history = actions.Where(a => (a.ActionType == "Factory" || a.ActionType == "DestroyFactory") && !string.IsNullOrEmpty(a.Metadata))
+                                .Select(a => new { a.OrderIndex, a.ActionType, a.PlayerName, Meta = JsonSerializer.Deserialize<ActionMetadata>(a.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) })
+                                .Where(x => x.Meta?.TerritoryId == diagMeta.TerritoryId)
+                                .ToList();
+                            _output.WriteLine($"  [DIAG] Original-log history for territory '{diagMeta.TerritoryId}' ({history.Count} entries): {string.Join(" | ", history.Select(h => $"#{h.OrderIndex} {h.ActionType} by {h.PlayerName}"))}");
+                            var diagTState = replayContext.TerritoryStates.FirstOrDefault(ts => ts.GameId == replayGameId && ts.TerritoryId == diagMeta.TerritoryId);
+                            _output.WriteLine($"  [DIAG] Replay's current TerritoryState for '{diagMeta.TerritoryId}': HasFactory={diagTState?.HasFactory}, this action's OrderIndex=#{action.OrderIndex}");
+                        }
+                    }
+
                     Assert.Fail($"Action {action.ActionType} ({action.Id}) returned BadRequest: {br.Value}");
                 }
                 if (result is ForbidResult || (result as StatusCodeResult)?.StatusCode == 403)
                 {
-                    var curGame = replayContext.Games.Include(g => g.Players).First(g => g.Id == replayGameId);
+                    var curGame = replayContext.Games.Include(g => g.Players).Include(g => g.NationStates).First(g => g.Id == replayGameId);
                     var curActPlayer = curGame.Players.FirstOrDefault(p => p.Id == curGame.ActingPlayerId);
-                    Assert.Fail($"Action {action.ActionType} ({action.Id}) returned Forbid. Expected Player: {action.PlayerName}, Actual ActingPlayer: {curActPlayer?.UserId ?? "null"} (ActingPlayerId: {curGame.ActingPlayerId})");
+
+                    // BattleResponse/Battle/SwissBankResponse don't authorize via ActingPlayerId at all (that's
+                    // Investment-only) — they check whether the calling user controls one of the pending battle's
+                    // defending nations. Printing ActingPlayerId for those is actively misleading (always shows
+                    // null/unrelated), so show the mechanism that's actually being checked instead.
+                    string extraDiag = "";
+                    if (action.ActionType == "BattleResponse" || action.ActionType == "Battle")
+                    {
+                        var defenderInfo = curGame.PendingBattleDefenders.Select(n =>
+                        {
+                            var ns = curGame.NationStates.FirstOrDefault(x => x.Nation == n);
+                            var ctrl = curGame.Players.FirstOrDefault(p => p.Id == ns?.ControllerId);
+                            return $"{n} (ControllerId={ns?.ControllerId}, ControllerUserId={ctrl?.UserId ?? "null"})";
+                        });
+                        extraDiag = $" PendingBattleTerritoryId={curGame.PendingBattleTerritoryId}, PendingBattleAggressorNation={curGame.PendingBattleAggressorNation}, PendingBattleDefenders=[{string.Join(", ", defenderInfo)}].";
+                    }
+
+                    Assert.Fail($"Action {action.ActionType} ({action.Id}) returned Forbid. Expected Player: {action.PlayerName}, Actual ActingPlayer: {curActPlayer?.UserId ?? "null"} (ActingPlayerId: {curGame.ActingPlayerId}).{extraDiag}");
                 }
                 if (result is UnauthorizedResult)
                 {

@@ -39,7 +39,7 @@ else
                 {
                     <span class="badge bg-warning text-dark ms-2">Variant: Tax Bonus</span>
                 }
-                @if (game.Status == GameStatus.InProgress && IsSinglePlayerGame())
+                @if (game.Status == GameStatus.InProgress && IsSinglePlayerGame() && MyPlayer != null)
                 {
                     <button class="btn btn-sm @(game.IsPaused ? "btn-warning" : "btn-outline-light") ms-3 px-3 py-0 d-inline-flex align-items-center gap-1 fw-bold shadow-sm"
                             style="height: 28px; border-radius: 6px;"
@@ -167,8 +167,8 @@ else
                                                       style="width: 10px; height: 10px; background-color: @(player.IsOnline ? (player.IsActiveInGame ? "#28a745" : "#ffc107") : "#dc3545");"
                                                       title="@(player.IsOnline ? (player.IsActiveInGame ? "In Game" : "Online") : "Offline")"></span>
                                 }
-                                        <span class="text-truncate" title="@player.UserName">@player.UserName</span>
-                                        <span class="ms-1 flex-shrink-0 fw-bold" style="font-size: 1.0em; white-space: nowrap; color: #ced4da;" title="Controlled Nations">@GetPlayerControlledNationsString(player)</span>
+                                        <span class="text-truncate" style="font-size: 0.85em;" title="@player.UserName">@player.UserName</span>
+                                        <span class="ms-1 flex-shrink-0 fw-bold" style="font-size: 0.85em; white-space: nowrap; color: #ced4da;" title="Controlled Nations">@GetPlayerControlledNationsString(player)</span>
                                     </span>
                                     <div class="d-flex align-items-center justify-content-end gap-1 flex-shrink-0">
                                         <span class="badge bg-warning text-dark position-relative" title="Cash">
@@ -562,8 +562,7 @@ else
                 </div>
             </div>
         }
-
-        @if (MyPlayer == null)
+        else if (MyPlayer == null)
         {
             <div class="turn-alert-wrapper">
                 <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(52, 152, 219, 0.95) 0%, rgba(41, 128, 185, 0.95) 100%); --alert-color: rgba(52, 152, 219, 0.95);">

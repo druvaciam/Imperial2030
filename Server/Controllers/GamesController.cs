@@ -44,8 +44,6 @@ public class GamesController : ControllerBase
         var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
         return await _context.Games
-            .Include(g => g.Players).ThenInclude(p => p.User)
-            .Include(g => g.NationStates)
             .OrderByDescending(g => g.CreatedAt)
             .Select(g => new GameDto
             {
@@ -1651,6 +1649,7 @@ public class GamesController : ControllerBase
             .Include(g => g.Bonds)
             .Include(g => g.Units)
             .Include(g => g.Actions)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -1761,6 +1760,7 @@ public class GamesController : ControllerBase
         var game = await _context.Games
             .Include(g => g.Players).ThenInclude(p => p.User)
             .Include(g => g.NationStates)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound("Game not found.");

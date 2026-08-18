@@ -156,6 +156,7 @@ namespace Imperial2030.Server.Services
                         .Include(g => g.Players).ThenInclude(p => p.User)
                         .Include(g => g.NationStates)
                         .Include(g => g.Bonds)
+                        .AsSplitQuery()
                         .FirstOrDefaultAsync(g => g.Id == game.Id);
 
                     if (fullGame != null)

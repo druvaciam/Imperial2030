@@ -37,6 +37,7 @@ public class TcpTrainingServer : BackgroundService
         // territory forever — this cap ensures each qualifying stack is asked at most once per turn.
         public HashSet<string> DecidedFactoryDestructionTerritoriesThisTurn { get; set; } = new();
         public int? PendingImportRemaining { get; set; } // Non-null while stepping through an Import decision sequence
+        public int ImportUnitsPlacedThisSequence { get; set; } = 0; // Tracks whether the current Import sequence placed anything, for the wasted-import-with-money penalty
 
         public int TotalSessionSteps { get; set; } = 0;
         public int LastTurnCount { get; set; } = -1;
@@ -601,6 +602,7 @@ public class TcpTrainingServer : BackgroundService
                     game.Units.Add(new Unit { GameId = game.Id, Nation = ns.Nation, TerritoryId = orderedHome[slotIndex].Id, UnitType = unitType, IsHostile = false });
                     ns.Treasury -= 1;
                     session.PendingImportRemaining--;
+                    session.ImportUnitsPlacedThisSequence++;
                 }
 
                 if (session.PendingImportRemaining <= 0)
@@ -611,7 +613,16 @@ public class TcpTrainingServer : BackgroundService
             }
             else
             {
-                // Stop action, or an invalid/unrecognized action for this stage — finalize either way
+                // Stop action, or an invalid/unrecognized action for this stage — finalize either way.
+                // This is the only path that can resolve the sequence with nothing placed (the "ran out of
+                // remaining slots" branch above can only be reached right after a successful placement), and
+                // the sequence only ever starts when treasury >= 1 (see where PendingImportRemaining is set),
+                // so reaching here with zero placed unambiguously means affordable Import got wasted entirely.
+                if (session.ImportUnitsPlacedThisSequence == 0)
+                {
+                    _logger.LogWarning($"[RL PENALTY] Wasted Import action by {ns.Nation}. Had money but imported 0 units.");
+                    explicitBonusReward -= 7.0f;
+                }
                 ns.HasImportedThisTurn = true;
                 session.PendingImportRemaining = null;
             }
@@ -697,6 +708,30 @@ public class TcpTrainingServer : BackgroundService
                                 if (defenderFactoryCount <= 1 && !isTargetOccupied)
                                 {
                                     isHostileMove = false;
+                                }
+                            }
+                        }
+
+                        // Penalize fully emptying a factory city's army garrison. Immediate rewards (flag
+                        // capture, hostile-clearing) are certain and dense; the risk of losing a factory to a
+                        // later hostile takeover is delayed and opponent-dependent, so without this the agent
+                        // has no counterweight and will happily strip a factory city's defenders for a nearby
+                        // flag grab (observed live: Russia emptied both Moscow armies to claim neutral Japan
+                        // right after Europe had just hostile-moved into Russia's other home city).
+                        if (unitType == UnitType.Army && target != session.ManeuverSelectedTerritoryId)
+                        {
+                            var originDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == session.ManeuverSelectedTerritoryId);
+                            if (originDef != null && originDef.Nation == unit.Nation)
+                            {
+                                var originTState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == session.ManeuverSelectedTerritoryId);
+                                if (originTState != null && originTState.HasFactory)
+                                {
+                                    bool remainingDefenders = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == session.ManeuverSelectedTerritoryId && u.Nation == unit.Nation && u.UnitType == UnitType.Army);
+                                    if (!remainingDefenders)
+                                    {
+                                        _logger.LogWarning($"[RL PENALTY] {unit.Nation} emptied its factory city '{session.ManeuverSelectedTerritoryId}' of army defenders by moving to '{target}'.");
+                                        explicitBonusReward -= 5.0f;
+                                    }
                                 }
                             }
                         }
@@ -791,6 +826,7 @@ public class TcpTrainingServer : BackgroundService
                 if (postMoveNs.Treasury >= 1)
                 {
                     session.PendingImportRemaining = Math.Min(RLBotStrategy.MaxImportUnits, postMoveNs.Treasury);
+                    session.ImportUnitsPlacedThisSequence = 0;
                 }
                 else
                 {
