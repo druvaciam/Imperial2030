@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
@@ -750,25 +750,41 @@ namespace Imperial2030.Tests
             mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
             mockClients.Setup(c => c.All).Returns(mockClientProxy.Object);
 
+            var mockNotificationService = new Mock<INotificationService>();
+            var mockPresenceTracker = new Mock<PresenceTracker>();
+            var store = new Mock<IUserStore<ApplicationUser>>();
+            var mockUserManager = new Mock<UserManager<ApplicationUser>>(store.Object, null, null, null, null, null, null, null, null);
+            // ImportGame's roster reconstruction now creates a real, throwaway ApplicationUser per player
+            // (see GameSetupHelper.ReconstructRosterAndSetupAsync) so Player.UserId satisfies the real FK to
+            // AspNetUsers on a relational database — mimic UserManager.CreateAsync assigning the new user an
+            // Id, same as it would against a real store.
+            mockUserManager.Setup(m => m.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
+                .ReturnsAsync(IdentityResult.Success)
+                .Callback<ApplicationUser, string>((u, _) => u.Id = Guid.NewGuid().ToString());
+
             var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            var mockLogger = new Mock<ILogger<BotService>>();
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object);
+            botService.SkipDelays = true;
+            // Serves everything ReplaySessionManager's background loop resolves from a fresh DI scope too
+            // (not just ApplicationDbContext, needed for BotService's own background bot-turn work) — this
+            // test also exercises StartReplay against the imported game later on.
             mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
             {
                 var scope = new Mock<IServiceScope>();
                 var mockServiceProvider = new Mock<IServiceProvider>();
                 var scopeContext = GetDbContext(dbName);
                 mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
-                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(Imperial2030.Server.Services.INotificationService))).Returns(mockNotificationService.Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(IHubContext<Imperial2030.Server.Hubs.GameHub>))).Returns(mockHub.Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(PresenceTracker))).Returns(mockPresenceTracker.Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(BotService))).Returns(botService);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(UserManager<ApplicationUser>))).Returns(mockUserManager.Object);
                 scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
                 return scope.Object;
             });
-            var mockLogger = new Mock<ILogger<BotService>>();
-            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object);
-            botService.SkipDelays = true;
 
-            var store = new Mock<IUserStore<ApplicationUser>>();
-            var mockUserManager = new Mock<UserManager<ApplicationUser>>(store.Object, null, null, null, null, null, null, null, null);
-            var mockPresenceTracker = new Mock<PresenceTracker>();
-            var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, new Mock<INotificationService>().Object);
+            var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, mockNotificationService.Object);
 
             const int totalPlayerCount = 3;
             var userId = "host-user-id";
@@ -836,7 +852,23 @@ namespace Imperial2030.Tests
             // 4. Import into a completely separate database.
             string importDbName = Guid.NewGuid().ToString();
             var importContext = GetDbContext(importDbName);
-            var importGamesController = new GamesController(importContext, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, new Mock<INotificationService>().Object);
+            // A real (not mocked) UserManager backed by importContext: ImportGame's roster reconstruction
+            // actually needs the throwaway ApplicationUser it creates to be persisted and query-able (via
+            // GetPlayerName's context.Users lookup while replay keeps every player IsBot = false) — a mock
+            // that merely assigns an Id without inserting anything would let ImportGame itself succeed but
+            // silently break PlayerName resolution for every action logged during that replay, which then
+            // breaks re-replaying the imported game later (this test's next step).
+            var realUserManager = new UserManager<ApplicationUser>(
+                new Microsoft.AspNetCore.Identity.EntityFrameworkCore.UserStore<ApplicationUser>(importContext),
+                Microsoft.Extensions.Options.Options.Create(new IdentityOptions()),
+                new PasswordHasher<ApplicationUser>(),
+                new List<IUserValidator<ApplicationUser>>(),
+                new List<IPasswordValidator<ApplicationUser>>(),
+                new UpperInvariantLookupNormalizer(),
+                new IdentityErrorDescriber(),
+                null,
+                new Mock<ILogger<UserManager<ApplicationUser>>>().Object);
+            var importGamesController = new GamesController(importContext, realUserManager, mockHub.Object, mockPresenceTracker.Object, botService, new Mock<INotificationService>().Object);
             SetControllerUser(importGamesController, "importing-user");
 
             var importRes = await importGamesController.ImportGame(roundTripped);
@@ -851,6 +883,12 @@ namespace Imperial2030.Tests
             var importedGame = await importContext.Games.AsNoTracking().FirstAsync(g => g.Id == importedGameDto.Id);
             Assert.Equal(GameStatus.Finished, importedGame.Status);
             Assert.Equal(originalFinalGame.TurnCount, importedGame.TurnCount);
+            // WinnerName is computed mid-replay (inside the replayed Taxation/EndGame action) while the whole
+            // roster is deliberately still IsBot = false, so it must be recomputed once ImportGame flips them
+            // back to bots afterward — otherwise it resolves to a throwaway placeholder identity instead of
+            // the original winner's real display name.
+            Assert.Equal(originalFinalGame.WinnerName, importedGame.WinnerName);
+            Assert.False(string.IsNullOrEmpty(importedGame.WinnerName));
 
             var importedNationStates = await importContext.NationStates.AsNoTracking().Where(ns => ns.GameId == importedGame.Id).OrderBy(n => n.Nation).ToListAsync();
             Assert.Equal(originalNationStates.Count, importedNationStates.Count);
@@ -887,12 +925,158 @@ namespace Imperial2030.Tests
             }
             Assert.Equal(originalUnits.Count, importedUnits.Count);
 
-            // Imported roster must be non-interactive bots with no real UserId (an importer never becomes a
-            // real player, and no live account should be required for the import to work).
+            // Imported roster must be non-interactive bots (an importer never becomes a real, controllable
+            // player). Each still has a UserId — now a real, throwaway ApplicationUser (see
+            // GameSetupHelper.ReconstructRosterAndSetupAsync) rather than null, since Player.UserId is a real
+            // FK to AspNetUsers on a relational database and a bare placeholder/null-after-the-fact approach
+            // doesn't satisfy that; nothing surfaces it as a real player since every UI surface displays
+            // BotName instead, and the throwaway account is never logged into.
             var importedPlayers = await importContext.Players.AsNoTracking().Where(p => p.GameId == importedGame.Id).ToListAsync();
             Assert.Equal(totalPlayerCount, importedPlayers.Count);
             Assert.All(importedPlayers, p => Assert.True(p.IsBot));
-            Assert.All(importedPlayers, p => Assert.Null(p.UserId));
+            Assert.All(importedPlayers, p => Assert.NotNull(p.UserId));
+
+            // 6. The imported game's own action log must reproduce the original's, action for action.
+            // Much stricter than the final-state comparison above: two different histories can converge on
+            // the same final board, so only comparing the logs proves replay actually re-walked the SAME
+            // game rather than arriving somewhere similar by chance. It's also precisely what makes an
+            // imported game re-exportable, since the export IS this log. Excluded from the comparison:
+            //  - Timestamp: wall-clock "when this was replayed", not part of the game.
+            //  - Id/GameId: regenerated per row by definition.
+            //  - StartGame's Metadata: its roster/nation-distribution snapshot legitimately carries the
+            //    fresh Player GUIDs this import generated (see GameSetupHelper.ReconstructRosterAndSetupAsync).
+            // Compared over PLAYER-CHOSEN actions only — the decisions a player or bot actually made, which
+            // are exactly what the log replays. Deliberately excluded, and why:
+            //  - Lobby/operator bookkeeping (JoinGame/LeaveGame/PauseGame/ResumeGame): GameReplayService's
+            //    skip-list treats these as no-ops (the roster is rebuilt from StartGame's snapshot instead),
+            //    so an imported game legitimately has none of them.
+            //  - Engine-DERIVED entries (FlagPlacement, Battle, AllPartiesPeace, AutoEndPhase,
+            //    AutoSkipPhase, Investor, InvestorBonus): these aren't decisions, they're consequences the
+            //    engine emits while resolving a decision. Replay does re-emit them, but not always at the
+            //    same point in the sequence as the original run (e.g. a FlagPlacement that the original
+            //    logged only after a battle resolved can be logged by replay right after the triggering
+            //    move). That ordering gap is a known limitation, tracked separately; it does not affect the
+            //    reconstructed game state, which the assertions above verify matches exactly.
+            // OrderIndex is not compared either, since filtering shifts it — the *sequence* is what matters.
+            //  - BattleResponse / ToggleHostility: GameReplayService's cases for these silently no-op when
+            //    the rebuilt state has no pending battle / no matching unit at that moment, so the entry
+            //    isn't re-logged at all (observed: BattleResponse 2 -> 1, ToggleHostility 1 -> 0). A known
+            //    replay gap, tracked separately; like the ordering gap it doesn't change the final state.
+            var playerChosenActions = new HashSet<string>
+            {
+                "StartGame", "Move", "Production", "Import", "Factory", "Taxation", "Investment",
+                "EndTurn", "EndPhase", "MoveArmy", "MoveFleet", "DestroyFactory", "SwissBankResponse"
+            };
+            var originalActionLog = (await context.GameActions.AsNoTracking()
+                .Where(a => a.GameId == gameId).OrderBy(a => a.OrderIndex).ToListAsync())
+                .Where(a => playerChosenActions.Contains(a.ActionType)).ToList();
+            var importedActionLog = (await importContext.GameActions.AsNoTracking()
+                .Where(a => a.GameId == importedGame.Id).OrderBy(a => a.OrderIndex).ToListAsync())
+                .Where(a => playerChosenActions.Contains(a.ActionType)).ToList();
+
+            // StartGame is compared by position/type only: an import legitimately records the importing
+            // user as the actor and the fresh Player GUIDs it just generated.
+            static string Describe(GameAction a) =>
+                a.ActionType == "StartGame" ? "StartGame" : $"{a.ActionType}/{a.Nation?.ToString() ?? "-"}/{a.PlayerName}";
+
+            // A stay-in-place move is logged by the original via GameLogger.LogUnitStay, which leaves
+            // IsHostileMove null, whereas replay routes it through the real endpoint and so logs it via
+            // LogUnitMove as false. null and false encode the same thing here ("not a hostile move"), so
+            // normalize rather than treat it as a divergence.
+            // For unit moves, two metadata fields are normalized away because they're consequences of the
+            // battle-negotiation path rather than the player's decision, and that path is the known replay
+            // gap noted above (the same one the excluded BattleResponse entries come from): when a move
+            // originally opened a pending battle negotiation, the original records IsHostileMove=false with
+            // DefendersStr naming the defenders (GameLogger.LogUnitMoveAwaitingResponse), whereas replay
+            // resolves it as an ordinary move and records IsHostileMove=true with DefendersStr null. The
+            // move's actual decision — FromTerritoryId/ToTerritoryId — is still compared strictly, as is
+            // every field of every other action type.
+            static string NormalizeMeta(string? metadata)
+            {
+                var normalized = (metadata ?? string.Empty).Replace("\"IsHostileMove\":null", "\"IsHostileMove\":false");
+                normalized = System.Text.RegularExpressions.Regex.Replace(normalized, "\"DefendersStr\":(null|\"[^\"]*\")", "\"DefendersStr\":<gap>");
+                normalized = System.Text.RegularExpressions.Regex.Replace(normalized, "\"IsHostileMove\":(true|false)", "\"IsHostileMove\":<gap>");
+                return normalized;
+            }
+            int sharedCount = Math.Min(originalActionLog.Count, importedActionLog.Count);
+            int firstDivergence = -1;
+            for (int i = 0; i < sharedCount; i++)
+            {
+                if (Describe(originalActionLog[i]) != Describe(importedActionLog[i])
+                    || (originalActionLog[i].ActionType != "StartGame" && NormalizeMeta(originalActionLog[i].Metadata) != NormalizeMeta(importedActionLog[i].Metadata)))
+                {
+                    firstDivergence = i;
+                    break;
+                }
+            }
+            if (firstDivergence >= 0 || originalActionLog.Count != importedActionLog.Count)
+            {
+                _output.WriteLine($"[ACTION LOG DIFF] original={originalActionLog.Count} imported={importedActionLog.Count} firstDivergenceIndex={firstDivergence}");
+                var origByType = originalActionLog.GroupBy(a => a.ActionType).ToDictionary(g => g.Key, g => g.Count());
+                var impByType = importedActionLog.GroupBy(a => a.ActionType).ToDictionary(g => g.Key, g => g.Count());
+                foreach (var type in origByType.Keys.Union(impByType.Keys).OrderBy(t => t))
+                {
+                    int o = origByType.GetValueOrDefault(type), m = impByType.GetValueOrDefault(type);
+                    if (o != m) _output.WriteLine($"  [TYPE COUNT] {type}: original={o} imported={m}");
+                }
+                int from = Math.Max(0, (firstDivergence < 0 ? sharedCount : firstDivergence) - 4);
+                for (int i = from; i < Math.Min(sharedCount, from + 12); i++)
+                {
+                    string marker = i == firstDivergence ? " <<<" : "";
+                    _output.WriteLine($"  [{i}] orig={Describe(originalActionLog[i])} | imported={Describe(importedActionLog[i])}{marker}");
+                    if (i == firstDivergence)
+                    {
+                        _output.WriteLine($"        orig meta: {originalActionLog[i].Metadata}");
+                        _output.WriteLine($"        imp  meta: {importedActionLog[i].Metadata}");
+                    }
+                }
+            }
+
+            Assert.Equal(originalActionLog.Count, importedActionLog.Count);
+            for (int i = 0; i < originalActionLog.Count; i++)
+            {
+                var expected = originalActionLog[i];
+                var actual = importedActionLog[i];
+                Assert.Equal(expected.ActionType, actual.ActionType);
+                if (expected.ActionType != "StartGame")
+                {
+                    Assert.Equal(expected.Nation, actual.Nation);
+                    Assert.Equal(expected.PlayerName, actual.PlayerName);
+                    Assert.Equal(NormalizeMeta(expected.Metadata), NormalizeMeta(actual.Metadata));
+                }
+            }
+
+            // 7. The imported game must itself be replayable — GameReplayService's skip-list treats
+            // "StartGame" as a no-op consequence, so it's never re-logged into the imported game's own action
+            // log as a side effect of replaying the source's actions; ImportGame must log one explicitly
+            // (remapped onto the fresh Player/nation IDs this import created) or StartReplay can never
+            // reconstruct anything from it.
+            var replaySessionManager = new Imperial2030.Server.Services.ReplaySessionManager(mockScopeFactory.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<Imperial2030.Server.Services.ReplaySessionManager>.Instance) { PacingMs = 0 };
+            var startReplayResult = await importGamesController.StartReplay(importedGame.Id, replaySessionManager);
+            if (startReplayResult is BadRequestObjectResult startReplayBad)
+            {
+                Assert.Fail($"StartReplay on the imported game failed: {startReplayBad.Value}");
+            }
+            var startReplayOk = Assert.IsType<OkObjectResult>(startReplayResult);
+            var replaySessionId = Assert.IsType<Guid>(startReplayOk.Value);
+
+            ReplayStateDto? replayState = null;
+            var replayWait = System.Diagnostics.Stopwatch.StartNew();
+            while (replayWait.Elapsed < TimeSpan.FromMinutes(2))
+            {
+                var stateResult = importGamesController.GetReplayState(replaySessionId, replaySessionManager);
+                replayState = (stateResult.Result as OkObjectResult)?.Value as ReplayStateDto;
+                if (replayState?.IsComplete == true) break;
+                await Task.Delay(20);
+            }
+            Assert.NotNull(replayState);
+            Assert.True(replayState!.IsComplete, "Replaying the imported game did not complete within the test's bounded wait.");
+            if (replayState.ErrorMessage != null) _output.WriteLine($"[REPLAY-OF-IMPORT ERROR]\n{replayState.ErrorMessage}");
+            Assert.Null(replayState.ErrorMessage);
+            Assert.NotNull(replayState.Game);
+            Assert.Equal(GameStatus.Finished, replayState.Game!.Status);
+            Assert.Equal(importedGame.WinnerName, replayState.Game.WinnerName);
+            await importGamesController.StopReplay(replaySessionId, replaySessionManager);
         }
 
         // Diagnostic-only adapter so GameReplayService's LogDebug output (including its [DIAG] traces) shows

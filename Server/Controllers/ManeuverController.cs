@@ -78,7 +78,7 @@ public class ManeuverController : ControllerBase
         {
             unit.HasMoved = true;
             _context.Entry(unit).State = EntityState.Modified;
-            GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, unit.TerritoryId, request.DestinationId, false, nation, User.Identity?.Name ?? "System");
+            GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, unit.TerritoryId, request.DestinationId, false, nation, controller.GetPlayerName(_context));
             await _context.SaveChangesAsync();
             return Ok();
         }
@@ -128,6 +128,13 @@ public class ManeuverController : ControllerBase
 
         // Determine if the fleet will engage in battle
         bool willFight = false;
+        // Set true by the auto-resolve branches below, which already destroy the mover and log both its
+        // move and the resulting Battle themselves — without this guard the unconditional logging block
+        // further down (which exists for the normal non-battle move case) fires AGAIN for the same move,
+        // producing a second, spurious log entry for a unit that no longer exists. Harmless for live
+        // rendering (nothing reconstructs state from the log), but replay (GameReplayService) takes the
+        // log literally and fails trying to move a unit that was destroyed in the battle it just replayed.
+        bool moveAlreadyLogged = false;
         var destDefForBattle = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
         bool isForeignHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value != nation;
         bool isMyHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value == nation;
@@ -190,19 +197,24 @@ public class ManeuverController : ControllerBase
         {
             var targetNation = request.BattleTargetNation.Value;
             // Find a fleet of target nation in destination
-            var enemyFleet = game.Units.FirstOrDefault(u =>
-                u.TerritoryId == request.DestinationId &&
-                u.Nation == targetNation);
+            // BattleTargetUnitType pins the exact unit type when set. Only GameReplayService ever sets it
+            // (from the already-logged Battle action's own DefenderUnitType, looked up ahead of time) —
+            // live play never populates it, so this branch's original any-unit candidate set is unchanged
+            // for real games. See the matching comment on MoveArmy's equivalent branch.
+            var enemyFleet = request.BattleTargetUnitType.HasValue
+                ? game.Units.FirstOrDefault(u => u.TerritoryId == request.DestinationId && u.Nation == targetNation && u.UnitType == request.BattleTargetUnitType.Value)
+                : game.Units.FirstOrDefault(u => u.TerritoryId == request.DestinationId && u.Nation == targetNation);
 
             if (enemyFleet != null)
             {
-                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
+                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, controller.GetPlayerName(_context));
                 // Destroy Both
                 _context.Units.Remove(unit);
                 _context.Units.Remove(enemyFleet);
                 game.Units.Remove(unit);
                 game.Units.Remove(enemyFleet);
-                GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyFleet.UnitType, request.DestinationId, nation, User.Identity?.Name ?? "System");
+                GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyFleet.UnitType, request.DestinationId, nation, controller.GetPlayerName(_context));
+                moveAlreadyLogged = true;
             }
         }
         else
@@ -227,13 +239,14 @@ public class ManeuverController : ControllerBase
 
                     if (enemyFleet != null)
                     {
-                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
+                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, controller.GetPlayerName(_context));
                         // Destroy Both
                         _context.Units.Remove(unit);
                         _context.Units.Remove(enemyFleet);
                         game.Units.Remove(unit);
                         game.Units.Remove(enemyFleet);
-                        GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyFleet.UnitType, request.DestinationId, nation, User.Identity?.Name ?? "System");
+                        GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyFleet.UnitType, request.DestinationId, nation, controller.GetPlayerName(_context));
+                        moveAlreadyLogged = true;
                     }
                 }
                 else
@@ -244,7 +257,7 @@ public class ManeuverController : ControllerBase
                     game.PendingBattleDefenders = foreignFleets.ToList();
 
                     string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
-                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Fleet, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignFleets), nation, User.Identity?.Name ?? "System");
+                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Fleet, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignFleets), nation, controller.GetPlayerName(_context));
                 }
             }
         }
@@ -253,7 +266,10 @@ public class ManeuverController : ControllerBase
         {
             // Only log standard move and TryAutoAdvance if there's no pending battle blocking the phase.
             // If Pending, advancement and standard logging is delayed.
-            GameLogger.LogUnitMove(_context, game, UnitType.Fleet, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
+            if (!moveAlreadyLogged)
+            {
+                GameLogger.LogUnitMove(_context, game, UnitType.Fleet, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, nation, controller.GetPlayerName(_context));
+            }
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
         }
@@ -319,7 +335,7 @@ public class ManeuverController : ControllerBase
         game.Units.Remove(unit);
         game.Units.Remove(enemyUnit);
 
-        GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyUnit.UnitType, unit.TerritoryId, nation, User.Identity?.Name ?? "System");
+        GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyUnit.UnitType, unit.TerritoryId, nation, controller.GetPlayerName(_context));
 
         await UpdateTerritoryControl(game);
         await TryAutoAdvanceManeuver(game, nation);
@@ -373,7 +389,7 @@ public class ManeuverController : ControllerBase
         {
             unit.HasMoved = true;
             _context.Entry(unit).State = EntityState.Modified;
-            GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, unit.TerritoryId, request.DestinationId, false, nation, User.Identity?.Name ?? "System");
+            GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, unit.TerritoryId, request.DestinationId, false, nation, controller.GetPlayerName(_context));
             await _context.SaveChangesAsync();
             return Ok();
         }
@@ -443,6 +459,9 @@ public class ManeuverController : ControllerBase
 
         // Determine if the unit will engage in battle (and thus be destroyed)
         bool willFight = false;
+        // See the matching comment in MoveFleet — guards against double-logging the same move when an
+        // auto-resolve battle branch below already logged it (and the battle) before destroying the unit.
+        bool moveAlreadyLogged = false;
         var destDefForBattle = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
         bool isForeignHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value != nation;
         bool isMyHome = destDefForBattle != null && destDefForBattle.Nation.HasValue && destDefForBattle.Nation.Value == nation;
@@ -507,19 +526,23 @@ public class ManeuverController : ControllerBase
         if (request.BattleTargetNation.HasValue)
         {
             var targetNation = request.BattleTargetNation.Value;
-            var enemyUnit = game.Units.FirstOrDefault(u =>
-                u.TerritoryId == request.DestinationId &&
-                u.Nation == targetNation);
+            // BattleTargetUnitType pins the exact unit type when set — only GameReplayService ever sets it
+            // (from the already-logged Battle action's own DefenderUnitType), so live play (which never
+            // populates it) keeps this branch's original any-unit candidate set unchanged.
+            var enemyUnit = request.BattleTargetUnitType.HasValue
+                ? game.Units.FirstOrDefault(u => u.TerritoryId == request.DestinationId && u.Nation == targetNation && u.UnitType == request.BattleTargetUnitType.Value)
+                : game.Units.FirstOrDefault(u => u.TerritoryId == request.DestinationId && u.Nation == targetNation);
 
             if (enemyUnit != null)
             {
-                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
+                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, controller.GetPlayerName(_context));
                 // Destroy Both
                 _context.Units.Remove(unit);
                 _context.Units.Remove(enemyUnit);
                 game.Units.Remove(unit);
                 game.Units.Remove(enemyUnit);
-                GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyUnit.UnitType, request.DestinationId, nation, User.Identity?.Name ?? "System");
+                GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyUnit.UnitType, request.DestinationId, nation, controller.GetPlayerName(_context));
+                moveAlreadyLogged = true;
             }
         }
         else
@@ -544,13 +567,14 @@ public class ManeuverController : ControllerBase
 
                     if (enemyUnit != null)
                     {
-                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, User.Identity?.Name ?? "System");
+                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, controller.GetPlayerName(_context));
                         // Destroy Both
                         _context.Units.Remove(unit);
                         _context.Units.Remove(enemyUnit);
                         game.Units.Remove(unit);
                         game.Units.Remove(enemyUnit);
-                        GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyUnit.UnitType, request.DestinationId, nation, User.Identity?.Name ?? "System");
+                        GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyUnit.UnitType, request.DestinationId, nation, controller.GetPlayerName(_context));
+                        moveAlreadyLogged = true;
                     }
                 }
                 else
@@ -561,14 +585,17 @@ public class ManeuverController : ControllerBase
                     game.PendingBattleDefenders = foreignDefenders.ToList();
 
                     string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
-                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignDefenders), nation, User.Identity?.Name ?? "System");
+                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignDefenders), nation, controller.GetPlayerName(_context));
                 }
             }
         }
 
         if (!game.PendingBattleDefenders.Any())
         {
-            GameLogger.LogUnitMove(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
+            if (!moveAlreadyLogged)
+            {
+                GameLogger.LogUnitMove(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, nation, controller.GetPlayerName(_context));
+            }
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
         }
@@ -615,7 +642,7 @@ public class ManeuverController : ControllerBase
 
         unit.IsHostile = !unit.IsHostile;
 
-        GameLogger.LogHostilityToggle(_context, game, unit.UnitType, unit.TerritoryId, unit.IsHostile, nation, User.Identity?.Name ?? "System");
+        GameLogger.LogHostilityToggle(_context, game, unit.UnitType, unit.TerritoryId, unit.IsHostile, nation, controller.GetPlayerName(_context));
 
         await _context.SaveChangesAsync();
         if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
@@ -706,7 +733,7 @@ public class ManeuverController : ControllerBase
         // Remove Factory
         tState.HasFactory = false;
 
-        GameLogger.LogFactoryDestruction(_context, game, tState.TerritoryId, nation, User.Identity?.Name ?? "System");
+        GameLogger.LogFactoryDestruction(_context, game, tState.TerritoryId, nation, controller.GetPlayerName(_context));
 
         await TryAutoAdvanceManeuver(game, nation);
 
@@ -818,6 +845,14 @@ public class ManeuverController : ControllerBase
             ? request.Nation.Value
             : respondingNations.First();
 
+        // User.Identity?.Name is never populated by GameReplayService's replay auth context (it only sets
+        // NameIdentifier), so "?? System"/"?? Human" silently fired on every replay, poisoning the logged
+        // PlayerName with a value that can never re-resolve to a real Player on a later replay of this
+        // game's own log. GetPlayerName resolves the actual controlling player/bot, same as the other
+        // logging call sites in this controller.
+        var respondingController = game.Players.FirstOrDefault(p => p.Id == game.NationStates.First(ns => ns.Nation == respondingNation).ControllerId);
+        string respondingPlayerName = respondingController?.GetPlayerName(_context) ?? GameConstants.SystemPlayerName;
+
         if (request.IsFight)
         {
             // Fight triggers immediately!
@@ -838,7 +873,7 @@ public class ManeuverController : ControllerBase
                 game.Units.Remove(myUnit);
                 game.Units.Remove(aggUnit);
 
-                GameLogger.LogBattleResponseDestruction(_context, game, respondingNation, myUnit.UnitType, aggressorNation, aggUnit.UnitType, territoryId, User.Identity?.Name ?? "System");
+                GameLogger.LogBattleResponseDestruction(_context, game, respondingNation, myUnit.UnitType, aggressorNation, aggUnit.UnitType, territoryId, respondingPlayerName);
                 if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} chose FIGHT against {aggressorNation}!", false); }
             }
 
@@ -857,7 +892,7 @@ public class ManeuverController : ControllerBase
             defenders.Remove(respondingNation);
             game.PendingBattleDefenders = defenders;
             _context.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
-            GameLogger.LogBattleResponsePeace(_context, game, respondingNation, game.PendingBattleAggressorNation.Value, game.PendingBattleTerritoryId, User.Identity?.Name ?? "System");
+            GameLogger.LogBattleResponsePeace(_context, game, respondingNation, game.PendingBattleAggressorNation.Value, game.PendingBattleTerritoryId, respondingPlayerName);
             if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} agreed to PEACE.", false); }
 
             var territoryId = game.PendingBattleTerritoryId;
@@ -866,7 +901,7 @@ public class ManeuverController : ControllerBase
             if (!game.PendingBattleDefenders.Any() || !game.Units.Any(u => u.TerritoryId == territoryId && u.Nation == aggressorNation))
             {
                 // Everyone agreed to peace or aggressor eliminated
-                GameLogger.LogAllPartiesPeace(_context, game, territoryId, "System");
+                GameLogger.LogAllPartiesPeace(_context, game, territoryId, GameConstants.SystemPlayerName);
 
                 game.PendingBattleTerritoryId = null;
                 game.PendingBattleAggressorNation = null;
@@ -889,6 +924,18 @@ public class ManeuverController : ControllerBase
         return Ok();
     }
 
+    // The player who controls `nation` — the actor a maneuver-phase event belongs to. Deliberately NOT
+    // game.ActingPlayerId: that's only populated during an Investor phase, so during a maneuver phase it's
+    // null and Players.FirstOrDefault(...) returned null, which GetPlayerName renders as the literal
+    // "Unknown" (visible in the command log as `Unknown USA auto-ended Armies maneuver phase`). Affects live
+    // play too, not just replay.
+    private string ResolveNationControllerName(Game game, Nation nation)
+    {
+        var controllerId = game.NationStates.FirstOrDefault(ns => ns.Nation == nation)?.ControllerId;
+        var controller = controllerId.HasValue ? game.Players.FirstOrDefault(p => p.Id == controllerId.Value) : null;
+        return controller?.GetPlayerName(_context) ?? GameConstants.SystemPlayerName;
+    }
+
     private async Task TryAutoAdvanceManeuver(Game game, Nation nation)
     {
         if (game.CurrentManeuverPhase == ManeuverPhase.Fleets)
@@ -898,8 +945,7 @@ public class ManeuverController : ControllerBase
             {
                 await UpdateTerritoryControl(game);
                 game.CurrentManeuverPhase = ManeuverPhase.Armies;
-                string playerName = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId).GetPlayerName(_context);
-                GameLogger.LogAutoEndManeuverPhase(_context, game, "Fleets", nation, playerName);
+                GameLogger.LogAutoEndManeuverPhase(_context, game, "Fleets", nation, ResolveNationControllerName(game, nation));
             }
         }
 
@@ -910,8 +956,7 @@ public class ManeuverController : ControllerBase
             {
                 await UpdateTerritoryControl(game);
                 game.CurrentManeuverPhase = ManeuverPhase.None;
-                string playerName = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId).GetPlayerName(_context);
-                GameLogger.LogAutoEndManeuverPhase(_context, game, "Armies", nation, playerName);
+                GameLogger.LogAutoEndManeuverPhase(_context, game, "Armies", nation, ResolveNationControllerName(game, nation));
             }
         }
 
@@ -967,19 +1012,25 @@ public class ManeuverController : ControllerBase
                     {
                         var oldController = tState.Controller;
                         int flagCount = game.TerritoryStates.Count(ts => ts.Controller == firstNation);
+                        // This helper runs for whichever nation's units triggered it, not necessarily the
+                        // caller's own — User.Identity?.Name is both wrong in spirit here and, during
+                        // replay, always null (GameReplayService's auth context only sets NameIdentifier),
+                        // so it silently mislogged every automatic flag placement as "System".
+                        var firstNationControllerId = game.NationStates.FirstOrDefault(ns => ns.Nation == firstNation)?.ControllerId;
+                        var firstNationPlayerName = game.Players.FirstOrDefault(p => p.Id == firstNationControllerId)?.GetPlayerName(_context) ?? GameConstants.SystemPlayerName;
 
                         if (flagCount >= 15)
                         {
                             if (oldController != null)
                             {
                                 tState.Controller = null;
-                                GameLogger.LogTerritoryControlChange(_context, game, territoryDef.Name, oldController, null, User.Identity?.Name ?? "System");
+                                GameLogger.LogTerritoryControlChange(_context, game, territoryDef.Name, oldController, null, firstNationPlayerName);
                             }
                         }
                         else
                         {
                             tState.Controller = firstNation;
-                            GameLogger.LogTerritoryControlChange(_context, game, territoryDef.Name, oldController, firstNation, User.Identity?.Name ?? "System");
+                            GameLogger.LogTerritoryControlChange(_context, game, territoryDef.Name, oldController, firstNation, firstNationPlayerName);
                         }
                     }
                 }

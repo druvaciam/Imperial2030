@@ -1,4 +1,5 @@
-using Imperial2030.Server.Models;
+﻿using Imperial2030.Server.Models;
+using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 using System;
 using System.Linq;
@@ -112,7 +113,7 @@ public static class TaxationHelper
 
         int powerGain = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
         nationState.Power += powerGain;
-        if (nationState.Power > 25) nationState.Power = 25;
+        if (nationState.Power > GameConstants.MaxPowerPoints) nationState.Power = GameConstants.MaxPowerPoints;
 
         nationState.PreviousTaxRevenue = nationState.TaxRevenue;
         nationState.TaxRevenue = totalTaxRevenue;

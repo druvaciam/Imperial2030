@@ -1,6 +1,7 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Imperial2030.Server.Controllers;
 using Imperial2030.Server.Data;
+using Imperial2030.Server.Helpers;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
@@ -211,10 +212,36 @@ public class GameReplayService
         catch { return null; }
     }
 
+    /// <summary>
+    /// Looks one action ahead in the log for the "Battle" entry that a MoveArmy/MoveFleet at
+    /// <paramref name="currentIndex"/> would auto-resolve into (same destination territory, this mover's
+    /// nation as aggressor). When found, its DefenderNation/DefenderUnitType are exactly what the original
+    /// game recorded as destroyed — feeding them back into the replayed move via
+    /// BattleTargetNation/BattleTargetUnitType makes the live endpoint target that same specific unit
+    /// instead of letting its own (deliberately unconstrained — the rules give this choice to the attacking
+    /// player, not yet exposed as a UI/bot decision) auto-resolve pick arbitrarily among several candidates.
+    /// This only ever affects replay: live play never has this lookahead available or needed.
+    /// </summary>
+    private static (Nation DefenderNation, UnitType? DefenderUnitType)? FindAutoResolvedBattleTarget(
+        IReadOnlyList<GameActionDto> actions, int currentIndex, string destinationTerritoryId, Nation moverNation)
+    {
+        if (currentIndex + 1 >= actions.Count) return null;
+        var next = actions[currentIndex + 1];
+        if (next.ActionType != "Battle") return null;
+        var bm = TryDeserialize<ActionMetadata>(next.Metadata);
+        if (bm == null || bm.TerritoryId != destinationTerritoryId || bm.AggressorNation != moverNation || !bm.DefenderNation.HasValue) return null;
+        return (bm.DefenderNation.Value, bm.DefenderUnitType);
+    }
+
     public async Task<GameReplayResult> ReplayActionsAsync(
         ApplicationDbContext context, Guid gameId,
         GamesController gamesController, ManeuverController maneuverController,
-        IReadOnlyList<GameActionDto> actions, bool suppressBroadcasts = false)
+        IReadOnlyList<GameActionDto> actions, bool suppressBroadcasts = false,
+        // Invoked once per action with (action, index, wasSkipped). wasSkipped is true for the informational
+        // entries the skip-list below treats as no-ops — they advance the index but change no state, so a
+        // paced viewer (ReplaySessionManager) can advance past them instantly instead of spending a full
+        // beat showing nothing.
+        Func<GameActionDto, int, bool, Task>? onActionReplayed = null)
     {
         var replayGameId = gameId;
 
@@ -262,6 +289,7 @@ public class GameReplayService
                     action.ActionType == "StartGame" ||
                     action.ActionType == "Investor" || action.ActionType == "InvestorBonus")
                 {
+                    if (onActionReplayed != null) await onActionReplayed(action, i, true);
                     continue;
                 }
 
@@ -274,7 +302,7 @@ public class GameReplayService
 
                 if (action.ActionType == "Investment")
                 {
-                    actingPlayer = context.Players.FirstOrDefault(p => (p.BotName ?? p.UserId) == action.PlayerName || p.UserId == action.PlayerName);
+                    actingPlayer = context.Players.FirstOrDefault(p => p.GameId == replayGameId && ((p.BotName ?? p.UserId) == action.PlayerName || p.UserId == action.PlayerName));
                     if (actingPlayer != null && currentGameState.ActingPlayerId != actingPlayer.Id)
                     {
                         var gToUpdate = context.Games.First(g => g.Id == replayGameId);
@@ -284,7 +312,7 @@ public class GameReplayService
                 }
                 else if (action.ActionType == "SwissBankResponse" || action.ActionType == "Battle" || action.ActionType == "BattleResponse")
                 {
-                    actingPlayer = context.Players.FirstOrDefault(p => (p.BotName ?? p.UserId) == action.PlayerName || p.UserId == action.PlayerName);
+                    actingPlayer = context.Players.FirstOrDefault(p => p.GameId == replayGameId && ((p.BotName ?? p.UserId) == action.PlayerName || p.UserId == action.PlayerName));
                 }
                 else if (action.Nation.HasValue)
                 {
@@ -299,7 +327,7 @@ public class GameReplayService
                 // Fallback: match by PlayerName
                 if (actingPlayer == null)
                 {
-                    actingPlayer = context.Players.FirstOrDefault(p => (p.BotName ?? p.UserId) == action.PlayerName || p.UserId == action.PlayerName);
+                    actingPlayer = context.Players.FirstOrDefault(p => p.GameId == replayGameId && ((p.BotName ?? p.UserId) == action.PlayerName || p.UserId == action.PlayerName));
                 }
 
                 if (actingPlayer != null)
@@ -413,7 +441,11 @@ public class GameReplayService
                                 // Snapshot immediately around the live endpoint call so any unit its auto-combat
                                 // destroys can be handed to the following logged "Battle" action (see that case).
                                 var unitsBeforeArmyMove = SnapshotUnits(context, replayGameId);
-                                result = await maneuverController.MoveArmy(replayGameId, new MoveUnitRequest { UnitId = armyUnit.Id, DestinationId = armyMeta.ToTerritoryId, IsHostile = armyMeta.IsHostileMove ?? false });
+                                var armyBattleTarget = FindAutoResolvedBattleTarget(actions, i, armyMeta.ToTerritoryId, action.Nation!.Value);
+                                result = await maneuverController.MoveArmy(replayGameId, new MoveUnitRequest {
+                                    UnitId = armyUnit.Id, DestinationId = armyMeta.ToTerritoryId, IsHostile = armyMeta.IsHostileMove ?? false,
+                                    BattleTargetNation = armyBattleTarget?.DefenderNation, BattleTargetUnitType = armyBattleTarget?.DefenderUnitType
+                                });
                                 RecordMoveCombatDestructions(context, replayGameId, unitsBeforeArmyMove, armyMeta.ToTerritoryId, destroyedByCurrentMove);
                                 if (result is BadRequestObjectResult)
                                 {
@@ -495,7 +527,11 @@ public class GameReplayService
                                 // Snapshot immediately around the live endpoint call so any unit its auto-combat
                                 // destroys can be handed to the following logged "Battle" action (see that case).
                                 var unitsBeforeFleetMove = SnapshotUnits(context, replayGameId);
-                                result = await maneuverController.MoveFleet(replayGameId, new MoveUnitRequest { UnitId = fleetUnit.Id, DestinationId = fleetMeta.ToTerritoryId, IsHostile = fleetMeta.IsHostileMove ?? false });
+                                var fleetBattleTarget = FindAutoResolvedBattleTarget(actions, i, fleetMeta.ToTerritoryId, action.Nation!.Value);
+                                result = await maneuverController.MoveFleet(replayGameId, new MoveUnitRequest {
+                                    UnitId = fleetUnit.Id, DestinationId = fleetMeta.ToTerritoryId, IsHostile = fleetMeta.IsHostileMove ?? false,
+                                    BattleTargetNation = fleetBattleTarget?.DefenderNation, BattleTargetUnitType = fleetBattleTarget?.DefenderUnitType
+                                });
                                 RecordMoveCombatDestructions(context, replayGameId, unitsBeforeFleetMove, fleetMeta.ToTerritoryId, destroyedByCurrentMove);
                                 if (result is BadRequestObjectResult)
                                 {
@@ -545,6 +581,11 @@ public class GameReplayService
                             if (unit != null) {
                                 unit.IsHostile = hostMeta.IsHostile;
                                 context.SaveChanges();
+                                // See the matching comment on the "Production"/"Import" cases: without this,
+                                // a later replay of the replay target's own action log has no record that
+                                // this unit's hostility flag changed.
+                                var hostGame = context.Games.First(g => g.Id == replayGameId);
+                                GameLogger.LogHostilityToggle(context, hostGame, hostMeta.UnitType, hostMeta.TerritoryId, hostMeta.IsHostile, action.Nation!.Value, action.PlayerName);
                             }
                             result = new OkResult();
                             break;
@@ -617,7 +658,20 @@ public class GameReplayService
                             // its still-present counterpart must still be removed, not left stranded on the board.
                             if (aggUnit != null) context.Units.Remove(aggUnit);
                             if (defUnit != null) context.Units.Remove(defUnit);
-                            if (aggUnit != null || defUnit != null) context.SaveChanges();
+                            if (aggUnit != null || defUnit != null)
+                            {
+                                context.SaveChanges();
+                                // Only when this case actually performed a removal — if it was fully
+                                // auto-resolved by the preceding move (aggressorAlreadyDestroyed AND
+                                // defenderAlreadyDestroyed), the endpoint that did that already called
+                                // GameLogger.LogBattleDestruction itself as a natural side effect; logging it
+                                // again here would duplicate that entry. See the matching comment on the
+                                // "Production"/"Import" cases for why the replay target's own log needs this
+                                // at all (a later replay of THAT game's log has to reconstruct these
+                                // destructions from somewhere).
+                                var battleGame = context.Games.First(g => g.Id == replayGameId);
+                                GameLogger.LogBattleDestruction(context, battleGame, bMeta.UnitType ?? UnitType.Army, bMeta.DefenderNation.Value, bMeta.DefenderUnitType ?? UnitType.Army, bMeta.TerritoryId, bMeta.AggressorNation.Value, action.PlayerName);
+                            }
                             result = new OkResult();
                             break;
 
@@ -630,6 +684,11 @@ public class GameReplayService
                                 {
                                     fpTerr.Controller = fpMeta.NewController;
                                     context.SaveChanges();
+                                    // See the matching comment on the "Production"/"Import" cases: without
+                                    // this, a later replay of the replay target's own action log has no
+                                    // record that this territory's control changed hands.
+                                    var fpGame = context.Games.First(g => g.Id == replayGameId);
+                                    GameLogger.LogTerritoryControlChange(context, fpGame, fpMeta.TerritoryId, fpMeta.OldController, fpMeta.NewController, action.PlayerName);
                                 }
                             }
                             result = new OkResult();
@@ -667,6 +726,12 @@ public class GameReplayService
                                         IsHostile = false
                                     });
                                 }
+                                // Without this, the replay target's OWN action log has no record of where
+                                // these units came from — harmless for a one-off replay/import, but it means
+                                // THAT game's log is no longer internally self-consistent, so a LATER replay
+                                // of it (e.g. "Start Replay" on an already-imported game) has nothing to
+                                // reconstruct these units from and fails as soon as one of them needs to move.
+                                GameLogger.LogProduction(context, prodGame, prodMeta.Units.Count, prodMeta.Units.Select(u => (u.UnitType, u.TerritoryId)), prodGame.CurrentTurnNation, action.PlayerName);
                             }
                             context.SaveChanges();
                             result = new OkResult();
@@ -686,16 +751,16 @@ public class GameReplayService
                             var oldPower = taxNs.Power;
                             var oldTreasury = taxNs.Treasury;
                             var oldTaxRevenue = taxNs.TaxRevenue;
-                            if (taxMeta != null && oldPower + taxMeta.PowerGain >= 25)
+                            if (taxMeta != null && oldPower + taxMeta.PowerGain >= GameConstants.MaxPowerPoints)
                             {
-                                taxNs.Power = 25;
+                                taxNs.Power = GameConstants.MaxPowerPoints;
                             }
                             context.SaveChanges();
                             result = await gamesController.ExecuteTaxation(replayGameId);
                             if (taxMeta != null)
                             {
-                                taxNs.Power = Math.Min(25, oldPower + taxMeta.PowerGain);
-                                taxGame.Status = (taxNs.Power >= 25) ? GameStatus.Finished : GameStatus.InProgress;
+                                taxNs.Power = Math.Min(GameConstants.MaxPowerPoints, oldPower + taxMeta.PowerGain);
+                                taxGame.Status = (taxNs.Power >= GameConstants.MaxPowerPoints) ? GameStatus.Finished : GameStatus.InProgress;
                                 int withRevenue = oldTreasury + taxMeta.TotalRevenue;
                                 int actualPay = Math.Min(withRevenue, taxMeta.SoldiersPay);
                                 int afterPay = withRevenue - actualPay;
@@ -828,7 +893,7 @@ public class GameReplayService
                             if (invMeta != null && invMeta.Cost > 0)
                             {
                                 Enum.TryParse<Nation>(invMeta.Nation, out var invNation);
-                                var actualInvestingPlayer = context.Players.FirstOrDefault(p => (p.BotName ?? p.UserId) == action.PlayerName || p.UserId == action.PlayerName)
+                                var actualInvestingPlayer = context.Players.FirstOrDefault(p => p.GameId == replayGameId && ((p.BotName ?? p.UserId) == action.PlayerName || p.UserId == action.PlayerName))
                                     ?? context.Players.FirstOrDefault(p => p.Id == invGame.ActingPlayerId);
                                 if (actualInvestingPlayer != null)
                                 {
@@ -943,6 +1008,10 @@ public class GameReplayService
                                     };
                                     context.Units.Add(newUnit);
                                 }
+                                // See the matching comment in the "Production" case above — without this, a
+                                // later replay of the replay target's OWN action log has no record of where
+                                // these units came from.
+                                GameLogger.LogImport(context, impGame, impMeta.Units.Count, impMeta.Units.Select(u => (u.UnitType, u.TerritoryId)), impGame.CurrentTurnNation, action.PlayerName);
                             }
                             context.SaveChanges();
                             result = new OkResult();
@@ -1036,6 +1105,8 @@ public class GameReplayService
 
                 var postReplayGame = context.Games.First(g => g.Id == replayGameId);
                 _logger.LogDebug($"  -> IsInvestorTurn={postReplayGame.IsInvestorTurn}, Pending={postReplayGame.PendingInvestorIdsJson}");
+
+                if (onActionReplayed != null) await onActionReplayed(action, i, false);
             }
 
             return new GameReplayResult { Success = true };

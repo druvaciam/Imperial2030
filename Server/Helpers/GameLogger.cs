@@ -84,18 +84,11 @@ public static class GameLogger
             var controller = game.Players.FirstOrDefault(p => p.Id == controllerId);
             if (controller != null)
             {
-                if (controller.IsBot)
-                {
-                    actualPlayerName = controller.BotName ?? "Bot";
-                }
-                else if (context != null)
-                {
-                    var user = context.Users.FirstOrDefault(u => u.Id == controller.UserId);
-                    if (user != null && !string.IsNullOrEmpty(user.UserName))
-                    {
-                        actualPlayerName = user.UserName;
-                    }
-                }
+                // GetPlayerName checks BotName before IsBot. The previous inline IsBot-gated lookup fell
+                // through to the AspNetUsers row during replay/import (where players are deliberately kept
+                // IsBot = false), stamping the throwaway "import-<guid>" account name into the log instead
+                // of the real player — which also made an imported game's log differ from the original's.
+                actualPlayerName = controller.GetPlayerName(context);
             }
         }
 

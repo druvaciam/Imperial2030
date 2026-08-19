@@ -36,6 +36,7 @@ builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Im
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.RandomBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.BotService>();
 builder.Services.AddScoped<Imperial2030.Server.Services.GameReplayService>();
+builder.Services.AddSingleton<Imperial2030.Server.Services.ReplaySessionManager>();
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 var isTrainingMode = args.Contains("--training");

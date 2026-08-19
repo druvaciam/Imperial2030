@@ -1,4 +1,4 @@
-using Imperial2030.Server.Data;
+﻿using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Server.Helpers;
@@ -107,11 +107,33 @@ public class BotService
                     {
                         try
                         {
-                            await BotInvestorAction(ctx, game, actor);
-                            await SaveChangesAsync(ctx);
-                            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                            if (!SkipDelays) await Task.Delay(BotDelayMs);
-                            botActed = true;
+                            if (!SkipDelays)
+                            {
+                                // Beat BEFORE the decision rather than after it. An investor phase is opened
+                                // by the rondel move that just landed on (or passed over) Investor, so acting
+                                // straight away made that move and the resulting investment land in the same
+                                // instant, followed by a dead pause with nothing to watch. Same placement and
+                                // reasoning as the Swiss Bank branch below. One delay per action either way,
+                                // so overall pacing is unchanged — only where the beat falls.
+                                await Task.Delay(BotDelayMs);
+
+                                // The wait means `game` may be stale (a human Swiss Bank investor could have
+                                // acted meanwhile, ending the phase or moving it to a different player), so
+                                // reload and re-resolve before deciding — again mirroring Swiss Bank.
+                                game = await ReloadGameAsync(ctx, game);
+                                if (game == null) break;
+                                actor = game.IsInvestorTurn && game.ActingPlayerId.HasValue
+                                    ? game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId.Value)
+                                    : null;
+                            }
+
+                            if (actor != null && actor.IsBot)
+                            {
+                                await BotInvestorAction(ctx, game, actor);
+                                await SaveChangesAsync(ctx);
+                                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                                botActed = true;
+                            }
                         }
                         catch (Bots.Strategies.RlTrainingPauseException)
                         {
@@ -189,7 +211,7 @@ public class BotService
                     {
                         // Uncontrolled nation: automatically advance to next nation
                         game.AdvanceTurn();
-                        GameLogger.LogAutoSkipManeuverPhase(ctx, game, "Turn", nationState.Nation, "System");
+                        GameLogger.LogAutoSkipManeuverPhase(ctx, game, "Turn", nationState.Nation, GameConstants.SystemPlayerName);
                         await SaveChangesAsync(ctx);
                         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
                         botActed = true;
@@ -1041,7 +1063,7 @@ public class BotService
         int treasuryGain = ns.Treasury - oldTreasury;
         GameLogger.LogTaxation(ctx, game, result.TotalTaxRevenue, result.SoldiersPay, treasuryGain, result.Bonus, result.PowerGain, nation, controller.BotName ?? "Bot");
 
-        if (ns.Power >= 25)
+        if (ns.Power >= GameConstants.MaxPowerPoints)
         {
             game.Status = GameStatus.Finished;
             game.FinishedAt = DateTime.UtcNow;
@@ -1060,7 +1082,7 @@ public class BotService
             using (var notificationScope = _scopeFactory.CreateScope())
             {
                 var notificationService = notificationScope.ServiceProvider.GetRequiredService<INotificationService>();
-                _ = notificationService.NotifyGameFinishedAsync(game, $"Ended by {nation} reaching 25 Power (Bot {controller.BotName})");
+                _ = notificationService.NotifyGameFinishedAsync(game, $"Ended by {nation} reaching {GameConstants.MaxPowerPoints} Power (Bot {controller.BotName})");
             }
 
             return;
@@ -1247,7 +1269,7 @@ public class BotService
             }
 
             bool retreat = defController == null ? true : GetStrategy(defController).RetreatFromBattle(game, pendingBattle);
-            string responderName = defController?.BotName ?? "System";
+            string responderName = defController?.BotName ?? GameConstants.SystemPlayerName;
 
             if (retreat)
             {
@@ -1276,7 +1298,7 @@ public class BotService
             }
         }
 
-        await BotUpdateTerritoryControl(ctx, game, "System");
+        await BotUpdateTerritoryControl(ctx, game, GameConstants.SystemPlayerName);
 
         if (!game.PendingBattleDefenders.Any() || !game.Units.Any(u => u.TerritoryId == (game.PendingBattleTerritoryId ?? "") && u.Nation == game.PendingBattleAggressorNation))
         {
