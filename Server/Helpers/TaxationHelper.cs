@@ -8,7 +8,7 @@ namespace Imperial2030.Server.Helpers;
 
 public static class TaxationHelper
 {
-    public static (int ExpectedBonus, int ExpectedTreasuryGain, int ExpectedPowerGain) PreviewTaxation(Game game, NationState nationState)
+    public static (int ExpectedBonus, int ExpectedTreasuryGain, int ExpectedPowerGain, int TotalTaxRevenue, int SoldiersPay) PreviewTaxation(Game game, NationState nationState)
     {
         var nation = nationState.Nation;
         int factoryRevenue = 0;
@@ -58,7 +58,7 @@ public static class TaxationHelper
         
         int expectedTreasuryGain = simulatedTreasury - nationState.Treasury;
 
-        return (actualBonus, expectedTreasuryGain, powerGain);
+        return (actualBonus, expectedTreasuryGain, powerGain, totalTaxRevenue, soldiersPay);
     }
 
     public static (int TotalTaxRevenue, int SoldiersPay, int Bonus, int PowerGain) ApplyTaxation(Game game, NationState nationState, Player controller)
