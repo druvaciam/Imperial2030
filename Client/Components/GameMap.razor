@@ -1734,7 +1734,7 @@
     private async Task ConfirmDestroyFactory()
     {
         if (Game == null) return;
-        if (!string.IsNullOrEmpty(PendingDestroyFactoryId) && PendingDestroyFactoryUnits.Count == 3)
+        if (!string.IsNullOrEmpty(PendingDestroyFactoryId) && PendingDestroyFactoryUnits.Count == ManeuverRules.DestroyFactoryArmyCost)
         {
             var unitIds = PendingDestroyFactoryUnits.Select(u => u.Id).ToList();
             bool success = await ManeuverService.DestroyFactoryAsync(Game.Id, PendingDestroyFactoryId, unitIds);
@@ -1826,11 +1826,11 @@
         var defenders = Game.Units.Any(u => u.TerritoryId == territoryId && u.Nation == tDef.Nation.Value);
         if (defenders) return false;
 
-        // 4. Check for 3 Attacking Armies
+        // 4. Check for enough attacking armies
         var myArmies = Game.Units.Where(u => u.TerritoryId == territoryId && u.Nation == nation && u.UnitType == UnitType.Army).ToList();
-        if (myArmies.Count >= 3)
+        if (myArmies.Count >= ManeuverRules.DestroyFactoryArmyCost)
         {
-            attackingUnits = myArmies.Take(3).ToList();
+            attackingUnits = myArmies.Take(ManeuverRules.DestroyFactoryArmyCost).ToList();
             return true;
         }
 
@@ -1848,7 +1848,7 @@
         if (ns == null) return;
 
         // MANEUVER PHASE LOGIC
-        bool isManeuverSlot = ns.RondelPosition == 3 || ns.RondelPosition == 7;
+        bool isManeuverSlot = RondelData.IsManeuverSlot(ns.RondelPosition ?? -1);
         if (Game.ManeuverState != null && isManeuverSlot)
         {
             await HandleManeuverClick(territoryId, nation);
@@ -1857,7 +1857,7 @@
 
         // FACTORY LOGIC (Existing)
         // check if Factory action (Slot 1) - must have moved on rondel this turn first
-        if (ns.RondelPosition == 1 && ns.HasMovedThisTurn) 
+        if (ns.RondelPosition == RondelData.FactorySlot && ns.HasMovedThisTurn)
         {
             await HandleFactoryClick(territoryId, nation, ns);
         }
@@ -2068,7 +2068,7 @@
         // If no units found, fallback
         // Check for Factory Action
         var ns = Game.NationStates.FirstOrDefault(n => n.Nation == nation);
-        if (ns != null && ns.RondelPosition == 1) // Factory
+        if (ns != null && ns.RondelPosition == RondelData.FactorySlot)
         {
             await HandleFactoryClick(territoryId, nation, ns);
         }
@@ -2316,7 +2316,7 @@
         {
             var nation = Game.CurrentTurnNation;
             var ns = Game.NationStates.FirstOrDefault(n => n.Nation == nation);
-            if (ns != null && ns.RondelPosition == 1 && ns.HasMovedThisTurn && !ns.HasBuiltThisTurn) // Factory - only highlight after moving on rondel
+            if (ns != null && ns.RondelPosition == RondelData.FactorySlot && ns.HasMovedThisTurn && !ns.HasBuiltThisTurn) // only highlight after moving on rondel
             {
                 var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
                 if (territoryDef != null && territoryDef.IsHomeCity(nation))
@@ -2387,7 +2387,7 @@
         var ns = Game.NationStates.FirstOrDefault(n => n.Nation == nation);
         if (ns == null) return baseMsg;
 
-        if (Game.ManeuverState != null && Game.ManeuverState.Phase != ManeuverPhase.None && (ns.RondelPosition == 3 || ns.RondelPosition == 7))
+        if (Game.ManeuverState != null && Game.ManeuverState.Phase != ManeuverPhase.None && RondelData.IsManeuverSlot(ns.RondelPosition ?? -1))
         {
             if (selectedUnitId == null)
             {
@@ -2406,7 +2406,7 @@
             }
         }
 
-        if (ns.RondelPosition == 1 && ns.HasMovedThisTurn && !ns.HasBuiltThisTurn) // Factory phase
+        if (ns.RondelPosition == RondelData.FactorySlot && ns.HasMovedThisTurn && !ns.HasBuiltThisTurn)
         {
             if (territoryDef.IsHomeCity(nation))
             {
@@ -2417,7 +2417,7 @@
             return $"{baseMsg}\n\nCan only build factory in Home Cities.";
         }
 
-        if (ns.RondelPosition == 5 && !ns.HasImportedThisTurn && ns.Treasury >= 1) // Import phase
+        if (ns.RondelPosition == RondelData.ImportSlot && !ns.HasImportedThisTurn && ns.Treasury >= 1)
         {
             if (territoryDef.IsHomeCity(nation))
             {

@@ -165,7 +165,7 @@ namespace Imperial2030.Tests
                     int pos = ns.RondelPosition.Value;
                     bool shouldEndTurn = false;
 
-                    if (pos == 5) // Import
+                    if (pos == RondelData.ImportSlot) // Import
                     {
                         if (!ns.HasImportedThisTurn)
                         {
@@ -187,7 +187,7 @@ namespace Imperial2030.Tests
                         else
                             shouldEndTurn = true;
                     }
-                    else if (pos == 2 || pos == 6) // Production
+                    else if (RondelData.IsProductionSlot(pos)) // Production
                     {
                         if (!ns.HasProducedThisTurn)
                         {
@@ -197,7 +197,7 @@ namespace Imperial2030.Tests
                         else
                             shouldEndTurn = true;
                     }
-                    else if (pos == 1) // Factory
+                    else if (pos == RondelData.FactorySlot) // Factory
                     {
                         if (!ns.HasBuiltThisTurn)
                         {
@@ -211,12 +211,12 @@ namespace Imperial2030.Tests
                             shouldEndTurn = true;
                         }
                     }
-                    else if (pos == 0) // Taxation
+                    else if (pos == RondelData.TaxationSlot) // Taxation
                     {
                         var res = await client.PostAsync($"/api/games/{gameId}/taxation", null);
                         if (!res.IsSuccessStatusCode) throw new Exception(await res.Content.ReadAsStringAsync());
                     }
-                    else if (pos == 3 || pos == 7) // Maneuver
+                    else if (RondelData.IsManeuverSlot(pos)) // Maneuver
                     {
                         if (game.CurrentManeuverPhase == ManeuverPhase.Fleets || game.CurrentManeuverPhase == ManeuverPhase.Armies)
                         {
@@ -228,7 +228,7 @@ namespace Imperial2030.Tests
                             shouldEndTurn = true;
                         }
                     }
-                    else if (pos == 4) // Investor
+                    else if (pos == RondelData.InvestorSlot) // Investor
                     {
                         shouldEndTurn = true;
                     }

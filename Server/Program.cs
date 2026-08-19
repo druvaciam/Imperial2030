@@ -6,8 +6,18 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Security.Claims;
 using Imperial2030.Shared.Models;
+using NLog.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Every ILogger call anywhere in the app (TcpTrainingServer, BotService, controllers, etc.) now also goes
+// to a rolling log file under logs/ — no call-site changes needed anywhere else. Console keeps the default
+// ASP.NET Core formatter (the classic "info: Category[0]" / indented-message look); NLog is added as an
+// additional provider that only writes to file (see nlog.config — its own config has no console target,
+// so this doesn't produce duplicate console lines in a different format).
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddNLog();
 
 // Only register Windows Service hosting on Windows (skipped on Linux VPS deployments)
 if (OperatingSystem.IsWindows())
@@ -25,6 +35,8 @@ builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Im
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.GreedyBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.RandomBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.BotService>();
+builder.Services.AddScoped<Imperial2030.Server.Services.GameReplayService>();
+builder.Services.AddSingleton<Imperial2030.Server.Services.ReplaySessionManager>();
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 var isTrainingMode = args.Contains("--training");

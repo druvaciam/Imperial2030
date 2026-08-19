@@ -1,4 +1,4 @@
-@page "/game/{GameId:guid}"
+﻿@page "/game/{GameId:guid}"
 @using Imperial2030.Shared.Models
 @using Imperial2030.Shared.Constants
 @attribute [Authorize]
@@ -39,7 +39,7 @@ else
                 {
                     <span class="badge bg-warning text-dark ms-2">Variant: Tax Bonus</span>
                 }
-                @if (game.Status == GameStatus.InProgress && IsSinglePlayerGame())
+                @if (game.Status == GameStatus.InProgress && IsSinglePlayerGame() && MyPlayer != null)
                 {
                     <button class="btn btn-sm @(game.IsPaused ? "btn-warning" : "btn-outline-light") ms-3 px-3 py-0 d-inline-flex align-items-center gap-1 fw-bold shadow-sm"
                             style="height: 28px; border-radius: 6px;"
@@ -167,8 +167,8 @@ else
                                                       style="width: 10px; height: 10px; background-color: @(player.IsOnline ? (player.IsActiveInGame ? "#28a745" : "#ffc107") : "#dc3545");"
                                                       title="@(player.IsOnline ? (player.IsActiveInGame ? "In Game" : "Online") : "Offline")"></span>
                                 }
-                                        <span class="text-truncate" title="@player.UserName">@player.UserName</span>
-                                        <span class="ms-1 flex-shrink-0 fw-bold" style="font-size: 1.0em; white-space: nowrap; color: #ced4da;" title="Controlled Nations">@GetPlayerControlledNationsString(player)</span>
+                                        <span class="text-truncate" style="font-size: 0.85em;" title="@player.UserName">@player.UserName</span>
+                                        <span class="ms-1 flex-shrink-0 fw-bold" style="font-size: 0.85em; white-space: nowrap; color: #ced4da;" title="Controlled Nations">@GetPlayerControlledNationsString(player)</span>
                                     </span>
                                     <div class="d-flex align-items-center justify-content-end gap-1 flex-shrink-0">
                                         <span class="badge bg-warning text-dark position-relative" title="Cash">
@@ -391,7 +391,7 @@ else
                                 if (CanBuildFactory() && !alreadyBuilt) noActionsLeft = false;
                                 if (CanImport() && ns != null && !ns.HasImportedThisTurn) noActionsLeft = false;
                                 if (CanProduce()) noActionsLeft = false;
-                                if (ns?.RondelPosition == 3 || ns?.RondelPosition == 7)
+                                if (RondelData.IsManeuverSlot(ns?.RondelPosition ?? -1))
                                 {
                                     if (game.ManeuverState?.Phase != ManeuverPhase.None)
                                     {
@@ -528,8 +528,43 @@ else
             </div>
 
             <div class="main-board-container">
+        @if (game.Status == GameStatus.Finished && !isReplayMode)
+        {
+            <div class="d-flex justify-content-center gap-2 my-2">
+                <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" style="background-color: #2c3e50; border-radius: 8px; padding: 0.5rem 1rem;" @onclick="StartReplayViewing"><i class="bi bi-film me-1"></i>Start Replay</button>
+                <a class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" style="background-color: #2c3e50; border-radius: 8px; padding: 0.5rem 1rem;" href="@($"api/games/{GameId}/export")" download><i class="bi bi-download me-1"></i>Export</a>
+            </div>
+        }
+        else if (isReplayMode)
+        {
+            <div class="d-flex justify-content-center gap-2 my-2 mx-auto" style="background-color: #2c3e50; border-radius: 8px; padding: 0.5rem 1rem; width: fit-content;">
+                <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" @onclick="TogglePauseReplay" disabled="@(replayState?.IsComplete == true)"><i class="bi @(replayState?.IsPaused == true ? "bi-play-fill" : "bi-pause-fill")"></i> @(replayState?.IsPaused == true ? "Resume" : "Pause")</button>
+                <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" @onclick="ResetReplayViewing"><i class="bi bi-arrow-counterclockwise"></i> Reset</button>
+                <button class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center" @onclick="ExitReplayViewing"><i class="bi bi-x-lg"></i> Exit Replay</button>
+            </div>
+        }
             <div class="main-board">
-        @if (game.IsPaused)
+        @if (isReplayMode)
+        {
+            <div class="turn-alert-wrapper">
+                <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(155, 89, 182, 0.95) 0%, rgba(108, 52, 131, 0.95) 100%); --alert-color: rgba(155, 89, 182, 0.95);">
+                    <div class="alert-content">
+                        <h3><i class="bi bi-film me-2"></i>REPLAY</h3>
+                        <small>
+                            @if (replayState != null)
+                            {
+                                @:Action @(replayState.CurrentActionIndex + 1) / @replayState.TotalActions @(replayState.IsPaused ? "(Paused)" : replayState.IsComplete ? "(Finished)" : "")
+                            }
+                            else
+                            {
+                                @:Starting…
+                            }
+                        </small>
+                    </div>
+                </div>
+            </div>
+        }
+        else if (game.IsPaused)
         {
             <div class="turn-alert-wrapper">
                 <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(243, 156, 18, 0.95) 0%, rgba(211, 84, 0, 0.95) 100%); --alert-color: rgba(243, 156, 18, 0.95);">
@@ -562,8 +597,7 @@ else
                 </div>
             </div>
         }
-
-        @if (MyPlayer == null)
+        else if (MyPlayer == null)
         {
             <div class="turn-alert-wrapper">
                 <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(52, 152, 219, 0.95) 0%, rgba(41, 128, 185, 0.95) 100%); --alert-color: rgba(52, 152, 219, 0.95);">
@@ -601,7 +635,7 @@ else
                                     <div class="game-over-card" style="position: relative;">
                                         <button type="button" class="btn-close btn-close-white" style="position: absolute; top: 1rem; right: 1rem; z-index: 100; cursor: pointer;" @onclick="() => showGameOverPopup = false" aria-label="Close"></button>
                                         <h1 class="text-gradient mb-2">GAME OVER</h1>
-                                        <h5 class="text-white-50 mb-4">Ended by @GetWinningNation() reaching 25 Power</h5>
+                                        <h5 class="text-white-50 mb-4">Ended by @GetWinningNation() reaching @GameConstants.MaxPowerPoints Power</h5>
 
                                     <div class="leaderboard-container">
                                         <table class="table table-dark table-borderless table-sm score-table">
@@ -640,8 +674,10 @@ else
                                         </table>
                                     </div>
 
-                                    <div class="mt-4">
-                                        <button class="btn btn-primary btn-lg px-5 shadow-lg" @onclick="@(() => Navigation.NavigateTo("/"))">Return to Lobby</button>
+                                    <div class="mt-4 d-flex gap-2 justify-content-center align-items-stretch">
+                                        <button class="btn btn-outline-light btn-lg px-4 shadow-lg d-flex align-items-center justify-content-center" @onclick="StartReplayViewing" disabled="@isReplayMode"><i class="bi bi-film me-2"></i>Start Replay</button>
+                                        <a class="btn btn-outline-light btn-lg px-4 shadow-lg d-flex align-items-center justify-content-center" href="@($"api/games/{GameId}/export")" download><i class="bi bi-download me-2"></i>Export</a>
+                                        <button class="btn btn-primary btn-lg px-5 shadow-lg d-flex align-items-center justify-content-center" style="text-transform: none;" @onclick="@(() => Navigation.NavigateTo("/"))">Return to Lobby</button>
                                     </div>
                                 </div>
                             </div>
@@ -966,7 +1002,7 @@ else
         flex-direction: column;
         overflow: hidden;
         flex: 1;
-        padding-top: 85px; /* Default narrow: stacked HUD space */
+        padding-top: 55px; /* Default narrow: room for the alert banner to wrap to 2 lines, without leaving a large dead gap above the map when it doesn't */
     }
 
     @@container mainboard (min-width: 800px) {
@@ -1253,8 +1289,8 @@ else
 
     .btn-lg {
         font-weight: 700;
+        font-size: 1rem;
         letter-spacing: 0.5px;
-        text-transform: uppercase;
         transition: transform 0.2s, box-shadow 0.2s;
     }
 
@@ -1331,6 +1367,127 @@ else
     private Dictionary<Nation, DateTime> _nationTaxChanges = new();
     private Nation? _displayedTurnNation;
     private CancellationTokenSource? _nationRotationCts;
+
+    // "Start Replay": paced, in-memory playback of a finished game's own action log (see
+    // Server/Services/ReplaySessionManager.cs). While active, `game` is swapped to the replay session's
+    // own GameDetailDto snapshots instead of the real one — currentUserId never matches any of a replay
+    // session's synthetic player IDs, so MyPlayer naturally resolves to null and the page's existing
+    // observer-mode rendering (no real action controls) applies for free, with no extra gating needed.
+    private bool isReplayMode = false;
+    private Guid? replaySessionId;
+    private ReplayStateDto? replayState;
+    private CancellationTokenSource? _replayPollCts;
+    // False until the first replay snapshot has been swapped in; see PollReplayLoop.
+    private bool _replayBaselineEstablished = false;
+
+    private async Task StartReplayViewing()
+    {
+        // Uses a JS alert() rather than ShowToast for errors here: the toast notification's <div> only
+        // renders inside the game.Status == InProgress branch, so on a Finished game (the only place this
+        // button appears) a toast would be silently invisible.
+        try
+        {
+            var response = await Http.PostAsync($"api/games/{GameId}/replay/start", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                await JSRuntime.InvokeVoidAsync("alert", $"Failed to start replay: {error}");
+                return;
+            }
+            replaySessionId = await response.Content.ReadFromJsonAsync<Guid>();
+            _replayBaselineEstablished = false;
+            isReplayMode = true;
+            showGameOverPopup = false;
+            _replayPollCts?.Cancel();
+            _replayPollCts = new CancellationTokenSource();
+            _ = PollReplayLoop(_replayPollCts.Token);
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Failed to start replay: {ex.Message}");
+        }
+    }
+
+    private async Task PollReplayLoop(CancellationToken token)
+    {
+        while (!token.IsCancellationRequested && replaySessionId.HasValue)
+        {
+            try
+            {
+                var state = await Http.GetFromJsonAsync<ReplayStateDto>($"api/games/replay/{replaySessionId}", token);
+                if (state == null) break;
+                replayState = state;
+                if (state.Game != null)
+                {
+                    // Same diff the live game uses, so a replay animates as it plays (units appearing,
+                    // cash/treasury/power deltas floating, power/tax blinks) instead of the board just
+                    // silently changing. Skipped for the very first snapshot: `game` still holds the real
+                    // finished game at that point, so diffing against it would flag the entire starting
+                    // board as "new" in one burst.
+                    if (_replayBaselineEstablished)
+                    {
+                        CaptureStateChangeAnimations(state.Game);
+                    }
+                    else
+                    {
+                        ClearStateChangeAnimations();
+                        _replayBaselineEstablished = true;
+                    }
+                    game = state.Game;
+                    // A replay session's Players are freshly-generated GUIDs in its own in-memory game copy
+                    // — nothing like the real game's player IDs selectedPlayerId was set from before Start
+                    // Replay was clicked. Left stale, the Assets panel's dropdown-driven lookup matches no
+                    // one and silently renders empty (the <select> itself still shows a value since HTML
+                    // falls back to displaying its first <option> even when none match the bound value).
+                    if (!game.Players.Any(p => p.Id == selectedPlayerId))
+                    {
+                        selectedPlayerId = game.Players.FirstOrDefault()?.Id ?? Guid.Empty;
+                    }
+                }
+                StateHasChanged();
+                if (state.IsComplete) break;
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception) { break; }
+
+            try { await Task.Delay(400, token); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    private async Task TogglePauseReplay()
+    {
+        if (replaySessionId == null || replayState == null) return;
+        var action = replayState.IsPaused ? "resume" : "pause";
+        await Http.PostAsync($"api/games/replay/{replaySessionId}/{action}", null);
+    }
+
+    private async Task ResetReplayViewing()
+    {
+        if (replaySessionId == null) return;
+        await Http.PostAsync($"api/games/replay/{replaySessionId}/reset", null);
+        _replayBaselineEstablished = false;
+        _replayPollCts?.Cancel();
+        _replayPollCts = new CancellationTokenSource();
+        _ = PollReplayLoop(_replayPollCts.Token);
+    }
+
+    private async Task ExitReplayViewing()
+    {
+        _replayPollCts?.Cancel();
+        var sessionToStop = replaySessionId;
+        isReplayMode = false;
+        replaySessionId = null;
+        replayState = null;
+        _replayBaselineEstablished = false;
+        ClearStateChangeAnimations();
+        if (sessionToStop != null)
+        {
+            try { await Http.PostAsync($"api/games/replay/{sessionToStop}/stop", null); }
+            catch { /* best-effort cleanup — the session will still be reachable/evictable server-side */ }
+        }
+        await LoadGame();
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -1432,93 +1589,118 @@ else
         observerCount = await hubConnection.InvokeAsync<int>("JoinGameGroup", GameId.ToString(), MyPlayer == null);
     }
 
+    // Diffs `newState` against whatever `game` currently holds and records the resulting animation
+    // effects (floating cash/treasury/power deltas, new-unit and new-factory highlights, power/tax
+    // blinks). Extracted from LoadGame so the replay poll loop can drive the same animations — it swaps
+    // `game` wholesale for each paced snapshot, and without running this diff nothing animated during a
+    // replay at all, while the changes all burst at once the moment the real game was loaded again.
+    // Caller assigns `game = newState` afterwards.
+    private void CaptureStateChangeAnimations(GameDetailDto newState)
+    {
+        var oldPlayers = game?.Players.ToDictionary(p => p.Id, p => p.Cash);
+        var oldUnitIds = game?.Units.Select(u => u.Id).ToHashSet();
+        var oldFactories = game?.Territories.Where(t => t.HasFactory).Select(t => t.TerritoryId).ToHashSet();
+        var oldNationStates = game?.NationStates.ToDictionary(ns => ns.Nation, ns => new { ns.Power, ns.TaxRevenue, ns.Treasury });
+
+        if (oldPlayers != null)
+        {
+            foreach (var p in newState.Players)
+            {
+                if (oldPlayers.TryGetValue(p.Id, out var oldCash) && oldCash != p.Cash)
+                {
+                    var delta = p.Cash - oldCash;
+                    _playerCashEffects[p.Id] = (delta, Guid.NewGuid(), DateTime.Now);
+                }
+            }
+        }
+
+        if (oldUnitIds != null)
+        {
+            foreach (var u in newState.Units)
+            {
+                if (!oldUnitIds.Contains(u.Id))
+                {
+                    _newUnitTimestamps[u.Id] = DateTime.Now;
+                }
+            }
+            var expired = _newUnitTimestamps.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 10).Select(kv => kv.Key).ToList();
+            foreach (var e in expired) _newUnitTimestamps.Remove(e);
+        }
+
+        if (oldFactories != null)
+        {
+            foreach (var ts in newState.Territories.Where(t => t.HasFactory))
+            {
+                if (!oldFactories.Contains(ts.TerritoryId))
+                {
+                    _newFactoryTimestamps[ts.TerritoryId] = DateTime.Now;
+                }
+            }
+            var expiredFacs = _newFactoryTimestamps.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 10).Select(kv => kv.Key).ToList();
+            foreach (var e in expiredFacs) _newFactoryTimestamps.Remove(e);
+        }
+
+        if (oldNationStates != null)
+        {
+            foreach (var ns in newState.NationStates)
+            {
+                if (oldNationStates.TryGetValue(ns.Nation, out var oldNs))
+                {
+                    if (oldNs.Treasury != ns.Treasury)
+                    {
+                        var delta = ns.Treasury - oldNs.Treasury;
+                        _nationTreasuryEffects[ns.Nation] = (delta, Guid.NewGuid(), DateTime.Now);
+                    }
+                    if (oldNs.Power != ns.Power)
+                    {
+                        var pDelta = ns.Power - oldNs.Power;
+                        _nationPowerEffects[ns.Nation] = (pDelta, Guid.NewGuid(), DateTime.Now);
+                        _nationPowerChanges[ns.Nation] = DateTime.Now;
+                    }
+                    if (oldNs.TaxRevenue != ns.TaxRevenue)
+                    {
+                        _nationTaxChanges[ns.Nation] = DateTime.Now;
+                    }
+                }
+            }
+            var expiredTreasury = _nationTreasuryEffects.Where(kv => (DateTime.Now - kv.Value.Timestamp).TotalSeconds > 10).Select(kv => kv.Key).ToList();
+            foreach (var e in expiredTreasury) _nationTreasuryEffects.Remove(e);
+
+            var expiredPowerEffects = _nationPowerEffects.Where(kv => (DateTime.Now - kv.Value.Timestamp).TotalSeconds > 10).Select(kv => kv.Key).ToList();
+            foreach (var e in expiredPowerEffects) _nationPowerEffects.Remove(e);
+
+            var expiredPower = _nationPowerChanges.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 30).Select(kv => kv.Key).ToList();
+            foreach (var e in expiredPower) _nationPowerChanges.Remove(e);
+
+            var expiredTax = _nationTaxChanges.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 30).Select(kv => kv.Key).ToList();
+            foreach (var e in expiredTax) _nationTaxChanges.Remove(e);
+        }
+    }
+
+    // Drops any in-flight animation effects. Used when swapping between the real game and a replay
+    // session, whose snapshots are a different game copy entirely (fresh unit/player ids) — carrying
+    // stale highlights across that boundary would light up unrelated pieces.
+    private void ClearStateChangeAnimations()
+    {
+        _playerCashEffects.Clear();
+        _nationTreasuryEffects.Clear();
+        _nationPowerEffects.Clear();
+        _newUnitTimestamps.Clear();
+        _newFactoryTimestamps.Clear();
+        _nationPowerChanges.Clear();
+        _nationTaxChanges.Clear();
+    }
+
     private async Task LoadGame()
     {
         try
         {
-            var oldPlayers = game?.Players.ToDictionary(p => p.Id, p => p.Cash);
-            var oldUnitIds = game?.Units.Select(u => u.Id).ToHashSet();
-            var oldFactories = game?.Territories.Where(t => t.HasFactory).Select(t => t.TerritoryId).ToHashSet();
-            var oldNationStates = game?.NationStates.ToDictionary(ns => ns.Nation, ns => new { ns.Power, ns.TaxRevenue, ns.Treasury });
             var newGame = await Http.GetFromJsonAsync<GameDetailDto>($"api/games/{GameId}");
-            
+
             if (newGame != null)
             {
                 UpdateDisplayedNation(newGame.CurrentTurnNation);
-
-                if (oldPlayers != null)
-                {
-                    foreach (var p in newGame.Players)
-                    {
-                        if (oldPlayers.TryGetValue(p.Id, out var oldCash) && oldCash != p.Cash)
-                        {
-                            var delta = p.Cash - oldCash;
-                            _playerCashEffects[p.Id] = (delta, Guid.NewGuid(), DateTime.Now);
-                        }
-                    }
-                }
-                
-                if (oldUnitIds != null)
-                {
-                    foreach (var u in newGame.Units)
-                    {
-                        if (!oldUnitIds.Contains(u.Id))
-                        {
-                            _newUnitTimestamps[u.Id] = DateTime.Now;
-                        }
-                    }
-                    var expired = _newUnitTimestamps.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 10).Select(kv => kv.Key).ToList();
-                    foreach (var e in expired) _newUnitTimestamps.Remove(e);
-                }
-                
-                if (oldFactories != null)
-                {
-                    foreach (var ts in newGame.Territories.Where(t => t.HasFactory))
-                    {
-                        if (!oldFactories.Contains(ts.TerritoryId))
-                        {
-                            _newFactoryTimestamps[ts.TerritoryId] = DateTime.Now;
-                        }
-                    }
-                    var expiredFacs = _newFactoryTimestamps.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 10).Select(kv => kv.Key).ToList();
-                    foreach (var e in expiredFacs) _newFactoryTimestamps.Remove(e);
-                }
-                
-                if (oldNationStates != null)
-                {
-                    foreach (var ns in newGame.NationStates)
-                    {
-                        if (oldNationStates.TryGetValue(ns.Nation, out var oldNs))
-                        {
-                            if (oldNs.Treasury != ns.Treasury)
-                            {
-                                var delta = ns.Treasury - oldNs.Treasury;
-                                _nationTreasuryEffects[ns.Nation] = (delta, Guid.NewGuid(), DateTime.Now);
-                            }
-                            if (oldNs.Power != ns.Power)
-                            {
-                                var pDelta = ns.Power - oldNs.Power;
-                                _nationPowerEffects[ns.Nation] = (pDelta, Guid.NewGuid(), DateTime.Now);
-                                _nationPowerChanges[ns.Nation] = DateTime.Now;
-                            }
-                            if (oldNs.TaxRevenue != ns.TaxRevenue)
-                            {
-                                _nationTaxChanges[ns.Nation] = DateTime.Now;
-                            }
-                        }
-                    }
-                    var expiredTreasury = _nationTreasuryEffects.Where(kv => (DateTime.Now - kv.Value.Timestamp).TotalSeconds > 10).Select(kv => kv.Key).ToList();
-                    foreach (var e in expiredTreasury) _nationTreasuryEffects.Remove(e);
-
-                    var expiredPowerEffects = _nationPowerEffects.Where(kv => (DateTime.Now - kv.Value.Timestamp).TotalSeconds > 10).Select(kv => kv.Key).ToList();
-                    foreach (var e in expiredPowerEffects) _nationPowerEffects.Remove(e);
-
-                    var expiredPower = _nationPowerChanges.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 30).Select(kv => kv.Key).ToList();
-                    foreach (var e in expiredPower) _nationPowerChanges.Remove(e);
-                    
-                    var expiredTax = _nationTaxChanges.Where(kv => (DateTime.Now - kv.Value).TotalSeconds > 30).Select(kv => kv.Key).ToList();
-                    foreach (var e in expiredTax) _nationTaxChanges.Remove(e);
-                }
+                CaptureStateChangeAnimations(newGame);
             }
             game = newGame;
 
@@ -1527,7 +1709,10 @@ else
                 var me = game.Players.FirstOrDefault(p => p.UserId == currentUserId);
                 IsHost = me?.IsHost ?? false;
 
-                if (selectedPlayerId == null)
+                // Also re-resolves when the previously-selected id no longer exists in this game's roster
+                // (not just when never set) — needed for returning from a replay session, whose Players are
+                // freshly-generated ids in a separate in-memory copy that don't carry over to the real game.
+                if (selectedPlayerId == null || !game.Players.Any(p => p.Id == selectedPlayerId))
                 {
                     if (me != null)
                     {
@@ -1728,18 +1913,18 @@ else
             int current = ns.RondelPosition.Value;
             if (current == slotIndex) return; // Same slot, ignore
 
-            int dist = (slotIndex - current + 8) % 8;
-            if (dist > 6)
+            int dist = (slotIndex - current + RondelData.SlotCount) % RondelData.SlotCount;
+            if (dist > RondelData.MaxMoveDistance)
             {
-                _ = ShowToast("You cannot move more than 6 spaces on the rondel!", true);
+                _ = ShowToast($"You cannot move more than {RondelData.MaxMoveDistance} spaces on the rondel!", true);
                 return;
             }
 
-            if (dist > 3)
+            if (dist > RondelData.FreeMoveDistance)
             {
                 int powerFactor = ns.Power / 5;
                 int costPerStep = 1 + powerFactor;
-                cost = (dist - 3) * costPerStep;
+                cost = (dist - RondelData.FreeMoveDistance) * costPerStep;
             }
         }
 
@@ -1753,7 +1938,7 @@ else
         string warningMessage = string.Empty;
 
         // 1. Factory (Slot 1)
-        if (slotIndex == 1)
+        if (slotIndex == RondelData.FactorySlot)
         {
             if (ns.Treasury < 5)
             {
@@ -1770,7 +1955,7 @@ else
             }
         }
         // 2 & 6. Production
-        else if (slotIndex == 2 || slotIndex == 6)
+        else if (RondelData.IsProductionSlot(slotIndex))
         {
             var homeProvinces = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.Where(t => t.Nation == nation);
             var myFactories = game.Territories.Where(ts => homeProvinces.Any(hp => hp.Id == ts.TerritoryId) && ts.HasFactory);
@@ -1797,7 +1982,7 @@ else
             }
         }
         // 3 & 7. Maneuver
-        else if (slotIndex == 3 || slotIndex == 7)
+        else if (RondelData.IsManeuverSlot(slotIndex))
         {
             int myUnitsCount = game.Units.Count(u => u.Nation == nation);
             if (myUnitsCount == 0)
@@ -1806,7 +1991,7 @@ else
             }
         }
         // 4. Investor
-        else if (slotIndex == 4)
+        else if (slotIndex == RondelData.InvestorSlot)
         {
             var bondsForNation = game.Players.SelectMany(p => p.Bonds).Where(b => b.Nation == nation).ToList();
             int totalOwedToOthers = bondsForNation.Where(b => b.HolderName != MyPlayer?.UserName).Sum(b => b.Interest);
@@ -1818,7 +2003,7 @@ else
             }
         }
         // 5. Import
-        else if (slotIndex == 5)
+        else if (slotIndex == RondelData.ImportSlot)
         {
             if (ns.Treasury < 1)
             {
@@ -1940,8 +2125,7 @@ else
     {
         if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        // Assuming slot 1 is Factory
-        return ns?.RondelPosition == 1 && ns.Treasury >= 5;
+        return ns?.RondelPosition == RondelData.FactorySlot && ns.Treasury >= 5;
     }
 
     private List<Imperial2030.Shared.Models.Territory> GetValidFactoryTerritories()
@@ -1984,7 +2168,7 @@ else
     {
         if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        return ns?.RondelPosition == 0; // Slot 0 is Taxation
+        return ns?.RondelPosition == RondelData.TaxationSlot;
     }
 
     private async Task CollectTaxation()
@@ -2027,7 +2211,7 @@ else
     {
         if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        return (ns?.RondelPosition == 2 || ns?.RondelPosition == 6) && !ns.HasProducedThisTurn; // Slots 2 and 6 are Production
+        return RondelData.IsProductionSlot(ns?.RondelPosition ?? -1) && !ns.HasProducedThisTurn;
     }
 
     private async Task ExecuteProduction()
@@ -2087,7 +2271,7 @@ else
     {
         if (game == null || !IsMyTurn() || game.IsInvestorTurn) return false;
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        return ns?.RondelPosition == 5 && !ns.HasImportedThisTurn && ns?.Treasury >= 1;
+        return ns?.RondelPosition == RondelData.ImportSlot && !ns.HasImportedThisTurn && ns?.Treasury >= 1;
     }
 
     private void AddImportUnit()
@@ -2233,7 +2417,7 @@ else
             isToastError = isError;
             StateHasChanged();
             
-            await Task.Delay(7000);
+            await Task.Delay(toastQueue.Count > 1 ? 5000 : 7000);
             
             toastMessage = null;
             StateHasChanged();
@@ -2393,6 +2577,13 @@ else
     {
         _nationRotationCts?.Cancel();
         _nationRotationCts?.Dispose();
+
+        _replayPollCts?.Cancel();
+        if (replaySessionId != null)
+        {
+            try { await Http.PostAsync($"api/games/replay/{replaySessionId}/stop", null); }
+            catch { /* best-effort — leaving the page shouldn't block on this */ }
+        }
 
         if (hubConnection is not null)
         {

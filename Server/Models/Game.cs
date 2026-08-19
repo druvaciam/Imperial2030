@@ -1,3 +1,4 @@
+using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 using System.ComponentModel.DataAnnotations;
 
@@ -8,7 +9,7 @@ public class Game
     public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
-    [MaxLength(50)]
+    [MaxLength(GameConstants.MaxGameNameLength)]
     public string Name { get; set; } = string.Empty;
 
     public bool IsPrivate { get; set; } = false;

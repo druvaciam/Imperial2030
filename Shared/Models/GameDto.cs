@@ -23,4 +23,9 @@ public class GameDto
     public bool VariantBonusOnlyForTaxIncreases { get; set; } = false;
     public string? WinnerName { get; set; }
     public bool IsPaused { get; set; } = false;
+    // True when every player is a bot — the case for every imported game (importers never get a real
+    // Player row of their own, see ImportGame) as well as bot-vs-bot exhibition games. Since no real
+    // human host exists to delete these through the normal host-only path, they're deletable by any
+    // signed-in (non-guest) user instead — see GamesController.DeleteGame.
+    public bool IsAllBots { get; set; } = false;
 }

@@ -45,21 +45,21 @@ public static class GameLogger
         LogAction(context, game, "Move", nation, playerName, new RondelMoveMetadata { TargetSlot = targetSlot, CurrentSlot = currentSlot, Cost = cost });
     }
 
-    public static void LogUnitMove(ApplicationDbContext? context, Game game, UnitType unitType, string originId, string targetId, bool isHostileMove, Nation nation, string playerName)
+    public static void LogUnitMove(ApplicationDbContext? context, Game game, UnitType unitType, bool sourceIsHostile, string originId, string targetId, bool isHostileMove, Nation nation, string playerName)
     {
         string actionType = unitType == UnitType.Fleet ? "MoveFleet" : "MoveArmy";
-        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove });
+        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove, SourceIsHostile = sourceIsHostile });
     }
 
-    public static void LogUnitStay(ApplicationDbContext? context, Game game, UnitType unitType, string territoryId, Nation nation, string playerName)
+    public static void LogUnitStay(ApplicationDbContext? context, Game game, UnitType unitType, bool sourceIsHostile, string territoryId, Nation nation, string playerName)
     {
         string actionType = unitType == UnitType.Fleet ? "MoveFleet" : "MoveArmy";
-        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = territoryId, ToTerritoryId = territoryId });
+        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = territoryId, ToTerritoryId = territoryId, SourceIsHostile = sourceIsHostile });
     }
-    public static void LogUnitMoveAwaitingResponse(ApplicationDbContext? context, Game game, UnitType unitType, string originId, string targetId, bool isHostileMove, string defendersStr, Nation nation, string playerName)
+    public static void LogUnitMoveAwaitingResponse(ApplicationDbContext? context, Game game, UnitType unitType, bool sourceIsHostile, string originId, string targetId, bool isHostileMove, string defendersStr, Nation nation, string playerName)
     {
         string actionType = unitType == UnitType.Fleet ? "MoveFleet" : "MoveArmy";
-        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove, DefendersStr = defendersStr });
+        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove, DefendersStr = defendersStr, SourceIsHostile = sourceIsHostile });
     }
 
     public static void LogBattleDestruction(ApplicationDbContext? context, Game game, UnitType attackerType, Nation targetNation, UnitType defenderType, string territoryId, Nation nation, string playerName)
@@ -84,18 +84,11 @@ public static class GameLogger
             var controller = game.Players.FirstOrDefault(p => p.Id == controllerId);
             if (controller != null)
             {
-                if (controller.IsBot)
-                {
-                    actualPlayerName = controller.BotName ?? "Bot";
-                }
-                else if (context != null)
-                {
-                    var user = context.Users.FirstOrDefault(u => u.Id == controller.UserId);
-                    if (user != null && !string.IsNullOrEmpty(user.UserName))
-                    {
-                        actualPlayerName = user.UserName;
-                    }
-                }
+                // GetPlayerName checks BotName before IsBot. The previous inline IsBot-gated lookup fell
+                // through to the AspNetUsers row during replay/import (where players are deliberately kept
+                // IsBot = false), stamping the throwaway "import-<guid>" account name into the log instead
+                // of the real player — which also made an imported game's log differ from the original's.
+                actualPlayerName = controller.GetPlayerName(context);
             }
         }
 
@@ -255,9 +248,20 @@ public static class GameLogger
         LogAction(context, game, "LeaveGame", null, playerName);
     }
 
-    public static void LogStartGame(ApplicationDbContext? context, Game game, string playerName, Dictionary<Nation, Guid>? nationDistribution = null)
+    public static void LogStartGame(ApplicationDbContext? context, Game game, string playerName, Dictionary<Nation, Guid>? nationDistribution = null, List<PlayerRosterEntry>? roster = null)
     {
-        var metadata = nationDistribution != null ? new GameSetupMetadata { NationDistribution = nationDistribution } : null;
+        GameSetupMetadata? metadata = null;
+        if (nationDistribution != null)
+        {
+            metadata = new GameSetupMetadata
+            {
+                NationDistribution = nationDistribution,
+                Players = roster ?? new List<PlayerRosterEntry>(),
+                MaxPlayers = game.MaxPlayers,
+                IsPrivate = game.IsPrivate,
+                VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases
+            };
+        }
         LogAction(context, game, "StartGame", null, playerName, metadata);
     }
 

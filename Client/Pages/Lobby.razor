@@ -1,4 +1,5 @@
 @page "/"
+@using System.IO
 @using Imperial2030.Shared.Models
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
@@ -24,6 +25,9 @@
             {
                 <button class="btn btn-success text-nowrap" @onclick="ShowCreateGameModal">
                     <span class="oi oi-plus me-1"></span>Create Game
+                </button>
+                <button class="btn btn-outline-light text-nowrap" @onclick="ShowImportGameModal">
+                    <span class="oi oi-data-transfer-upload me-1"></span>Import Game
                 </button>
             }
         </div>
@@ -159,6 +163,12 @@
                                         Watch
                                     </button>
                                 }
+                                @if (game.IsAllBots && !isGuest)
+                                {
+                                    <button class="btn btn-danger btn-sm ms-2" @onclick="@(() => DeleteGame(game.Id))">
+                                        Delete
+                                    </button>
+                                }
                             }
                         </div>
                     </div>
@@ -214,6 +224,41 @@
     </div>
 }
 
+@if (isImportModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 1050;">
+        <div class="modal-dialog">
+            <div class="modal-content bg-dark text-white border-secondary">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">Import Game</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseImportGameModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(importErrorMessage))
+                    {
+                        <div class="alert alert-danger">@importErrorMessage</div>
+                    }
+                    <p class="text-white-50">Choose a game export (.json) file previously downloaded from this or another Imperial 2030 server. The imported game is added as a finished, view-only game — every nation becomes a non-interactive bot, reconstructed from the file's own action log.</p>
+                    <div class="mb-3">
+                        <label class="form-label">Export File</label>
+                        <InputFile class="form-control" accept=".json,application/json" OnChange="OnImportFileSelected" disabled="@isImporting" />
+                    </div>
+                    @if (isImporting)
+                    {
+                        <div class="d-flex align-items-center gap-2 text-white-50">
+                            <div class="spinner-border spinner-border-sm" role="status"></div>
+                            <span>Importing — replaying the game's full history, this can take a moment…</span>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseImportGameModal" disabled="@isImporting">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @if (isJoinModalOpen && gameToJoin != null)
 {
     <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 1050;">
@@ -261,6 +306,10 @@
     private bool isCreateModalOpen = false;
     private CreateGameRequest newGameRequest = new CreateGameRequest();
     private string createErrorMessage = string.Empty;
+
+    private bool isImportModalOpen = false;
+    private bool isImporting = false;
+    private string importErrorMessage = string.Empty;
 
     private bool isJoinModalOpen = false;
     private GameDto? gameToJoin = null;
@@ -408,6 +457,64 @@
             {
                 createErrorMessage = "Failed to create game. Please check your inputs.";
             }
+        }
+    }
+
+    private void ShowImportGameModal()
+    {
+        importErrorMessage = string.Empty;
+        isImportModalOpen = true;
+    }
+
+    private void CloseImportGameModal()
+    {
+        if (isImporting) return; // don't let the user dismiss mid-request — the file input is already disabled while importing
+        isImportModalOpen = false;
+    }
+
+    private async Task OnImportFileSelected(InputFileChangeEventArgs e)
+    {
+        importErrorMessage = string.Empty;
+        isImporting = true;
+        StateHasChanged();
+        try
+        {
+            // Export files are plain JSON action logs; 20MB comfortably covers even very long games.
+            const long maxFileSize = 20 * 1024 * 1024;
+            string json;
+            using (var stream = e.File.OpenReadStream(maxFileSize))
+            using (var reader = new StreamReader(stream))
+            {
+                json = await reader.ReadToEndAsync();
+            }
+
+            using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            var response = await Http.PostAsync("api/games/import", content);
+            if (response.IsSuccessStatusCode)
+            {
+                var game = await response.Content.ReadFromJsonAsync<GameDto>();
+                isImportModalOpen = false;
+                if (game != null)
+                {
+                    NavigationManager.NavigateTo($"/game/{game.Id}");
+                }
+            }
+            else
+            {
+                // ImportGame returns its diagnostics as a plain BadRequest(string), not a structured
+                // model-validation error object, so this is read as raw text rather than parsed as JSON.
+                var body = await response.Content.ReadAsStringAsync();
+                importErrorMessage = string.IsNullOrWhiteSpace(body) ? "Failed to import game." : body;
+            }
+        }
+        catch (Exception ex)
+        {
+            importErrorMessage = $"Failed to read the selected file: {ex.Message}";
+        }
+        finally
+        {
+            isImporting = false;
+            StateHasChanged();
         }
     }
 

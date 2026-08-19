@@ -1,4 +1,4 @@
-using Imperial2030.Server.Data;
+﻿using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Server.Helpers;
@@ -37,12 +37,36 @@ public class BotService
         // Handle RL bots dynamically
         if (type.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
         {
-            return _rlStrategies.GetOrAdd(type, t => new Bots.Strategies.RLBotStrategy(t));
+            // Keyed by (type, player.Id), not type alone: RLBotStrategy carries non-thread-safe per-decision
+            // caching state (_lastState/_cachedAction/_maneuverCache). Keying by type alone made every
+            // concurrent game with the same bot type (e.g. "RL-2") share one instance process-wide — harmless
+            // with a single training env (only one game steps at a time) but a genuine data race with
+            // multiple parallel envs, where two games' opponent-bot decisions could interleave on the same
+            // mutable fields and corrupt each other's cached action. The underlying ONNX InferenceSession
+            // stays shared via _sessionCache (keyed by model path) regardless, so this costs nothing extra.
+            var key = $"{type}:{player.Id}";
+            return _rlStrategies.GetOrAdd(key, _ => new Bots.Strategies.RLBotStrategy(type));
         }
 
         return _botStrategies.FirstOrDefault(s => s.Name.Equals(type, StringComparison.OrdinalIgnoreCase))
                ?? _botStrategies.FirstOrDefault(s => s.Name == "Default")
                ?? new Bots.Strategies.DefaultBotStrategy(); // Fallback if not registered
+    }
+
+    // Per-(type, player.Id) keying in GetStrategy fixes a cross-game data race (see comment above) but means
+    // _rlStrategies grows one entry per bot per training episode, since each RL_Training_ game mints fresh
+    // Player GUIDs on every reset. Call this whenever a training session ends (normally or via a dropped
+    // connection) to release that game's entries instead of leaking them for the life of the server process.
+    public void ClearStrategyCache(IEnumerable<Player> players)
+    {
+        foreach (var player in players)
+        {
+            var type = player.BotType ?? "Default";
+            if (type.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
+            {
+                _rlStrategies.TryRemove($"{type}:{player.Id}", out _);
+            }
+        }
     }
 
     public void TriggerBotTurn(Guid gameId, int delayMs = BotDelayMs)
@@ -83,11 +107,33 @@ public class BotService
                     {
                         try
                         {
-                            await BotInvestorAction(ctx, game, actor);
-                            await SaveChangesAsync(ctx);
-                            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                            if (!SkipDelays) await Task.Delay(BotDelayMs);
-                            botActed = true;
+                            if (!SkipDelays)
+                            {
+                                // Beat BEFORE the decision rather than after it. An investor phase is opened
+                                // by the rondel move that just landed on (or passed over) Investor, so acting
+                                // straight away made that move and the resulting investment land in the same
+                                // instant, followed by a dead pause with nothing to watch. Same placement and
+                                // reasoning as the Swiss Bank branch below. One delay per action either way,
+                                // so overall pacing is unchanged — only where the beat falls.
+                                await Task.Delay(BotDelayMs);
+
+                                // The wait means `game` may be stale (a human Swiss Bank investor could have
+                                // acted meanwhile, ending the phase or moving it to a different player), so
+                                // reload and re-resolve before deciding — again mirroring Swiss Bank.
+                                game = await ReloadGameAsync(ctx, game);
+                                if (game == null) break;
+                                actor = game.IsInvestorTurn && game.ActingPlayerId.HasValue
+                                    ? game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId.Value)
+                                    : null;
+                            }
+
+                            if (actor != null && actor.IsBot)
+                            {
+                                await BotInvestorAction(ctx, game, actor);
+                                await SaveChangesAsync(ctx);
+                                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                                botActed = true;
+                            }
                         }
                         catch (Bots.Strategies.RlTrainingPauseException)
                         {
@@ -165,7 +211,7 @@ public class BotService
                     {
                         // Uncontrolled nation: automatically advance to next nation
                         game.AdvanceTurn();
-                        GameLogger.LogAutoSkipManeuverPhase(ctx, game, "Turn", nationState.Nation, "System");
+                        GameLogger.LogAutoSkipManeuverPhase(ctx, game, "Turn", nationState.Nation, GameConstants.SystemPlayerName);
                         await SaveChangesAsync(ctx);
                         await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
                         botActed = true;
@@ -538,6 +584,9 @@ public class BotService
         var fleets = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved).ToList();
         foreach (var fleet in fleets)
         {
+            // Captured before any mutation below — see GameLogger.LogUnitMove call sites for why this
+            // pre-move hostility snapshot is threaded through to the action log.
+            bool sourceWasHostile = fleet.IsHostile;
             if (!MapConnectivity.Adjacency.TryGetValue(fleet.TerritoryId, out var neighbors)) continue;
             var seaNeighbors = neighbors.Where(n =>
             {
@@ -590,12 +639,12 @@ public class BotService
                         }
                         else
                         {
-                            GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, target, nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, sourceWasHostile, target, nation, controller.BotName ?? "Bot");
                         }
                     }
                     else
                     {
-                        GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, target, nation, controller.BotName ?? "Bot");
+                        GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, sourceWasHostile, target, nation, controller.BotName ?? "Bot");
                     }
                     await BotUnitActionDelay(ctx, game);
                     continue;
@@ -662,7 +711,7 @@ public class BotService
 
                             if (enemyFleet != null)
                             {
-                                GameLogger.LogUnitMove(ctx, game, fleet.UnitType, originalTerritoryId, target, true, nation, controller.BotName ?? "Bot");
+                                GameLogger.LogUnitMove(ctx, game, fleet.UnitType, sourceWasHostile, originalTerritoryId, target, true, nation, controller.BotName ?? "Bot");
                                 RemoveUnit(ctx, game, fleet);
                                 RemoveUnit(ctx, game, enemyFleet);
                                 GameLogger.LogBattleDestruction(ctx, game, fleet.UnitType, targetNation, enemyFleet.UnitType, target, nation, controller.BotName ?? "Bot");
@@ -677,7 +726,7 @@ public class BotService
                             game.PendingBattleAggressorNation = nation;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, originalTerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, sourceWasHostile, originalTerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -687,7 +736,7 @@ public class BotService
                     }
                 }
 
-                GameLogger.LogUnitMove(ctx, game, UnitType.Fleet, originalTerritoryId, target, isHostileMove, nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Fleet, sourceWasHostile, originalTerritoryId, target, isHostileMove, nation, controller.BotName ?? "Bot");
                 await BotUnitActionDelay(ctx, game);
             }
         }
@@ -700,6 +749,9 @@ public class BotService
         var armies = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved).ToList();
         foreach (var army in armies)
         {
+            // Captured before any mutation below — see GameLogger.LogUnitMove call sites for why this
+            // pre-move hostility snapshot is threaded through to the action log.
+            bool sourceWasHostile = army.IsHostile;
             var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, army.TerritoryId, army.Nation);
             var convoyPaths = new Dictionary<string, List<Unit>>();
             var landNeighbors = new HashSet<string>();
@@ -741,12 +793,12 @@ public class BotService
                         }
                         else
                         {
-                            GameLogger.LogUnitStay(ctx, game, UnitType.Army, best, nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitStay(ctx, game, UnitType.Army, sourceWasHostile, best, nation, controller.BotName ?? "Bot");
                         }
                     }
                     else
                     {
-                        GameLogger.LogUnitStay(ctx, game, UnitType.Army, best, nation, controller.BotName ?? "Bot");
+                        GameLogger.LogUnitStay(ctx, game, UnitType.Army, sourceWasHostile, best, nation, controller.BotName ?? "Bot");
                     }
                     await BotUnitActionDelay(ctx, game);
                     continue;
@@ -822,7 +874,7 @@ public class BotService
 
                             if (enemyUnit != null)
                             {
-                                GameLogger.LogUnitMove(ctx, game, army.UnitType, originalTerritoryId, best, true, nation, controller.BotName ?? "Bot");
+                                GameLogger.LogUnitMove(ctx, game, army.UnitType, sourceWasHostile, originalTerritoryId, best, true, nation, controller.BotName ?? "Bot");
                                 RemoveUnit(ctx, game, army);
                                 RemoveUnit(ctx, game, enemyUnit);
                                 GameLogger.LogBattleDestruction(ctx, game, army.UnitType, targetNation, enemyUnit.UnitType, best, nation, controller.BotName ?? "Bot");
@@ -837,7 +889,7 @@ public class BotService
                             game.PendingBattleAggressorNation = nation;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -847,7 +899,7 @@ public class BotService
                     }
                 }
 
-                GameLogger.LogUnitMove(ctx, game, UnitType.Army, originalTerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot");
                 await BotUnitActionDelay(ctx, game);
             }
         }
@@ -882,7 +934,7 @@ public class BotService
         var armiesByTerritory = game.Units
             .Where(u => u.Nation == nation && u.UnitType == UnitType.Army)
             .GroupBy(u => u.TerritoryId)
-            .Where(g => g.Count() >= 3)
+            .Where(g => g.Count() >= ManeuverRules.DestroyFactoryArmyCost)
             .ToList();
 
         var candidates = new List<string>();
@@ -919,7 +971,8 @@ public class BotService
         return candidates;
     }
 
-    // Executes an already-decided factory destruction: sacrifices 3 armies of `nation` in `territoryId` and removes the factory
+    // Executes an already-decided factory destruction: sacrifices ManeuverRules.DestroyFactoryArmyCost
+    // armies of `nation` in `territoryId` and removes the factory
     public void ExecuteFactoryDestruction(ApplicationDbContext? ctx, Game game, string territoryId, Nation nation, Player controller)
     {
         var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == territoryId);
@@ -927,9 +980,9 @@ public class BotService
 
         var armiesToSacrifice = game.Units
             .Where(u => u.Nation == nation && u.UnitType == UnitType.Army && u.TerritoryId == territoryId)
-            .Take(3)
+            .Take(ManeuverRules.DestroyFactoryArmyCost)
             .ToList();
-        if (armiesToSacrifice.Count < 3) return;
+        if (armiesToSacrifice.Count < ManeuverRules.DestroyFactoryArmyCost) return;
 
         foreach (var army in armiesToSacrifice)
         {
@@ -1010,7 +1063,7 @@ public class BotService
         int treasuryGain = ns.Treasury - oldTreasury;
         GameLogger.LogTaxation(ctx, game, result.TotalTaxRevenue, result.SoldiersPay, treasuryGain, result.Bonus, result.PowerGain, nation, controller.BotName ?? "Bot");
 
-        if (ns.Power >= 25)
+        if (ns.Power >= GameConstants.MaxPowerPoints)
         {
             game.Status = GameStatus.Finished;
             game.FinishedAt = DateTime.UtcNow;
@@ -1029,7 +1082,7 @@ public class BotService
             using (var notificationScope = _scopeFactory.CreateScope())
             {
                 var notificationService = notificationScope.ServiceProvider.GetRequiredService<INotificationService>();
-                _ = notificationService.NotifyGameFinishedAsync(game, $"Ended by {nation} reaching 25 Power (Bot {controller.BotName})");
+                _ = notificationService.NotifyGameFinishedAsync(game, $"Ended by {nation} reaching {GameConstants.MaxPowerPoints} Power (Bot {controller.BotName})");
             }
 
             return;
@@ -1216,7 +1269,7 @@ public class BotService
             }
 
             bool retreat = defController == null ? true : GetStrategy(defController).RetreatFromBattle(game, pendingBattle);
-            string responderName = defController?.BotName ?? "System";
+            string responderName = defController?.BotName ?? GameConstants.SystemPlayerName;
 
             if (retreat)
             {
@@ -1245,7 +1298,7 @@ public class BotService
             }
         }
 
-        await BotUpdateTerritoryControl(ctx, game, "System");
+        await BotUpdateTerritoryControl(ctx, game, GameConstants.SystemPlayerName);
 
         if (!game.PendingBattleDefenders.Any() || !game.Units.Any(u => u.TerritoryId == (game.PendingBattleTerritoryId ?? "") && u.Nation == game.PendingBattleAggressorNation))
         {

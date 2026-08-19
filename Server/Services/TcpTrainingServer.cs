@@ -37,6 +37,7 @@ public class TcpTrainingServer : BackgroundService
         // territory forever — this cap ensures each qualifying stack is asked at most once per turn.
         public HashSet<string> DecidedFactoryDestructionTerritoriesThisTurn { get; set; } = new();
         public int? PendingImportRemaining { get; set; } // Non-null while stepping through an Import decision sequence
+        public int ImportUnitsPlacedThisSequence { get; set; } = 0; // Tracks whether the current Import sequence placed anything, for the wasted-import-with-money penalty
 
         public int TotalSessionSteps { get; set; } = 0;
         public int LastTurnCount { get; set; } = -1;
@@ -117,6 +118,7 @@ public class TcpTrainingServer : BackgroundService
         using (var writer = new StreamWriter(networkStream) { AutoFlush = true })
         {
             _logger.LogInformation("RL Client connected");
+            string? currentSessionId = null;
             try
             {
                 while (!stoppingToken.IsCancellationRequested)
@@ -130,10 +132,12 @@ public class TcpTrainingServer : BackgroundService
                     if (req.Command == "reset")
                     {
                         var res = await HandleResetAsync(req);
+                        currentSessionId = res.SessionId;
                         await writer.WriteLineAsync(JsonSerializer.Serialize(res));
                     }
                     else if (req.Command == "step")
                     {
+                        currentSessionId = req.SessionId;
                         var res = await HandleStepAsync(req);
                         if (res != null)
                         {
@@ -149,6 +153,20 @@ public class TcpTrainingServer : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling RL client");
+            }
+            finally
+            {
+                // If the connection drops mid-episode (crash, killed Python worker, any of the disconnects
+                // this session has been debugging) before the game reaches GameStatus.Finished, the normal
+                // cleanup path near the end of HandleStepAsync never runs. Without this, the orphaned
+                // TrainingSession (its whole in-memory Game graph) and that game's RLBotStrategy cache
+                // entries would leak for the life of the server process. TryRemove is a safe no-op if the
+                // session already cleaned itself up normally (the common case).
+                if (currentSessionId != null && _sessions.TryRemove(currentSessionId, out var orphanedSession))
+                {
+                    _botService.ClearStrategyCache(orphanedSession.Game.Players);
+                    _logger.LogWarning($"[RL DIAGNOSTIC] Cleaned up orphaned training session {currentSessionId} on disconnect (game never reached Finished).");
+                }
             }
             _logger.LogInformation("RL Client disconnected");
         }
@@ -476,6 +494,8 @@ public class TcpTrainingServer : BackgroundService
         int expectedTaxBonus = 0;
         int expectedTaxRevenue = 0;
         int expectedTaxCosts = 0;
+        int expectedTaxTreasuryGain = 0;
+        int expectedTaxPowerGain = 0;
         bool isTaxationAction = false;
 
         if (preNs != null && preNs.ControllerId == session.RLPlayerId)
@@ -492,6 +512,8 @@ public class TcpTrainingServer : BackgroundService
                     isTaxationAction = true;
                     var taxPreview = Imperial2030.Server.Helpers.TaxationHelper.PreviewTaxation(game, preNs);
                     expectedTaxBonus = taxPreview.ExpectedBonus;
+                    expectedTaxTreasuryGain = taxPreview.ExpectedTreasuryGain;
+                    expectedTaxPowerGain = taxPreview.ExpectedPowerGain;
 
                     int factoryRevenue = 0;
                     var territoriesWithFactories = game.TerritoryStates.Where(ts => ts.HasFactory).ToList();
@@ -556,8 +578,8 @@ public class TcpTrainingServer : BackgroundService
                     // cycle Taxation/Investor instead. This is deliberately unconditional (unlike the destroy/occupy
                     // rewards below, which only pay out when it visibly hurts a specific leading rival) — growth is
                     // valuable to the acting nation on its own merits, not contingent on comparing to a rival's interest.
-                    explicitBonusReward += 3.0f;
-                    _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +3");
+                    explicitBonusReward += 5.0f;
+                    _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +5");
                 }
             }
 
@@ -580,6 +602,7 @@ public class TcpTrainingServer : BackgroundService
                     game.Units.Add(new Unit { GameId = game.Id, Nation = ns.Nation, TerritoryId = orderedHome[slotIndex].Id, UnitType = unitType, IsHostile = false });
                     ns.Treasury -= 1;
                     session.PendingImportRemaining--;
+                    session.ImportUnitsPlacedThisSequence++;
                 }
 
                 if (session.PendingImportRemaining <= 0)
@@ -590,7 +613,16 @@ public class TcpTrainingServer : BackgroundService
             }
             else
             {
-                // Stop action, or an invalid/unrecognized action for this stage — finalize either way
+                // Stop action, or an invalid/unrecognized action for this stage — finalize either way.
+                // This is the only path that can resolve the sequence with nothing placed (the "ran out of
+                // remaining slots" branch above can only be reached right after a successful placement), and
+                // the sequence only ever starts when treasury >= 1 (see where PendingImportRemaining is set),
+                // so reaching here with zero placed unambiguously means affordable Import got wasted entirely.
+                if (session.ImportUnitsPlacedThisSequence == 0)
+                {
+                    _logger.LogWarning($"[RL PENALTY] Wasted Import action by {ns.Nation}. Had money but imported 0 units.");
+                    explicitBonusReward -= 7.0f;
+                }
                 ns.HasImportedThisTurn = true;
                 session.PendingImportRemaining = null;
             }
@@ -680,6 +712,30 @@ public class TcpTrainingServer : BackgroundService
                             }
                         }
 
+                        // Penalize fully emptying a factory city's army garrison. Immediate rewards (flag
+                        // capture, hostile-clearing) are certain and dense; the risk of losing a factory to a
+                        // later hostile takeover is delayed and opponent-dependent, so without this the agent
+                        // has no counterweight and will happily strip a factory city's defenders for a nearby
+                        // flag grab (observed live: Russia emptied both Moscow armies to claim neutral Japan
+                        // right after Europe had just hostile-moved into Russia's other home city).
+                        if (unitType == UnitType.Army && target != session.ManeuverSelectedTerritoryId)
+                        {
+                            var originDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == session.ManeuverSelectedTerritoryId);
+                            if (originDef != null && originDef.Nation == unit.Nation)
+                            {
+                                var originTState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == session.ManeuverSelectedTerritoryId);
+                                if (originTState != null && originTState.HasFactory)
+                                {
+                                    bool remainingDefenders = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == session.ManeuverSelectedTerritoryId && u.Nation == unit.Nation && u.UnitType == UnitType.Army);
+                                    if (!remainingDefenders)
+                                    {
+                                        _logger.LogWarning($"[RL PENALTY] {unit.Nation} emptied its factory city '{session.ManeuverSelectedTerritoryId}' of army defenders by moving to '{target}'.");
+                                        explicitBonusReward -= 5.0f;
+                                    }
+                                }
+                            }
+                        }
+
                         unit.TerritoryId = target;
                         unit.IsHostile = isHostileMove;
 
@@ -687,7 +743,21 @@ public class TcpTrainingServer : BackgroundService
                         {
                             var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, session.ManeuverSelectedTerritoryId, unit.Nation);
                             var destInfo = destinations.FirstOrDefault(d => d.TerritoryId == target);
-                            if (destInfo.IsConvoy && destInfo.ConvoyFleets != null)
+                            if (destInfo == null)
+                            {
+                                // Chosen destination isn't among the freshly-recomputed reachable set (e.g. board
+                                // state shifted between when the mask was built and when this move resolves) —
+                                // root cause not yet confirmed. Logged at Error (not Warning) so it surfaces
+                                // the same way the crash this replaced did, since it's still worth tracking down:
+                                // the move itself (unit.TerritoryId = target above) already happened regardless,
+                                // but skipping convoy-fleet bookkeeping here means a fleet that convoyed this
+                                // army won't be marked HasConvoyed=true, which could let it convoy a second army
+                                // later this turn — a rules deviation, not just a cosmetic gap. Goes to both
+                                // console and the rolling log file (see nlog.config) — checkable on demand
+                                // instead of relying on catching one line scrolling past live.
+                                _logger.LogError($"[RL DIAGNOSTIC] Maneuver destination '{target}' for {unit.Nation} army not found among {destinations.Count} reachable destinations from '{session.ManeuverSelectedTerritoryId}' ({string.Join(", ", destinations.Select(d => d.TerritoryId))}).");
+                            }
+                            else if (destInfo.IsConvoy && destInfo.ConvoyFleets != null)
                             {
                                 foreach (var f in destInfo.ConvoyFleets) f.HasConvoyed = true;
                             }
@@ -756,6 +826,7 @@ public class TcpTrainingServer : BackgroundService
                 if (postMoveNs.Treasury >= 1)
                 {
                     session.PendingImportRemaining = Math.Min(RLBotStrategy.MaxImportUnits, postMoveNs.Treasury);
+                    session.ImportUnitsPlacedThisSequence = 0;
                 }
                 else
                 {
@@ -952,6 +1023,11 @@ public class TcpTrainingServer : BackgroundService
                 {
                     reward -= 5.0f; // Penalty if revenue < costs
                 }
+
+                if (expectedTaxTreasuryGain <= 0 && expectedTaxPowerGain == 0)
+                {
+                    reward -= 3.0f; // Penalty for a fully wasted Taxation turn: no treasury gain, no power gain
+                }
             }
         }
 
@@ -1044,6 +1120,38 @@ public class TcpTrainingServer : BackgroundService
                 reward -= 7.0f;
                 reward -= moveCost * 10.0f;
             }
+            // Production (slot 2 or 6) wasted: no existing factory can currently produce. Note that
+            // blockade alone can NEVER fully explain this: the game engine forbids hostile entry into a
+            // nation's last unoccupied factory (ManeuverController's "Cannot enter the last unoccupied
+            // factory hostilely" check), so at least one factory always stays unblockaded whenever the
+            // nation has any factory at all. So a fully wasted turn always requires that every currently
+            // unblockaded factory's unit type (army/fleet) is already at the nation's max cap — blockade
+            // can only ever narrow which *other* factories are unavailable when 2+ exist, never eliminate
+            // the last one. Production itself is free, so this isn't about affordability.
+            if (RondelData.IsProductionSlot(targetSlot) && preNs != null)
+            {
+                var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == preNs.Nation);
+                int currentArmies = game.Units.Count(u => u.Nation == preNs.Nation && u.UnitType == UnitType.Army);
+                int currentFleets = game.Units.Count(u => u.Nation == preNs.Nation && u.UnitType == UnitType.Fleet);
+                int maxArmies = NationData.GetMaxArmies(preNs.Nation);
+                int maxFleets = NationData.GetMaxFleets(preNs.Nation);
+
+                bool canProduceAnything = homeCities.Any(city =>
+                {
+                    var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
+                    if (ts == null || !ts.HasFactory) return false;
+                    bool isBlockaded = game.Units.Any(u => u.TerritoryId == city.Id && u.Nation != preNs.Nation && u.UnitType == UnitType.Army && u.IsHostile);
+                    if (isBlockaded) return false;
+                    return city.CityType == CityType.LightBlue ? currentFleets < maxFleets : currentArmies < maxArmies;
+                });
+
+                if (!canProduceAnything)
+                {
+                    _logger.LogWarning($"[RL PENALTY] Wasted Production action by {preNs.Nation}. No factory can produce (blockaded or at max unit cap). Cost: {moveCost}M");
+                    reward -= 10.0f;
+                    reward -= moveCost * 10.0f;
+                }
+            }
             // Maneuver (slot 3 or 7) with 0 units = wasted turn
             if (RondelData.IsManeuverSlot(targetSlot) && preNs != null)
             {
@@ -1095,6 +1203,7 @@ public class TcpTrainingServer : BackgroundService
             var stateResponse = GetStateVector(game, session.RLPlayerId);
 
             _sessions.TryRemove(req.SessionId, out _);
+            _botService.ClearStrategyCache(game.Players);
             return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[RLBotStrategy.TotalActionSize] };
         }
 
@@ -1122,7 +1231,23 @@ public class TcpTrainingServer : BackgroundService
                 if (ns != null && ns.ControllerId == rlPlayerId) return false;
             }
 
-            await TryPlayBotTurnAsync(g);
+            try
+            {
+                await TryPlayBotTurnAsync(g);
+            }
+            catch (Bots.Strategies.RlTrainingPauseException) { throw; }
+            catch (Exception ex)
+            {
+                // Every call here is for an OPPONENT bot's decision, never the RL trainee's own (the loop
+                // only reaches this line when the "it's the RL player's turn" exit checks above are false).
+                // Log rich context before it propagates and kills this TCP session/SubprocVecEnv worker, so
+                // an exact repro (bot type, nation, decision point) is available on the next occurrence
+                // instead of just a stack trace pointing at what may be a JIT-collapsed frame.
+                var actingNs = g.NationStates.FirstOrDefault(n => n.Nation == g.CurrentTurnNation);
+                var actingPlayer = g.Players.FirstOrDefault(p => p.Id == (g.ActingPlayerId ?? actingNs?.ControllerId));
+                _logger.LogError(ex, $"[RL DIAGNOSTIC] Opponent bot turn resolution threw. Nation={g.CurrentTurnNation}, ActingPlayerId={g.ActingPlayerId}, BotName={actingPlayer?.BotName}, BotType={actingPlayer?.BotType}, IsInvestorTurn={g.IsInvestorTurn}, PendingBattle={g.PendingBattleDefenders.Any()}, PendingSwissBankForce={g.PendingSwissBankForceNation}");
+                throw;
+            }
         }
         return true;
     }
@@ -1152,6 +1277,7 @@ public class TcpTrainingServer : BackgroundService
                 {
                     var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == nation.Nation).Select(t => t.Id).ToList();
                     float factoryScore = 0;
+                    int unoccupiedFactoryCount = 0;
 
                     foreach (var terrId in homeTerritories)
                     {
@@ -1161,7 +1287,7 @@ public class TcpTrainingServer : BackgroundService
                         if (ts != null && ts.HasFactory)
                         {
                             if (isOccupied) factoryScore += 0.02f; // Suppressed factory
-                            else factoryScore += 0.2f; // Healthy factory
+                            else { factoryScore += 0.2f; unoccupiedFactoryCount++; } // Healthy factory
                         }
                         else
                         {
@@ -1171,6 +1297,14 @@ public class TcpTrainingServer : BackgroundService
 
                     int flagCount = game.TerritoryStates.Count(t => t.Controller == nation.Nation);
                     int unitCount = game.Units.Count(u => u.Nation == nation.Nation);
+                    // Only reward units up to what the nation's economy can actually sustain (mirrors the
+                    // taxation revenue formula: 2M/unoccupied factory + 1M/flag), hard-capped at the nation's
+                    // real maximum unit count (armies + fleets, always 16 per NationData). Without this,
+                    // raw unit count was a free, uncapped reward for stockpiling idle units regardless of
+                    // whether they were ever used (real CalculateScore doesn't count units at all).
+                    int maxUnitCount = NationData.GetMaxArmies(nation.Nation) + NationData.GetMaxFleets(nation.Nation);
+                    int sustainableUnitCapacity = Math.Min(maxUnitCount, unoccupiedFactoryCount * 2 + flagCount);
+                    int usefulUnitCount = Math.Min(unitCount, sustainableUnitCapacity);
 
                     float denseFactor = (nation.Power / 5.0f);
 
@@ -1183,7 +1317,7 @@ public class TcpTrainingServer : BackgroundService
 
                         denseFactor += factoryScore
                                      + (flagCount * flagValue)
-                                     + (unitCount * 0.01f)
+                                     + (usefulUnitCount * 0.01f)
                                      + (nation.Treasury * 0.005f);
                     }
 

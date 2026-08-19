@@ -1,4 +1,4 @@
-using Imperial2030.Server.Data;
+﻿using Imperial2030.Server.Data;
 using Imperial2030.Server.Models;
 using Imperial2030.Server.Helpers;
 using Imperial2030.Shared.Models;
@@ -12,6 +12,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.SignalR;
 using System;
 using System.Linq;
+using System.Text.Json;
 
 namespace Imperial2030.Server.Controllers;
 
@@ -26,6 +27,13 @@ public class GamesController : ControllerBase
     private readonly Imperial2030.Server.Services.PresenceTracker _presenceTracker;
     private readonly Imperial2030.Server.Services.BotService _botService;
     private readonly Imperial2030.Server.Services.INotificationService _notificationService;
+
+    /// <summary>
+    /// When true, suppresses all SignalR broadcasts from this controller instance. Set by
+    /// GameReplayService while replaying actions (e.g. during ImportGame) so a large replay doesn't
+    /// spam every connected browser with GameUpdated/GameStarted/etc. events for a game they can't see yet.
+    /// </summary>
+    public bool SuppressBroadcasts { get; set; } = false;
 
     public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.PresenceTracker presenceTracker, Imperial2030.Server.Services.BotService botService, Imperial2030.Server.Services.INotificationService notificationService)
     {
@@ -44,8 +52,6 @@ public class GamesController : ControllerBase
         var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
         return await _context.Games
-            .Include(g => g.Players).ThenInclude(p => p.User)
-            .Include(g => g.NationStates)
             .OrderByDescending(g => g.CreatedAt)
             .Select(g => new GameDto
             {
@@ -65,7 +71,8 @@ public class GamesController : ControllerBase
                 MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0,
                 TurnCount = g.TurnCount,
                 WinnerName = g.WinnerName,
-                IsPaused = g.IsPaused
+                IsPaused = g.IsPaused,
+                IsAllBots = g.Players.Any() && g.Players.All(p => p.IsBot)
             })
             .ToListAsync();
     }
@@ -118,7 +125,7 @@ public class GamesController : ControllerBase
             HostName = User.Identity?.Name
         };
 
-        await _hubContext.Clients.All.SendAsync("GameCreated", gameDto);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameCreated", gameDto); }
 
         return CreatedAtAction(nameof(GetGames), new { id = game.Id }, gameDto);
     }
@@ -157,10 +164,10 @@ public class GamesController : ControllerBase
             IsHost = false
         };
         _context.Players.Add(player);
-        GameLogger.LogJoinGame(_context, game, User.Identity?.Name ?? "System");
+        GameLogger.LogJoinGame(_context, game, User.Identity?.Name ?? GameConstants.SystemPlayerName);
         await _context.SaveChangesAsync();
 
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
 
         return Ok();
     }
@@ -247,11 +254,11 @@ public class GamesController : ControllerBase
                 }
             }
 
-            GameLogger.LogLeaveGame(_context, game, User.Identity?.Name ?? "System");
+            GameLogger.LogLeaveGame(_context, game, User.Identity?.Name ?? GameConstants.SystemPlayerName);
             await _context.SaveChangesAsync();
         }
 
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
 
         return Ok();
     }
@@ -275,8 +282,16 @@ public class GamesController : ControllerBase
 
         if (game == null) return NotFound();
 
-        var player = game.Players.FirstOrDefault(p => p.UserId == userId);
-        if (player == null || !player.IsHost) return Forbid();
+        // Imported (and bot-vs-bot exhibition) games have no real human host — the importer never gets a
+        // Player row of their own — so the normal host-only check can never pass for them. Any signed-in,
+        // non-guest user may delete an all-bot game instead; a game with any real player still requires
+        // being that player and being the host.
+        bool isAllBotGame = game.Players.Any() && game.Players.All(p => p.IsBot);
+        if (!isAllBotGame)
+        {
+            var player = game.Players.FirstOrDefault(p => p.UserId == userId);
+            if (player == null || !player.IsHost) return Forbid();
+        }
 
         await _context.GameActions.Where(a => a.GameId == gameId).ExecuteDeleteAsync();
 
@@ -289,8 +304,8 @@ public class GamesController : ControllerBase
         _context.Games.Remove(game);
         await _context.SaveChangesAsync();
 
-        await _hubContext.Clients.All.SendAsync("GameDeleted", gameId);
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameDeleted", gameId); }
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
         return Ok();
     }
 
@@ -317,91 +332,7 @@ public class GamesController : ControllerBase
 
         if (game == null) return NotFound();
 
-        var dto = new GameDetailDto
-        {
-            Id = game.Id,
-            Name = game.Name,
-            Status = game.Status,
-            CreatedAt = game.CreatedAt,
-            FinishedAt = game.FinishedAt,
-            WinnerName = game.WinnerName,
-            IsPrivate = game.IsPrivate,
-            IsPaused = game.IsPaused,
-            VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
-            HostId = game.Players.FirstOrDefault(p => p.IsHost)?.UserId,
-            JoinCode = game.Players.Any(p => p.UserId == userId && p.IsHost) ? game.JoinCode : null,
-            CurrentTurnNation = game.CurrentTurnNation,
-            PlayerCount = game.Players.Count,
-            Players = game.Players.Select(p => new PlayerDto
-            {
-                Id = p.Id,
-                UserId = p.IsBot ? $"bot-{p.Id}" : p.UserId!,
-                UserName = p.IsBot ? (p.BotName ?? "Bot") : (p.User?.UserName ?? "Unknown"),
-                IsHost = p.IsHost,
-                Cash = p.Cash,
-                IsBot = p.IsBot,
-                IsOnline = p.IsBot ? true : _presenceTracker.IsUserOnline(p.UserId),
-                IsActiveInGame = p.IsBot ? true : _presenceTracker.IsUserActiveInGame(gameId.ToString(), p.UserId),
-                Bonds = game.Bonds.Where(b => b.HolderId == p.Id).Select(b => new BondDto
-                {
-                    Id = b.Id,
-                    Nation = b.Nation,
-                    Cost = b.Cost,
-                    Interest = b.Interest,
-                    HolderName = p.IsBot ? (p.BotName ?? "Bot") : (p.User?.UserName ?? "Unknown")
-                }).ToList()
-            }).ToList(),
-            NationStates = game.NationStates.Select(ns => new NationStateDto
-            {
-                Nation = ns.Nation,
-                Treasury = ns.Treasury,
-                Power = ns.Power,
-                RondelPosition = ns.RondelPosition,
-                ControllerName = ns.Controller != null ? (ns.Controller.IsBot ? (ns.Controller.BotName ?? "Bot") : ns.Controller.User?.UserName) : null,
-                ControllerId = ns.ControllerId,
-                HasBuiltThisTurn = ns.HasBuiltThisTurn,
-                HasProducedThisTurn = ns.HasProducedThisTurn,
-                HasMovedThisTurn = ns.HasMovedThisTurn,
-                HasImportedThisTurn = ns.HasImportedThisTurn,
-                TaxRevenue = ns.TaxRevenue,
-                PreviousTaxRevenue = ns.PreviousTaxRevenue
-            }).ToList(),
-            AvailableBonds = game.Bonds.Where(b => b.HolderId == null).Select(b => new BondDto
-            {
-                Id = b.Id,
-                Nation = b.Nation,
-                Cost = b.Cost,
-                Interest = b.Interest,
-                HolderName = null
-            }).ToList(),
-            Territories = game.TerritoryStates.Select(ts => new TerritoryStateDto
-            {
-                TerritoryId = ts.TerritoryId,
-                HasFactory = ts.HasFactory,
-                Controller = ts.Controller
-            }).ToList(),
-            InvestorCardHolderId = game.InvestorCardHolderId,
-            IsInvestorTurn = game.IsInvestorTurn,
-            ActingPlayerId = game.ActingPlayerId,
-            PendingBattleTerritoryId = game.PendingBattleTerritoryId,
-            PendingBattleAggressorNation = game.PendingBattleAggressorNation,
-            PendingBattleDefenders = game.PendingBattleDefenders.ToList(),
-            PendingSwissBankForceNation = game.PendingSwissBankForceNation,
-            PendingSwissBankResponders = game.PendingSwissBankResponders.ToList(),
-            Units = game.Units.ToList(),
-            ManeuverState = new ManeuverState { Phase = game.CurrentManeuverPhase },
-            Actions = game.Actions.OrderBy(a => a.OrderIndex).ThenBy(a => a.Timestamp).Select(a => new GameActionDto
-            {
-                Id = a.Id,
-                OrderIndex = a.OrderIndex,
-                Timestamp = a.Timestamp,
-                PlayerName = a.PlayerName,
-                Nation = a.Nation,
-                ActionType = a.ActionType,
-                Message = a.Message,
-                Metadata = a.Metadata ?? string.Empty
-            }).ToList()
-        };
+        var dto = BuildGameDetailDto(game, userId);
 
         if (game.Status == GameStatus.InProgress)
         {
@@ -446,6 +377,420 @@ public class GamesController : ControllerBase
         }
 
         return dto;
+    }
+
+    // Extracted from GetGame so ReplayState (Server/Services/ReplaySessionManager.cs's in-memory replay
+    // sessions) can build the exact same DTO shape from a fully-loaded Game without duplicating this
+    // projection. Deliberately excludes GetGame's post-build bot-turn-triggering side effect below it —
+    // that only makes sense for real, persisted games, not a scratch in-memory replay session.
+    // Internal (not private) so ReplaySessionManager's background replay loop can build the same DTO shape
+    // from its own in-memory-context-backed GamesController instance without duplicating this projection.
+    internal GameDetailDto BuildGameDetailDto(Game game, string? userId)
+    {
+        return new GameDetailDto
+        {
+            Id = game.Id,
+            Name = game.Name,
+            Status = game.Status,
+            CreatedAt = game.CreatedAt,
+            FinishedAt = game.FinishedAt,
+            WinnerName = game.WinnerName,
+            IsPrivate = game.IsPrivate,
+            IsPaused = game.IsPaused,
+            VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
+            HostId = game.Players.FirstOrDefault(p => p.IsHost)?.UserId,
+            JoinCode = game.Players.Any(p => p.UserId == userId && p.IsHost) ? game.JoinCode : null,
+            CurrentTurnNation = game.CurrentTurnNation,
+            PlayerCount = game.Players.Count,
+            Players = game.Players.Select(p => new PlayerDto
+            {
+                Id = p.Id,
+                UserId = p.IsBot ? $"bot-{p.Id}" : p.UserId!,
+                // GetPlayerName checks BotName before IsBot — matters because replay/import players are kept
+                // IsBot=false for the duration (see PlayerHelper.GetPlayerName's own comment) while their
+                // BotName already holds the correct display name; the old inline IsBot-gated logic here
+                // fell through to p.User?.UserName, which is null for those synthetic players (no real
+                // backing ApplicationUser), rendering as "Unknown" in the Players panel.
+                UserName = p.GetPlayerName(_context),
+                IsHost = p.IsHost,
+                Cash = p.Cash,
+                IsBot = p.IsBot,
+                IsOnline = p.IsBot ? true : _presenceTracker.IsUserOnline(p.UserId),
+                IsActiveInGame = p.IsBot ? true : _presenceTracker.IsUserActiveInGame(game.Id.ToString(), p.UserId),
+                Bonds = game.Bonds.Where(b => b.HolderId == p.Id).Select(b => new BondDto
+                {
+                    Id = b.Id,
+                    Nation = b.Nation,
+                    Cost = b.Cost,
+                    Interest = b.Interest,
+                    HolderName = p.GetPlayerName(_context)
+                }).ToList()
+            }).ToList(),
+            NationStates = game.NationStates.Select(ns => new NationStateDto
+            {
+                Nation = ns.Nation,
+                Treasury = ns.Treasury,
+                Power = ns.Power,
+                RondelPosition = ns.RondelPosition,
+                // GetPlayerName checks BotName before IsBot (see its own comment) — replay/import players
+                // are kept IsBot=false with no real backing ApplicationUser, so the old inline IsBot-gated
+                // logic here always fell through to null, making ControllerName null for every nation
+                // during replay. IsMyTurn() (Client) compares this against MyPlayer?.UserName (also null
+                // for the replay viewer), so null==null was silently evaluating to "my turn" for every
+                // nation — showing real action controls (e.g. the maneuver phase's "End Phase" button)
+                // during what's supposed to be pure, non-interactive playback.
+                ControllerName = ns.Controller != null ? ns.Controller.GetPlayerName(_context) : null,
+                ControllerId = ns.ControllerId,
+                HasBuiltThisTurn = ns.HasBuiltThisTurn,
+                HasProducedThisTurn = ns.HasProducedThisTurn,
+                HasMovedThisTurn = ns.HasMovedThisTurn,
+                HasImportedThisTurn = ns.HasImportedThisTurn,
+                TaxRevenue = ns.TaxRevenue,
+                PreviousTaxRevenue = ns.PreviousTaxRevenue
+            }).ToList(),
+            AvailableBonds = game.Bonds.Where(b => b.HolderId == null).Select(b => new BondDto
+            {
+                Id = b.Id,
+                Nation = b.Nation,
+                Cost = b.Cost,
+                Interest = b.Interest,
+                HolderName = null
+            }).ToList(),
+            Territories = game.TerritoryStates.Select(ts => new TerritoryStateDto
+            {
+                TerritoryId = ts.TerritoryId,
+                HasFactory = ts.HasFactory,
+                Controller = ts.Controller
+            }).ToList(),
+            InvestorCardHolderId = game.InvestorCardHolderId,
+            IsInvestorTurn = game.IsInvestorTurn,
+            ActingPlayerId = game.ActingPlayerId,
+            PendingBattleTerritoryId = game.PendingBattleTerritoryId,
+            PendingBattleAggressorNation = game.PendingBattleAggressorNation,
+            PendingBattleDefenders = game.PendingBattleDefenders.ToList(),
+            PendingSwissBankForceNation = game.PendingSwissBankForceNation,
+            PendingSwissBankResponders = game.PendingSwissBankResponders.ToList(),
+            Units = game.Units.ToList(),
+            ManeuverState = new ManeuverState { Phase = game.CurrentManeuverPhase },
+            Actions = game.Actions.OrderBy(a => a.OrderIndex).ThenBy(a => a.Timestamp).Select(a => new GameActionDto
+            {
+                Id = a.Id,
+                OrderIndex = a.OrderIndex,
+                Timestamp = a.Timestamp,
+                PlayerName = a.PlayerName,
+                Nation = a.Nation,
+                ActionType = a.ActionType,
+                Message = a.Message,
+                Metadata = a.Metadata ?? string.Empty
+            }).ToList()
+        };
+    }
+
+    [HttpGet("{gameId}/export")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ExportGame(Guid gameId)
+    {
+        var game = await _context.Games.Include(g => g.Actions).AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
+        if (game == null) return NotFound();
+        if (game.Status != GameStatus.Finished) return BadRequest("Only finished games can be exported.");
+
+        var export = new GameExportDto
+        {
+            FormatVersion = 1,
+            OriginalGameId = game.Id,
+            OriginalGameName = game.Name,
+            ExportedAt = DateTime.UtcNow,
+            Actions = game.Actions.OrderBy(a => a.OrderIndex).ThenBy(a => a.Timestamp).Select(a => new GameActionDto
+            {
+                Id = a.Id,
+                OrderIndex = a.OrderIndex,
+                Timestamp = a.Timestamp,
+                PlayerName = a.PlayerName,
+                Nation = a.Nation,
+                ActionType = a.ActionType,
+                Message = a.Message,
+                Metadata = a.Metadata ?? string.Empty
+            }).ToList()
+        };
+
+        var json = JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
+        var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+        var safeName = string.Join("_", game.Name.Split(Path.GetInvalidFileNameChars()));
+        return File(bytes, "application/json", $"{safeName}_{game.Id}.json");
+    }
+
+    // Never stacks a repeat " (Imported)" suffix (a game can be exported and re-imported any number of
+    // times — export doesn't care whether its source was itself an import) and always fits within
+    // Game.Name's [MaxLength(50)], truncating the original name rather than the suffix so the result stays
+    // recognizable as an import. Without this, each import/export cycle grew the name by " (Imported)"
+    // until it overflowed the column and every subsequent import of that lineage failed outright.
+    private static string BuildImportedGameName(string? originalGameName)
+    {
+        const string suffix = " (Imported)";
+        const int maxNameLength = GameConstants.MaxGameNameLength;
+        string baseName = string.IsNullOrWhiteSpace(originalGameName) ? "Imported Game" : originalGameName.Trim();
+        if (baseName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return baseName.Length > maxNameLength ? baseName[..maxNameLength] : baseName;
+        }
+        string name = baseName + suffix;
+        if (name.Length <= maxNameLength) return name;
+        int keep = Math.Max(0, maxNameLength - suffix.Length);
+        return baseName[..Math.Min(keep, baseName.Length)] + suffix;
+    }
+
+    [HttpPost("import")]
+    public async Task<ActionResult<GameDto>> ImportGame([FromBody] GameExportDto import)
+    {
+        if (User.IsInRole("Guest")) return Forbid();
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId == null) return Unauthorized();
+
+        if (import?.Actions == null || import.Actions.Count == 0) return BadRequest("Import file has no actions.");
+
+        var orderedActions = import.Actions.OrderBy(a => a.OrderIndex).ToList();
+        var startGameAction = orderedActions.FirstOrDefault(a => a.ActionType == "StartGame");
+        if (startGameAction == null || string.IsNullOrEmpty(startGameAction.Metadata))
+        {
+            return BadRequest("Import file is missing its StartGame roster/setup metadata (exported from an older server version?).");
+        }
+
+        GameSetupMetadata? setupMeta;
+        try
+        {
+            setupMeta = JsonSerializer.Deserialize<GameSetupMetadata>(startGameAction.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException)
+        {
+            return BadRequest("Could not parse the StartGame action's metadata.");
+        }
+        if (setupMeta == null || setupMeta.Players.Count < 2 || setupMeta.NationDistribution.Count == 0)
+        {
+            return BadRequest("Import file's roster/nation-distribution snapshot is missing or incomplete.");
+        }
+
+        var rosterIds = setupMeta.Players.Select(p => p.PlayerId).ToHashSet();
+        if (setupMeta.NationDistribution.Values.Any(pid => !rosterIds.Contains(pid)))
+        {
+            return BadRequest("Nation distribution references a player not present in the roster snapshot.");
+        }
+
+        var newGameId = Guid.NewGuid();
+
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
+        if (_context.Database.IsRelational())
+        {
+            transaction = await _context.Database.BeginTransactionAsync();
+        }
+
+        try
+        {
+            var newGame = new Game
+            {
+                Id = newGameId,
+                Name = BuildImportedGameName(import.OriginalGameName),
+                Status = GameStatus.Lobby,
+                MaxPlayers = setupMeta.MaxPlayers > 0 ? setupMeta.MaxPlayers : setupMeta.Players.Count,
+                IsPrivate = setupMeta.IsPrivate,
+                VariantBonusOnlyForTaxIncreases = setupMeta.VariantBonusOnlyForTaxIncreases
+            };
+            _context.Games.Add(newGame);
+            await _context.SaveChangesAsync();
+
+            // Kept non-bot for the duration of replay below — see GameSetupHelper.ReconstructRosterAndSetupAsync
+            // for why, and for why each player gets a real, throwaway ApplicationUser (never logged into) as
+            // its UserId rather than a bare placeholder string. Flipped to a real, non-interactive bot once
+            // replay succeeds; UserId is left pointing at that throwaway account permanently (satisfying the
+            // FK — nothing ever surfaces it as a real player since every UI surface displays BotName instead).
+            var importIdMap = await GameSetupHelper.ReconstructRosterAndSetupAsync(_context, newGameId, setupMeta, _userManager);
+
+            // "StartGame" is in GameReplayService's skip-list (it's a no-op consequence during replay, not a
+            // live action to re-execute), so the replay below never logs one into THIS game's own action log.
+            // Without it, the imported game could never itself be the source of a later "Start Replay" —
+            // StartReplay requires a StartGame action's roster/setup snapshot to reconstruct anything. Log one
+            // explicitly here, remapped onto the fresh Player IDs/UserIds this import just created, so the
+            // imported game is exactly as replayable as any originally-played one.
+            var remappedRoster = setupMeta.Players.Select(p =>
+            {
+                var newPlayer = _context.Players.Local.FirstOrDefault(np => np.Id == importIdMap[p.PlayerId])
+                    ?? _context.Players.First(np => np.Id == importIdMap[p.PlayerId]);
+                return new PlayerRosterEntry
+                {
+                    PlayerId = importIdMap[p.PlayerId],
+                    UserId = newPlayer.UserId,
+                    IsHost = p.IsHost,
+                    IsBot = p.IsBot,
+                    BotName = p.BotName,
+                    BotType = p.BotType,
+                    DisplayName = p.DisplayName
+                };
+            }).ToList();
+            var remappedDistribution = setupMeta.NationDistribution.ToDictionary(kvp => kvp.Key, kvp => importIdMap[kvp.Value]);
+            GameLogger.LogStartGame(_context, newGame, User.Identity?.Name ?? GameConstants.SystemPlayerName, remappedDistribution, remappedRoster);
+            await _context.SaveChangesAsync();
+
+            var replayGamesController = new GamesController(_context, _userManager, _hubContext, _presenceTracker, _botService, _notificationService) { SuppressBroadcasts = true };
+            var replayManeuverController = new ManeuverController(_context, _hubContext, _botService) { SuppressBroadcasts = true };
+            var replayService = new Imperial2030.Server.Services.GameReplayService();
+            var replayResult = await replayService.ReplayActionsAsync(_context, newGameId, replayGamesController, replayManeuverController, orderedActions, suppressBroadcasts: true);
+
+            if (!replayResult.Success)
+            {
+                if (transaction != null) { await transaction.RollbackAsync(); }
+                return BadRequest($"Import failed while replaying action #{replayResult.FailedActionOrderIndex} ({replayResult.FailedActionType}): {replayResult.ErrorMessage}");
+            }
+
+            // Replay succeeded: the roster can now safely become non-interactive bots (no more replay in
+            // flight for BotService to race against) and the game should already be Finished as a natural
+            // consequence of replaying a source game whose own action log ended in a finished state.
+            var importedPlayers = await _context.Players.Where(p => p.GameId == newGameId).ToListAsync();
+            foreach (var p in importedPlayers)
+            {
+                p.IsBot = true;
+            }
+            var finalGame = await _context.Games.FirstAsync(g => g.Id == newGameId);
+            if (finalGame.Status != GameStatus.Finished)
+            {
+                return BadRequest($"Import replayed successfully but the resulting game is '{finalGame.Status}', not Finished — the source export may be incomplete.");
+            }
+            // WinnerName was already computed and saved mid-replay (inside the replayed Taxation/EndGame
+            // action, via GameHelper.SetWinnerNameAsync -> PlayerHelper.GetPlayerName) while every player was
+            // still IsBot = false to keep BotService from racing the replay — GetPlayerName's non-bot branch
+            // falls back to the throwaway ApplicationUser's UserName in that state, not the intended BotName.
+            // Recompute now that IsBot is correctly true for the whole roster.
+            await finalGame.SetWinnerNameAsync(_context);
+            await _context.SaveChangesAsync();
+
+            if (transaction != null) { await transaction.CommitAsync(); }
+
+            var dto = new GameDto
+            {
+                Id = finalGame.Id,
+                Name = finalGame.Name,
+                Status = finalGame.Status,
+                CreatedAt = finalGame.CreatedAt,
+                FinishedAt = finalGame.FinishedAt,
+                WinnerName = finalGame.WinnerName,
+                PlayerCount = importedPlayers.Count,
+                MaxPlayers = finalGame.MaxPlayers,
+                IsPrivate = finalGame.IsPrivate,
+                VariantBonusOnlyForTaxIncreases = finalGame.VariantBonusOnlyForTaxIncreases,
+                IsPaused = finalGame.IsPaused,
+                UserIds = new List<string>(),
+                HostId = null,
+                HostName = importedPlayers.FirstOrDefault(p => p.IsHost)?.BotName,
+                IsAllBots = true
+            };
+            return Ok(dto);
+        }
+        catch (Exception ex)
+        {
+            if (transaction != null) { await transaction.RollbackAsync(); }
+            return StatusCode(500, $"Internal server error during import: {ex.Message}");
+        }
+    }
+
+    // --- "Start Replay": paced, in-memory playback of any finished game's own action log (Server/Services/
+    // ReplaySessionManager.cs). Never touches this game's real rows — only ever reads its Actions. ---
+
+    [HttpPost("{gameId}/replay/start")]
+    [AllowAnonymous]
+    public async Task<IActionResult> StartReplay(Guid gameId, [FromServices] Imperial2030.Server.Services.ReplaySessionManager replaySessionManager)
+    {
+        var sourceGame = await _context.Games.Include(g => g.Actions).AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
+        if (sourceGame == null) return NotFound();
+        if (sourceGame.Status != GameStatus.Finished) return BadRequest("Only finished games can be replayed.");
+
+        var orderedActions = sourceGame.Actions.OrderBy(a => a.OrderIndex).ThenBy(a => a.Timestamp).Select(a => new GameActionDto
+        {
+            Id = a.Id,
+            OrderIndex = a.OrderIndex,
+            Timestamp = a.Timestamp,
+            PlayerName = a.PlayerName,
+            Nation = a.Nation,
+            ActionType = a.ActionType,
+            Message = a.Message,
+            Metadata = a.Metadata ?? string.Empty
+        }).ToList();
+
+        var startGameAction = orderedActions.FirstOrDefault(a => a.ActionType == "StartGame");
+        if (startGameAction == null || string.IsNullOrEmpty(startGameAction.Metadata))
+        {
+            return BadRequest("This game predates the roster/setup snapshot needed for replay.");
+        }
+
+        GameSetupMetadata? setupMeta;
+        try
+        {
+            setupMeta = JsonSerializer.Deserialize<GameSetupMetadata>(startGameAction.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException)
+        {
+            return BadRequest("Could not parse the StartGame action's metadata.");
+        }
+        if (setupMeta == null || setupMeta.Players.Count < 2 || setupMeta.NationDistribution.Count == 0)
+        {
+            return BadRequest("Roster/nation-distribution snapshot is missing or incomplete.");
+        }
+
+        var replaySessionId = await replaySessionManager.StartReplayAsync(sourceGame, orderedActions, setupMeta);
+        return Ok(replaySessionId);
+    }
+
+    [HttpGet("replay/{replaySessionId}")]
+    [AllowAnonymous]
+    public ActionResult<ReplayStateDto> GetReplayState(Guid replaySessionId, [FromServices] Imperial2030.Server.Services.ReplaySessionManager replaySessionManager)
+    {
+        var session = replaySessionManager.Get(replaySessionId);
+        if (session == null) return NotFound();
+
+        return Ok(new ReplayStateDto
+        {
+            ReplaySessionId = session.Id,
+            SourceGameId = session.SourceGameId,
+            CurrentActionIndex = session.CurrentActionIndex,
+            TotalActions = session.Actions.Count,
+            IsPaused = session.IsPaused,
+            IsComplete = session.IsComplete,
+            ErrorMessage = session.ErrorMessage,
+            Game = session.LatestSnapshot
+        });
+    }
+
+    [HttpPost("replay/{replaySessionId}/pause")]
+    [AllowAnonymous]
+    public IActionResult PauseReplay(Guid replaySessionId, [FromServices] Imperial2030.Server.Services.ReplaySessionManager replaySessionManager)
+    {
+        if (replaySessionManager.Get(replaySessionId) == null) return NotFound();
+        replaySessionManager.Pause(replaySessionId);
+        return Ok();
+    }
+
+    [HttpPost("replay/{replaySessionId}/resume")]
+    [AllowAnonymous]
+    public IActionResult ResumeReplay(Guid replaySessionId, [FromServices] Imperial2030.Server.Services.ReplaySessionManager replaySessionManager)
+    {
+        if (replaySessionManager.Get(replaySessionId) == null) return NotFound();
+        replaySessionManager.Resume(replaySessionId);
+        return Ok();
+    }
+
+    [HttpPost("replay/{replaySessionId}/reset")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ResetReplay(Guid replaySessionId, [FromServices] Imperial2030.Server.Services.ReplaySessionManager replaySessionManager)
+    {
+        var reset = await replaySessionManager.ResetAsync(replaySessionId);
+        if (!reset) return NotFound();
+        return Ok();
+    }
+
+    [HttpPost("replay/{replaySessionId}/stop")]
+    [AllowAnonymous]
+    public async Task<IActionResult> StopReplay(Guid replaySessionId, [FromServices] Imperial2030.Server.Services.ReplaySessionManager replaySessionManager)
+    {
+        var stopped = await replaySessionManager.StopAsync(replaySessionId);
+        if (!stopped) return NotFound();
+        return Ok();
     }
 
     private static readonly string[] BotNames = { "Bot Alpha", "Bot Bravo", "Bot Charlie", "Bot Delta", "Bot Echo", "Bot Foxtrot" };
@@ -530,7 +875,7 @@ public class GamesController : ControllerBase
 
         _context.Players.Add(bot);
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
         return Ok();
     }
 
@@ -553,7 +898,7 @@ public class GamesController : ControllerBase
 
         _context.Players.Remove(bot);
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
         return Ok();
     }
 
@@ -606,12 +951,22 @@ public class GamesController : ControllerBase
                 _ = _notificationService.NotifyGameStartedAsync(startedGame);
 
                 var nationDistribution = distribution.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Id);
-                GameLogger.LogStartGame(_context, startedGame, User.Identity?.Name ?? "System", nationDistribution);
+                var rosterSnapshot = gameCheck.Players.Select(p => new PlayerRosterEntry
+                {
+                    PlayerId = p.Id,
+                    UserId = p.UserId,
+                    IsHost = p.IsHost,
+                    IsBot = p.IsBot,
+                    BotName = p.BotName,
+                    BotType = p.BotType,
+                    DisplayName = p.GetPlayerName(_context)
+                }).ToList();
+                GameLogger.LogStartGame(_context, startedGame, User.Identity?.Name ?? GameConstants.SystemPlayerName, nationDistribution, rosterSnapshot);
                 await _context.SaveChangesAsync();
             }
 
-            await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameStarted", gameId);
+            if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameStarted", gameId); }
 
             // Trigger bot if first nation is bot-controlled
             _botService.TriggerBotTurn(gameId);
@@ -984,7 +1339,7 @@ public class GamesController : ControllerBase
                     game.PendingSwissBankResponders = swissBankPlayers.Select(p => p.Id).ToList();
 
                     await _context.SaveChangesAsync();
-                    await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+                    if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
                     _botService.TriggerBotTurn(gameId);
                     return Ok();
                 }
@@ -1025,7 +1380,10 @@ public class GamesController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nation, User.Identity?.Name ?? "System");
+        // controller.GetPlayerName resolves the real bot/player name — User.Identity?.Name is never
+        // populated by GameReplayService's replay auth context (only NameIdentifier), so every rondel move
+        // replayed through this endpoint was silently logged as GameConstants.SystemPlayerName instead.
+        GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nation, controller.GetPlayerName(_context));
         await _context.SaveChangesAsync();
 
         // Check for Investor Slot (Index 4)
@@ -1089,7 +1447,7 @@ public class GamesController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
 
         // Trigger bot if Investor Phase was activated for a bot
         if (game.IsInvestorTurn)
@@ -1182,10 +1540,10 @@ public class GamesController : ControllerBase
             nationState.HasProducedThisTurn = true;
             _context.Entry(nationState).State = EntityState.Modified;
 
-            GameLogger.LogProduction(_context, game, createdUnits, producedDetails, currentNation, User.Identity?.Name ?? "System");
+            GameLogger.LogProduction(_context, game, createdUnits, producedDetails, currentNation, controller.GetPlayerName(_context));
 
             await _context.SaveChangesAsync();
-            await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+            if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
             return Ok($"Produced {createdUnits} units.");
         }
         else
@@ -1300,7 +1658,7 @@ public class GamesController : ControllerBase
                 ? $"{actingPlayer.GetPlayerName(_context)} upgraded {bond.Nation} {tradeInCost.Value}M to {bond.Cost}M bond"
                 : $"{actingPlayer.GetPlayerName(_context)} bought {bond.Nation} {bond.Cost}M bond";
 
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{baseToastMessage}{controlChangeMessage}", false);
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{baseToastMessage}{controlChangeMessage}", false); }
         }
         else
         {
@@ -1327,7 +1685,7 @@ public class GamesController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
 
         // Trigger bot if next turn is bot-controlled
         _botService.TriggerBotTurn(gameId);
@@ -1408,10 +1766,10 @@ public class GamesController : ControllerBase
         _context.Entry(nationState).State = EntityState.Modified;
         _context.Entry(territoryState).State = EntityState.Modified;
 
-        GameLogger.LogFactoryBuild(_context, game, territoryDef.Name, nation, User.Identity?.Name ?? "System");
+        GameLogger.LogFactoryBuild(_context, game, territoryDef.Name, nation, controller.GetPlayerName(_context));
 
         await _context.SaveChangesAsync();
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
 
         return Ok();
     }
@@ -1448,10 +1806,10 @@ public class GamesController : ControllerBase
 
         _context.Entry(game).State = EntityState.Modified;
 
-        GameLogger.LogEndTurn(_context, game, nation, User.Identity?.Name ?? "System");
+        GameLogger.LogEndTurn(_context, game, nation, controller.GetPlayerName(_context));
         await _context.SaveChangesAsync();
 
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
 
         // Trigger bot if next nation is bot-controlled
         _botService.TriggerBotTurn(gameId);
@@ -1503,11 +1861,11 @@ public class GamesController : ControllerBase
         // Save Changes
         _context.Entry(nationState).State = EntityState.Modified;
         int treasuryGain = nationState.Treasury - oldTreasury;
-        GameLogger.LogTaxation(_context, game, result.TotalTaxRevenue, result.SoldiersPay, treasuryGain, result.Bonus, result.PowerGain, nation, User.Identity?.Name ?? "System");
+        GameLogger.LogTaxation(_context, game, result.TotalTaxRevenue, result.SoldiersPay, treasuryGain, result.Bonus, result.PowerGain, nation, controller.GetPlayerName(_context));
         await _context.SaveChangesAsync();
 
         // --- Game End Check ---
-        if (nationState.Power >= 25)
+        if (nationState.Power >= GameConstants.MaxPowerPoints)
         {
             game.Status = GameStatus.Finished;
             game.FinishedAt = DateTime.UtcNow;
@@ -1516,11 +1874,18 @@ public class GamesController : ControllerBase
 
             _context.Entry(game).State = EntityState.Modified;
             await _context.SaveChangesAsync();
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); // Notify update FIRST so clients see 25 Power
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameEnded", gameId); // Notify end
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); } // Notify update FIRST so clients see 25 Power
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameEnded", gameId); } // Notify end
 
-            // Fire notification
-            _ = _notificationService.NotifyGameFinishedAsync(game, $"Ended by {nation} reaching 25 Power");
+            // Fire notification — but never for a replay/import: SuppressBroadcasts marks a game being
+            // reconstructed by GameReplayService rather than actually played, and its players are throwaway
+            // placeholder accounts. Emailing "your game finished" for a historical game someone just
+            // imported is wrong (and was failing with Unauthorized against the notification function
+            // anyway, since those accounts aren't real users).
+            if (!SuppressBroadcasts)
+            {
+                _ = _notificationService.NotifyGameFinishedAsync(game, $"Ended by {nation} reaching {GameConstants.MaxPowerPoints} Power");
+            }
 
             return Ok(new { Message = "Game Over", Winner = nation });
         }
@@ -1532,7 +1897,7 @@ public class GamesController : ControllerBase
         _context.Entry(game).State = EntityState.Modified;
         await _context.SaveChangesAsync();
 
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
         // Trigger bot if next nation is bot-controlled
         _botService.TriggerBotTurn(gameId);
@@ -1631,10 +1996,10 @@ public class GamesController : ControllerBase
         _context.Entry(nationState).State = EntityState.Modified;
 
         var importTuples = request.Units.Select(u => (u.UnitType, u.TerritoryId)).ToList();
-        GameLogger.LogImport(_context, game, request.Units.Count, importTuples, game.CurrentTurnNation, User.Identity?.Name ?? "System");
+        GameLogger.LogImport(_context, game, request.Units.Count, importTuples, game.CurrentTurnNation, controller.GetPlayerName(_context));
         await _context.SaveChangesAsync();
 
-        await _hubContext.Clients.All.SendAsync("GameUpdated", gameId);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
 
         return Ok();
     }
@@ -1651,6 +2016,7 @@ public class GamesController : ControllerBase
             .Include(g => g.Bonds)
             .Include(g => g.Units)
             .Include(g => g.Actions)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
@@ -1697,8 +2063,8 @@ public class GamesController : ControllerBase
             HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: true);
 
             await _context.SaveChangesAsync();
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} forced {nationState.Nation} to stop on Investor.", false);
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} forced {nationState.Nation} to stop on Investor.", false); }
             _botService.TriggerBotTurn(gameId);
             return Ok();
         }
@@ -1738,16 +2104,16 @@ public class GamesController : ControllerBase
                 HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: false);
 
                 await _context.SaveChangesAsync();
-                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} passed on forcing {nationState.Nation} to stop.", false);
+                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
+                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} passed on forcing {nationState.Nation} to stop.", false); }
                 _botService.TriggerBotTurn(gameId);
                 return Ok();
             }
             else
             {
                 await _context.SaveChangesAsync();
-                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} passed on forcing {nationState.Nation} to stop.", false);
+                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
+                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} passed on forcing {nationState.Nation} to stop.", false); }
                 _botService.TriggerBotTurn(gameId);
                 return Ok();
             }
@@ -1761,6 +2127,7 @@ public class GamesController : ControllerBase
         var game = await _context.Games
             .Include(g => g.Players).ThenInclude(p => p.User)
             .Include(g => g.NationStates)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound("Game not found.");
@@ -1787,8 +2154,8 @@ public class GamesController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", game.IsPaused ? "Game Paused." : "Game Resumed.", false);
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", game.IsPaused ? "Game Paused." : "Game Resumed.", false); }
 
         if (!game.IsPaused)
         {
