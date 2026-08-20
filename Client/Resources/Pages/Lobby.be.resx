@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="Title" xml:space="preserve"><value>Лобі гульні</value></data>
+  <data name="SearchPlaceholder" xml:space="preserve"><value>Пошук па назве гульні</value></data>
+  <data name="CreateGame" xml:space="preserve"><value>Стварыць гульню</value></data>
+  <data name="ImportGame" xml:space="preserve"><value>Імпартаваць гульню</value></data>
+
+  <!-- Status filter toggles -->
+  <data name="Filter_Lobby" xml:space="preserve"><value>Лобі</value></data>
+  <data name="Filter_InProgress" xml:space="preserve"><value>У працэсе</value></data>
+  <data name="Filter_Finished" xml:space="preserve"><value>Завершаныя</value></data>
+  <data name="Filter_MyGames" xml:space="preserve"><value>Толькі мае гульні</value></data>
+
+  <!-- Contains inline markup so translators control where the emphasis and the link fall. Rendered
+       via MarkupString; the content is authored here, never interpolated from user input. -->
+  <data name="GuestNotice" xml:space="preserve"><value>Вы ўвайшлі як &lt;strong&gt;госць&lt;/strong&gt;. Вы можаце глядзець гульні, але не можаце ствараць іх ці далучацца. &lt;a href="register"&gt;Зарэгіструйцеся&lt;/a&gt;, каб гуляць!</value></data>
+  <data name="NoGamesFound" xml:space="preserve"><value>Актыўных гульняў не знойдзена. Станьце першым, хто створыць гульню!</value></data>
+
+  <!-- Game cards -->
+  <data name="Card_Host" xml:space="preserve"><value>Гаспадар: {0}</value></data>
+  <data name="Card_Created" xml:space="preserve"><value>Створана: {0}</value></data>
+  <data name="Card_Finished" xml:space="preserve"><value>Завершана: {0}</value></data>
+  <data name="Card_Winner" xml:space="preserve"><value>Пераможца: {0}</value></data>
+  <data name="Card_Status" xml:space="preserve"><value>Стан:</value></data>
+  <data name="Card_InProgressPercent" xml:space="preserve"><value>У працэсе ({0}%)</value></data>
+  <data name="Card_FinishedTurns" xml:space="preserve"><value>Завершана ({0} хадоў)</value></data>
+  <data name="Card_Private" xml:space="preserve"><value>Прыватная</value></data>
+  <data name="Card_Players" xml:space="preserve"><value>Гульцы: {0} / {1}</value></data>
+  <data name="Card_JoinCode" xml:space="preserve"><value>Код далучэння:</value></data>
+  <data name="Card_ViewResults" xml:space="preserve"><value>Глядзець вынікі</value></data>
+  <data name="Card_Resume" xml:space="preserve"><value>Працягнуць</value></data>
+  <data name="Card_Leave" xml:space="preserve"><value>Пакінуць</value></data>
+  <data name="Card_Full" xml:space="preserve"><value>Няма месцаў</value></data>
+  <data name="Card_JoinGame" xml:space="preserve"><value>Далучыцца</value></data>
+  <data name="Card_Watch" xml:space="preserve"><value>Глядзець</value></data>
+
+  <!-- Create game modal -->
+  <data name="CreateModal_Title" xml:space="preserve"><value>Стварыць новую гульню</value></data>
+  <data name="CreateModal_GameName" xml:space="preserve"><value>Назва гульні</value></data>
+  <data name="CreateModal_MaxPlayers" xml:space="preserve"><value>Максімум гульцоў (2-6)</value></data>
+  <data name="CreateModal_Private" xml:space="preserve"><value>Прыватная гульня (патрэбны код)</value></data>
+  <data name="CreateModal_Variant" xml:space="preserve"><value>Варыянт: бонус толькі за рост падаткаў</value></data>
+  <data name="CreateModal_Create" xml:space="preserve"><value>Стварыць</value></data>
+  <data name="CreateFailed" xml:space="preserve"><value>Не ўдалося стварыць гульню. Праверце ўведзеныя даныя.</value></data>
+
+  <!-- Import game modal -->
+  <data name="ImportModal_Title" xml:space="preserve"><value>Імпартаваць гульню</value></data>
+  <data name="ImportModal_Description" xml:space="preserve"><value>Абярыце файл экспарту гульні (.json), спампаваны раней з гэтага ці іншага сервера Imperial 2030. Імпартаваная гульня дадаецца як завершаная, толькі для прагляду — кожная нацыя становіцца неінтэрактыўным ботам, адноўленым з уласнага журнала дзеянняў файла.</value></data>
+  <data name="ImportModal_ExportFile" xml:space="preserve"><value>Файл экспарту</value></data>
+  <data name="ImportModal_Importing" xml:space="preserve"><value>Імпарт — прайграванне ўсёй гісторыі гульні, гэта можа заняць некаторы час…</value></data>
+  <data name="ImportFailed" xml:space="preserve"><value>Не ўдалося імпартаваць гульню.</value></data>
+  <data name="ImportReadFailed" xml:space="preserve"><value>Не ўдалося прачытаць абраны файл: {0}</value></data>
+
+  <!-- Join private game modal -->
+  <data name="JoinModal_Title" xml:space="preserve"><value>Далучыцца да прыватнай гульні {0}</value></data>
+  <data name="JoinModal_JoinCode" xml:space="preserve"><value>Код далучэння</value></data>
+  <data name="JoinModal_CodePlaceholder" xml:space="preserve"><value>Увядзіце код з 6 сімвалаў</value></data>
+  <data name="JoinModal_Join" xml:space="preserve"><value>Далучыцца</value></data>
+
+  <data name="DeleteConfirm" xml:space="preserve"><value>Вы сапраўды хочаце выдаліць гэту гульню?</value></data>
+</root>

@@ -2,8 +2,9 @@
 @using Imperial2030.Shared.Auth
 @inject Imperial2030.Client.Services.AuthService AuthService
 @inject NavigationManager NavigationManager
+@inject IStringLocalizer<Register> L
 
-<h3>Register</h3>
+<h3>@L["Title"]</h3>
 
 @if (ShowErrors)
 {
@@ -17,30 +18,30 @@
 
 <div class="card">
     <div class="card-body">
-        <h5 class="card-title">Please enter your details</h5>
+        <h5 class="card-title">@L["CardTitle"]</h5>
         <EditForm Model="registerRequest" OnValidSubmit="HandleRegistration">
             <DataAnnotationsValidator />
             <ValidationSummary />
 
             <div class="mb-3">
-                <label for="username" class="form-label">User Name</label>
+                <label for="username" class="form-label">@L["UserName"]</label>
                 <InputText id="username" class="form-control" @bind-Value="registerRequest.UserName" />
             </div>
             <div class="mb-3">
-                <label for="email" class="form-label">Email</label>
+                <label for="email" class="form-label">@L["Email"]</label>
                 <InputText id="email" class="form-control" @bind-Value="registerRequest.Email" />
             </div>
             <div class="mb-3">
-                <label for="password" class="form-label">Password</label>
+                <label for="password" class="form-label">@L["Password"]</label>
                 <InputText id="password" type="password" class="form-control" @bind-Value="registerRequest.Password" />
             </div>
             <div class="mb-3">
-                <label for="confirmPassword" class="form-label">Confirm Password</label>
+                <label for="confirmPassword" class="form-label">@L["ConfirmPassword"]</label>
                 <InputText id="confirmPassword" type="password" class="form-control"
                 @bind-Value="registerRequest.ConfirmPassword" />
             </div>
 
-            <button type="submit" class="btn btn-primary">Register</button>
+            <button type="submit" class="btn btn-primary">@L["SubmitButton"]</button>
         </EditForm>
     </div>
 </div>
@@ -62,7 +63,7 @@
         }
         else
         {
-            Errors = new List<string> { result.Error ?? "Registration failed." };
+            Errors = new List<string> { result.Error ?? L["RegistrationFailed"] };
             ShowErrors = true;
         }
     }

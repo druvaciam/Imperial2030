@@ -1,12 +1,15 @@
 @using Imperial2030.Shared.Models
 @using Imperial2030.Shared.Constants
 @using Imperial2030.Client.Constants
+@inject IStringLocalizer<GameMap> L
+@inject IStringLocalizer<SharedResource> Shared
+@inject DisplayNameLocalizer Names
 
 <div class="map-container position-relative" style="flex: 1; width: 100%;">
     @if (selectedUnitId.HasValue)
     {
         <div class="position-absolute top-0 start-50 translate-middle-x mt-2 p-2 bg-warning text-dark rounded shadow fw-bold" style="z-index: 1000; opacity: 0.9; cursor: pointer;" @onclick="DeselectUnit">
-            Unit Selected. Click destination to move, or click here to deselect.
+            @L["UnitSelectedBanner"]
         </div>
     }
 
@@ -17,24 +20,24 @@
             <div class="modal-dialog" role="document">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">Select Convoy Path</h5>
+                        <h5 class="modal-title">@L["Convoy_Title"]</h5>
                         <button type="button" class="btn-close" @onclick="CloseConvoyModal"></button>
                     </div>
                     <div class="modal-body">
-                        <p>Multiple convoy routes available. Choose one:</p>
+                        <p>@L["Convoy_Prompt"]</p>
                         <div class="list-group">
                             @for (int i = 0; i < ConvoyOptions.Count; i++)
                             {
                                 var path = ConvoyOptions[i];
                                 var index = i; 
                                 <button type="button" class="list-group-item list-group-item-action" @onclick="() => SelectConvoyOption(index)">
-                                    Route @(i + 1): via @string.Join(", ", path.Select(f => f.TerritoryId))
+                                    @L["Convoy_Route", i + 1, string.Join(", ", path.Select(f => Names.Territory(f.TerritoryId)))]
                                 </button>
                             }
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" @onclick="CloseConvoyModal">Cancel</button>
+                        <button type="button" class="btn btn-secondary" @onclick="CloseConvoyModal">@Shared["Common_Cancel"]</button>
                     </div>
                 </div>
             </div>
@@ -47,16 +50,16 @@
             <div class="modal-dialog">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">Foreign Territory / Units Detected</h5>
+                        <h5 class="modal-title">@L["Stance_Title"]</h5>
                     </div>
                     <div class="modal-body">
-                        <p>You are moving into a region with foreign units or a foreign home territory.</p>
-                        <p>Choose your stance:</p>
+                        <p>@L["Stance_Body"]</p>
+                        <p>@L["Stance_Prompt"]</p>
                         <div class="d-grid gap-2">
                              @if (!IsForcedHostile)
                              {
                                  <button class="btn btn-success" @onclick="ConfirmPeace">
-                                     Peaceful / Coexist
+                                     @L["Stance_Peaceful"]
                                  </button>
                              }
                              @foreach (var nation in BattleOptions)
@@ -68,7 +71,7 @@
                              @if (!BattleOptions.Any())
                              {
                                  <button class="btn btn-danger" @onclick="ConfirmHostile">
-                                     Enter Hostilely
+                                     @L["Stance_EnterHostilely"]
                                  </button>
                              }
                         </div>
@@ -84,11 +87,11 @@
             <div class="modal-dialog">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">Stationary Battle</h5>
+                        <h5 class="modal-title">@L["Stationary_Title"]</h5>
                         <button type="button" class="btn-close" @onclick="CancelStationaryBattle"></button>
                     </div>
                     <div class="modal-body">
-                        <p>Select an enemy to attack:</p>
+                        <p>@L["Stationary_Prompt"]</p>
                         <div class="d-grid gap-2">
                              @foreach (var nation in BattleOptions)
                              {
@@ -99,7 +102,7 @@
                         </div>
                     </div>
                      <div class="modal-footer">
-                        <button class="btn btn-secondary" @onclick="CancelStationaryBattle">Cancel</button>
+                        <button class="btn btn-secondary" @onclick="CancelStationaryBattle">@Shared["Common_Cancel"]</button>
                     </div>
                 </div>
             </div>
@@ -112,19 +115,19 @@
             <div class="modal-dialog">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">Destroy Factory?</h5>
+                        <h5 class="modal-title">@L["Destroy_Title"]</h5>
                         <button type="button" class="btn-close" @onclick="CancelDestroyFactory"></button>
                     </div>
                     <div class="modal-body">
-                        <p>You have occupied a foreign factory in @PendingDestroyFactoryName.</p>
-                        <p>Do you want to destroy it?</p>
+                        <p>@L["Destroy_Occupied", PendingDestroyFactoryName]</p>
+                        <p>@L["Destroy_Question"]</p>
                         <div class="alert alert-warning">
-                            Warning: This will remove your 3 attacking armies and the factory.
+                            @L["Destroy_Warning"]
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button class="btn btn-secondary" @onclick="CancelDestroyFactory">Cancel</button>
-                        <button class="btn btn-danger" @onclick="ConfirmDestroyFactory">Destroy Factory</button>
+                        <button class="btn btn-secondary" @onclick="CancelDestroyFactory">@Shared["Common_Cancel"]</button>
+                        <button class="btn btn-danger" @onclick="ConfirmDestroyFactory">@L["Destroy_Confirm"]</button>
                     </div>
                 </div>
             </div>
@@ -137,16 +140,16 @@
             <div class="modal-dialog">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title text-warning">Confirm Move</h5>
+                        <h5 class="modal-title text-warning">@L["MoveWarning_Title"]</h5>
                         <button type="button" class="btn-close" @onclick="CancelWarningMove"></button>
                     </div>
                     <div class="modal-body">
                         <p>@MoveWarningMessage</p>
-                        <p>Are you sure you want to proceed?</p>
+                        <p>@L["MoveWarning_Question"]</p>
                     </div>
                     <div class="modal-footer">
-                        <button class="btn btn-secondary" @onclick="CancelWarningMove">Cancel (Deselect)</button>
-                        <button class="btn btn-warning" @onclick="ConfirmWarningMove">Move Unit</button>
+                        <button class="btn btn-secondary" @onclick="CancelWarningMove">@L["MoveWarning_Cancel"]</button>
+                        <button class="btn btn-warning" @onclick="ConfirmWarningMove">@L["MoveWarning_Confirm"]</button>
                     </div>
                 </div>
             </div>
@@ -823,14 +826,14 @@
                     {
                         <g opacity="0.6" class="ghost-blink">
                             <rect x="@Fmt(coords.X + offsetX - 8)" y="@Fmt(coords.Y - 8)" width="16" height="16" fill="@aggColor" stroke="white" stroke-width="1.5" />
-                            <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">A</text>
+                            <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">@Names.UnitGlyph(UnitType.Army)</text>
                         </g>
                     }
                     else
                     {
                         <g opacity="0.6" class="ghost-blink">
                             <circle cx="@Fmt(coords.X + offsetX)" cy="@Fmt(coords.Y)" r="8" fill="@aggColor" stroke="white" stroke-width="1.5" />
-                            <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">F</text>
+                            <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">@Names.UnitGlyph(UnitType.Fleet)</text>
                         </g>
                     }
                 }
@@ -843,14 +846,14 @@
                     {
                         <g opacity="0.6" class="ghost-blink">
                             <rect x="@Fmt(coords.X + defOffsetX - 8)" y="@Fmt(coords.Y - 8)" width="16" height="16" fill="@defColor" stroke="white" stroke-width="1.5" />
-                            <text x="@Fmt(coords.X + defOffsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">A</text>
+                            <text x="@Fmt(coords.X + defOffsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">@Names.UnitGlyph(UnitType.Army)</text>
                         </g>
                     }
                     else
                     {
                         <g opacity="0.6" class="ghost-blink">
                             <circle cx="@Fmt(coords.X + defOffsetX)" cy="@Fmt(coords.Y)" r="8" fill="@defColor" stroke="white" stroke-width="1.5" />
-                            <text x="@Fmt(coords.X + defOffsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">F</text>
+                            <text x="@Fmt(coords.X + defOffsetX)" y="@Fmt(coords.Y)" text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">@Names.UnitGlyph(UnitType.Fleet)</text>
                         </g>
                     }
                 }
@@ -991,7 +994,7 @@
                                 <rect x="@Fmt(coords.X + offsetX - 8)" y="@Fmt(coords.Y + offsetY - 8)" width="16" height="16" 
                                       fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
                                 <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y + offsetY)" 
-                                      text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">A</text>
+                                      text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">@Names.UnitGlyph(UnitType.Army)</text>
                             </g>
                         }
                         else
@@ -1000,7 +1003,7 @@
                                 <circle cx="@Fmt(coords.X + offsetX)" cy="@Fmt(coords.Y + offsetY)" r="8" 
                                         fill="@color" stroke="@strokeColor" stroke-width="@strokeWidth" />
                                 <text x="@Fmt(coords.X + offsetX)" y="@Fmt(coords.Y + offsetY)" 
-                                      text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">F</text>
+                                      text-anchor="middle" dy="4" font-size="10" fill="white" font-weight="bold">@Names.UnitGlyph(UnitType.Fleet)</text>
                             </g>
                         }
                     }
@@ -1133,7 +1136,7 @@
                     <!-- Floating "TURN" Label Pill -->
                     <g transform="translate(0, -18)">
                         <rect x="-20" y="-10" width="40" height="13" rx="6.5" fill="#1b1c23" stroke="@activeColor" stroke-width="1.2" />
-                        <text x="0" y="-1" text-anchor="middle" font-size="8.5" font-weight="900" fill="#ffffff" letter-spacing="0.5">TURN</text>
+                        <text x="0" y="-1" text-anchor="middle" font-size="8.5" font-weight="900" fill="#ffffff" letter-spacing="0.5">@L["TurnMarker"]</text>
                     </g>
                 </g>
             </g>
@@ -1147,15 +1150,15 @@
         @if (IsMyTurn && Game?.ManeuverState?.Phase != ManeuverPhase.None)
         {
             <div class="d-flex align-items-center gap-2 rounded-pill shadow-lg" style="background: rgba(30,30,40,0.85); padding: 5px 12px; border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(4px);">
-                <span class="small text-uppercase text-white fw-bold mb-0" style="letter-spacing: 1px;">@(Game?.ManeuverState?.Phase)</span>
-                <button class="btn btn-warning btn-sm rounded-pill fw-bold py-0 px-3 @(isHighlightingEndPhase ? "btn-endturn-pulse" : "")" style="font-size: 0.75rem;" @onclick="NextPhase">End Phase</button>
+                <span class="small text-uppercase text-white fw-bold mb-0" style="letter-spacing: 1px;">@(Game?.ManeuverState?.Phase != null ? Names.ManeuverPhase(Game.ManeuverState.Phase) : "")</span>
+                <button class="btn btn-warning btn-sm rounded-pill fw-bold py-0 px-3 @(isHighlightingEndPhase ? "btn-endturn-pulse" : "")" style="font-size: 0.75rem;" @onclick="NextPhase">@L["EndPhase"]</button>
             </div>
         }
 
         @if (CanInitiateStationaryBattle())
         {
             <div class="rounded-pill shadow-lg" style="background: rgba(30,30,40,0.85); padding: 4px 6px; border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(4px);">
-                 <button class="btn btn-danger btn-sm rounded-pill fw-bold py-0 px-3" style="font-size: 0.75rem;" @onclick="OpenStationaryBattleModal">Battle!</button>
+                 <button class="btn btn-danger btn-sm rounded-pill fw-bold py-0 px-3" style="font-size: 0.75rem;" @onclick="OpenStationaryBattleModal">@L["BattleButton"]</button>
             </div>
         }
 
@@ -1163,7 +1166,7 @@
         {
             <div class="rounded-pill shadow-lg" style="background: rgba(30,30,40,0.85); padding: 4px 6px; border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(4px);">
                  <button class="btn rounded-pill fw-bold py-0 px-3 btn-sm @(GetSelectedUnit()?.IsHostile == true ? "btn-success" : "btn-danger")" style="font-size: 0.75rem;" @onclick="ToggleHostility">
-                     Make @(GetSelectedUnit()?.IsHostile == true ? "Friendly" : "Hostile")
+                     @(GetSelectedUnit()?.IsHostile == true ? L["MakeFriendly"] : L["MakeHostile"])
                  </button>
             </div>
         }
@@ -1625,7 +1628,7 @@
         var error = await ManeuverService.ToggleHostility(Game.Id, selectedUnitId.Value);
         if (error != null)
         {
-             await JSRuntime.InvokeVoidAsync("alert", $"Failed to toggle hostility: {error}");
+             await JSRuntime.InvokeVoidAsync("alert", L["HostilityToggleFailed", error].Value);
         }
     }
 
@@ -1740,7 +1743,7 @@
             bool success = await ManeuverService.DestroyFactoryAsync(Game.Id, PendingDestroyFactoryId, unitIds);
             if (!success)
             {
-                await JSRuntime.InvokeVoidAsync("alert", "Failed to destroy factory. (Server validation failed)");
+                await JSRuntime.InvokeVoidAsync("alert", L["Destroy_Failed"].Value);
             }
         }
         ShowDestroyFactoryModal = false;
@@ -1768,7 +1771,7 @@
 
         if (sourceIsHome && destIsHome)
         {
-            warningMessage = $"You are moving a unit from a home territory ({movingUnit.TerritoryId}) to another home territory ({destTerritoryId}). This will consume its movement.";
+            warningMessage = L["MoveWarning_HomeToHome", Names.Territory(movingUnit.TerritoryId), Names.Territory(destTerritoryId)];
             return true;
         }
 
@@ -1776,7 +1779,7 @@
         bool destHasFriendlyUnit = Game.Units.Any(u => u.TerritoryId == destTerritoryId && u.Nation == movingUnit.Nation && u.Id != movingUnit.Id);
         if (destHasFriendlyUnit)
         {
-            warningMessage = $"A friendly unit is already present in {destTerritoryId}. Moving here will consume this unit's movement.";
+            warningMessage = L["MoveWarning_FriendlyPresent", Names.Territory(destTerritoryId)];
             return true;
         }
 
@@ -2006,8 +2009,7 @@
              if (CheckCanDestroyFactory(territoryId, nation, out var attackingUnits))
              {
                  PendingDestroyFactoryId = territoryId;
-                 var tDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
-                 PendingDestroyFactoryName = tDef?.Name ?? territoryId;
+                 PendingDestroyFactoryName = Names.Territory(territoryId);
                  PendingDestroyFactoryUnits = attackingUnits;
                  ShowDestroyFactoryModal = true;
                  StateHasChanged();
@@ -2265,31 +2267,31 @@
 
         if (!territoryDef.IsHomeCity(nation))
         {
-             await ShowToast("Not a home city", true);
+             await ShowToast(L["Factory_NotHomeCity"], true);
              return;
         }
 
         var territoryState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryId);
         if (territoryState != null && territoryState.HasFactory)
         {
-             await ShowToast("Factory already exists", true);
+             await ShowToast(L["Factory_AlreadyExists"], true);
              return;
         }
 
         if (ns.Treasury < 5)
         {
-             await JSRuntime.InvokeVoidAsync("alert", "Nations needs 5M to build a factory.");
+             await JSRuntime.InvokeVoidAsync("alert", L["Factory_Need5M"].Value);
              return;
         }
 
-        bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", $"Build factory in {territoryDef.Name} for 5M?");
+        bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", L["Factory_BuildConfirm", Names.Territory(territoryDef.Id)].Value);
         if (confirmed)
         {
             var response = await Http.PostAsync($"api/games/{Game.Id}/build-factory/{territoryId}", null);
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                await JSRuntime.InvokeVoidAsync("alert", $"Failed: {error}");
+                await JSRuntime.InvokeVoidAsync("alert", L["Factory_BuildFailed", error].Value);
             }
         }
     }
@@ -2338,23 +2340,23 @@
         if (territoryDef == null || Game == null) return "";
 
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine(territoryDef.Name);
+        sb.AppendLine(Names.Territory(territoryDef.Id));
 
         // Owner
         var tState = Game.Territories.FirstOrDefault(t => t.TerritoryId == territoryDef.Id);
         if (tState != null && tState.Controller != null)
         {
-            sb.AppendLine($"Owner: {tState.Controller}");
+            sb.AppendLine(L["Tooltip_Owner", Names.Nation(tState.Controller)]);
         }
         else if (territoryDef.Nation != null)
         {
-            sb.AppendLine($"Home Territory: {territoryDef.Nation}");
+            sb.AppendLine(L["Tooltip_HomeTerritory", Names.Nation(territoryDef.Nation)]);
         }
 
         // Factory
         if (tState != null && tState.HasFactory)
         {
-            sb.AppendLine("Factory: Yes");
+            sb.AppendLine(L["Tooltip_FactoryYes"]);
         }
 
         // Units
@@ -2363,19 +2365,19 @@
         {
             var armies = units.Where(u => u.UnitType == UnitType.Army)
                             .GroupBy(u => u.Nation)
-                            .Select(g => $"{g.Key}: {g.Count()}");
+                            .Select(g => L["Tooltip_NationCount", Names.Nation(g.Key), g.Count()].Value);
             
             var fleets = units.Where(u => u.UnitType == UnitType.Fleet)
                             .GroupBy(u => u.Nation)
-                            .Select(g => $"{g.Key}: {g.Count()}");
+                            .Select(g => L["Tooltip_NationCount", Names.Nation(g.Key), g.Count()].Value);
 
             if (armies.Any())
             {
-                sb.AppendLine($"Armies: {string.Join(", ", armies)}");
+                sb.AppendLine(L["Tooltip_Armies", string.Join(", ", armies)]);
             }
             if (fleets.Any())
             {
-                sb.AppendLine($"Fleets: {string.Join(", ", fleets)}");
+                sb.AppendLine(L["Tooltip_Fleets", string.Join(", ", fleets)]);
             }
         }
 
@@ -2396,7 +2398,7 @@
                     ((Game.ManeuverState.Phase == ManeuverPhase.Fleets && u.UnitType == UnitType.Fleet) || 
                      (Game.ManeuverState.Phase == ManeuverPhase.Armies && u.UnitType == UnitType.Army)));
                 
-                if (hasMovableUnit) return $"{baseMsg}\n\nClick to select {Game.ManeuverState.Phase.ToString().TrimEnd('s')} to move.";
+                if (hasMovableUnit) return $"{baseMsg}\n\n{L["Tooltip_ClickToSelect", Names.ManeuverPhaseSingular(Game.ManeuverState.Phase)]}";
                 return baseMsg;
             }
             else
@@ -2489,7 +2491,7 @@
         bool success = await ManeuverService.NextPhase(Game.Id);
         if (!success)
         {
-             await JSRuntime.InvokeVoidAsync("alert", "Failed to advance phase.");
+             await JSRuntime.InvokeVoidAsync("alert", L["AdvancePhaseFailed"].Value);
         }
     }
 
@@ -2570,7 +2572,7 @@
 
         if (errorMessage != null)
         {
-             await JSRuntime.InvokeVoidAsync("alert", $"Move failed: {errorMessage}");
+             await JSRuntime.InvokeVoidAsync("alert", L["MoveFailed", errorMessage].Value);
         }
         else
         {

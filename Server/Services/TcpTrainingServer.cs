@@ -1535,6 +1535,31 @@ public class TcpTrainingServer : BackgroundService
                 bool hasUnits = game.Units.Any(u => u.Nation == actingNs.Nation);
                 if (!hasUnits) isPenalized = true;
             }
+            else if (targetSlot == RondelData.InvestorSlot)
+            {
+                // Landing on Investor pays interest on the acting nation's own bonds from its own treasury
+                // (others first, then the controller); it's "penalized" whenever the controller nets <= 0
+                // out of it — either paying a shortfall from their own pocket, or receiving nothing at all.
+                // Reuses InvestorHelper.PreviewInterestPayment, the same non-mutating preview already used
+                // for the PersonalContribution/MissedInterest reward penalties and the raw preview floats
+                // appended later in this vector — this is not new game logic, just an added consumer of it.
+                var moveController = game.Players.FirstOrDefault(p => p.Id == actingNs.ControllerId);
+                if (moveController != null)
+                {
+                    var investorMovePreview = Helpers.InvestorHelper.PreviewInterestPayment(game, actingNs, moveController);
+                    if (investorMovePreview.NetControllerCashDelta <= 0) isPenalized = true;
+                }
+            }
+            else if (targetSlot == RondelData.TaxationSlot)
+            {
+                // Wasted Taxation: no power-track gain AND net revenue (tax revenue minus soldiers' pay,
+                // before the controller's personal bonus) is zero or negative. Mirrors the reward penalty
+                // for a fully wasted Taxation turn ("expectedTaxTreasuryGain <= 0 && expectedTaxPowerGain
+                // == 0"), reusing TaxationHelper.PreviewTaxation rather than re-deriving the tax rules here.
+                var taxMovePreview = Helpers.TaxationHelper.PreviewTaxation(game, actingNs);
+                bool noNetRevenue = (taxMovePreview.TotalTaxRevenue - taxMovePreview.SoldiersPay) <= 0;
+                if (taxMovePreview.ExpectedPowerGain == 0 && noNetRevenue) isPenalized = true;
+            }
 
             state[i++] = isPenalized ? 1.0f : 0.0f;
         }

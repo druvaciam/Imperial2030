@@ -1,16 +1,18 @@
 @using Imperial2030.Shared.Models
 @using Imperial2030.Shared.Constants
 @inject IJSRuntime JSRuntime
+@inject IStringLocalizer<GameTerminal> L
+@inject DisplayNameLocalizer Names
 
 <div class="game-terminal-container">
     <div class="terminal-header">
-        <span>> COMMAND LOG</span>
+        <span>@L["Header"]</span>
         <span class="blinking-cursor">_</span>
     </div>
     <div class="terminal-body" @ref="terminalBodyRef">
         @if (Actions == null || !Actions.Any())
         {
-            <div class="terminal-line text-muted">// No history recorded</div>
+            <div class="terminal-line text-muted">@L["NoHistory"]</div>
         }
         else
         {
@@ -21,15 +23,19 @@
                     <span class="player">@action.PlayerName</span>
                     @if (action.Nation.HasValue)
                     {
-                        <span class="nation-tag nation-@action.Nation.ToString()?.ToLower()">@action.Nation</span>
+                        <span class="nation-tag nation-@action.Nation.ToString()?.ToLower()">@Names.Nation(action.Nation.Value)</span>
                     }
                     @if (!string.IsNullOrEmpty(action.Message))
                     {
+                        @* Legacy passthrough: GameLogger has always written Message = string.Empty, so
+                           nothing this codebase produces reaches here. Rows persisted by an older
+                           build could still carry text, which is why it is rendered raw (and left
+                           untranslated — there is no key to look up for arbitrary historical text). *@
                         <span class="message">@action.Message</span>
                     }
                     else if (action.ActionType == "Investment" && string.IsNullOrEmpty(action.Metadata))
                     {
-                        <span class="message">passed on investment</span>
+                        <span class="message">@L["PassedOnInvestment"]</span>
                     }
                     @if (action.ActionType == "Investment" && !string.IsNullOrEmpty(action.Metadata))
                     {
@@ -40,23 +46,25 @@
                             {
                                 if (meta.TradeInCost.HasValue && meta.Cost.HasValue)
                                 {
-                                    <span class="message">upgraded @meta.Nation @(meta.TradeInCost)M to @(meta.Cost)M bond</span>
+                                    <span class="message">@L["UpgradedBond", Names.NationFromName(meta.Nation), meta.TradeInCost, meta.Cost]</span>
                                 }
                                 else if (meta.Cost.HasValue)
                                 {
-                                    <span class="message">bought @meta.Nation @(meta.Cost)M bond</span>
+                                    <span class="message">@L["BoughtBond", Names.NationFromName(meta.Nation), meta.Cost]</span>
                                 }
 
                                 if (meta.NewControllerName != null && meta.NewControllerName != meta.OldControllerName)
                                 {
-                                    <span class="text-info"> and took control of @meta.Nation@(meta.OldControllerName != null ? $" from {meta.OldControllerName}" : "")</span>
+                                    <span class="text-info">@(meta.OldControllerName != null
+                                        ? L["TookControlOfNationFrom", Names.NationFromName(meta.Nation), meta.OldControllerName]
+                                        : L["TookControlOfNation", Names.NationFromName(meta.Nation)])</span>
                                 }
-                                
+
                                 if (meta.IsSwissBankKicked)
                                 {
                                     <div class="terminal-line text-warning">
                                         <span class="timestamp">[@action.Timestamp.ToLocalTime().ToString("HH:mm:ss")]</span>
-                                        <span class="message">System: @meta.OldControllerName was kicked to Switzerland (Swiss Bank)!</span>
+                                        <span class="message">@L["SwissBankKicked", meta.OldControllerName]</span>
                                     </div>
                                 }
                             }
@@ -74,7 +82,7 @@
                                 string tGainStr = meta.TreasuryGain > 0 ? $"+{meta.TreasuryGain}" : meta.TreasuryGain.ToString();
                                 string bonusStr = meta.Bonus > 0 ? $"+{meta.Bonus}" : meta.Bonus.ToString();
                                 string powerStr = meta.PowerGain > 0 ? $"+{meta.PowerGain}" : meta.PowerGain.ToString();
-                                <span class="message">collected taxes: @(meta.TotalRevenue)M (Soldiers' Pay: @(soldiersPayStr)M, Treasury Gain: @(tGainStr)M, Bonus: @(bonusStr)M, Power: @(powerStr))</span>
+                                <span class="message">@L["CollectedTaxes", meta.TotalRevenue, soldiersPayStr, tGainStr, bonusStr, powerStr]</span>
                             }
                         }
                         catch { }
@@ -86,15 +94,18 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<ImportMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null)
                             {
-                                var locationNames = meta.Units.Select(u => $"{u.UnitType} in {u.TerritoryName}");
-                                <span class="message">imported @(meta.ImportedCount) units (@string.Join(", ", locationNames))</span>
+                                // Built from TerritoryId, not the metadata's TerritoryName: the name was
+                                // baked in English by the server when the action was logged, while the id
+                                // maps to a localized name here.
+                                var locationNames = meta.Units.Select(u => L["UnitInTerritory", Names.UnitType(u.UnitType), Names.Territory(u.TerritoryId)].Value);
+                                <span class="message">@L["ImportedUnits", meta.ImportedCount, string.Join(", ", locationNames)]</span>
                             }
                         }
                         catch { }
                     }
                     @if (action.ActionType == "EndTurn")
                     {
-                        <span class="message">ended their turn</span>
+                        <span class="message">@L["EndedTurn"]</span>
                     }
                     @if ((action.ActionType == "AutoSkipPhase" || action.ActionType == "AutoEndPhase" || action.ActionType == "EndPhase") && !string.IsNullOrEmpty(action.Metadata))
                     {
@@ -103,17 +114,20 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<PhaseMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null)
                             {
+                                // PhaseName is a server-authored English string ("Fleets"/"Armies"/"Turn");
+                                // Names.PhaseName maps that closed set without changing the log format.
+                                var phase = Names.PhaseName(meta.PhaseName);
                                 if (action.ActionType == "AutoSkipPhase")
                                 {
-                                    <span class="message">auto-skipped @(meta.PhaseName) maneuver phase</span>
+                                    <span class="message">@L["AutoSkippedPhase", phase]</span>
                                 }
                                 else if (action.ActionType == "AutoEndPhase")
                                 {
-                                    <span class="message">auto-ended @(meta.PhaseName) maneuver phase</span>
+                                    <span class="message">@L["AutoEndedPhase", phase]</span>
                                 }
                                 else if (action.ActionType == "EndPhase")
                                 {
-                                    <span class="message">ended @(meta.PhaseName) maneuver phase</span>
+                                    <span class="message">@L["EndedPhase", phase]</span>
                                 }
                             }
                         }
@@ -126,7 +140,7 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.TerritoryId != null)
                             {
-                                <span class="message">All parties agreed to PEACE in @meta.TerritoryId.</span>
+                                <span class="message">@L["AllPartiesPeace", Names.Territory(meta.TerritoryId)]</span>
                             }
                         }
                         catch { }
@@ -138,9 +152,9 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<RondelMoveMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null)
                             {
-                                string targetStr = RondelData.GetSlotName(meta.TargetSlot);
-                                string fromStr = meta.CurrentSlot.HasValue ? RondelData.GetSlotName(meta.CurrentSlot.Value) : "Start";
-                                <span class="message">moved to @targetStr from @fromStr (Cost: @(meta.Cost)M)</span>
+                                string targetStr = Names.RondelSlot(meta.TargetSlot);
+                                string fromStr = meta.CurrentSlot.HasValue ? Names.RondelSlot(meta.CurrentSlot.Value) : L["RondelStart"].Value;
+                                <span class="message">@L["RondelMoved", targetStr, fromStr, meta.Cost]</span>
                             }
                         }
                         catch { }
@@ -152,24 +166,24 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.FromTerritoryId != null && meta.ToTerritoryId != null)
                             {
-                                string typeStr = action.ActionType == "MoveFleet" ? "fleet" : "army";
+                                string typeStr = Names.UnitType(action.ActionType == "MoveFleet" ? UnitType.Fleet : UnitType.Army);
                                 if (meta.FromTerritoryId == meta.ToTerritoryId)
                                 {
-                                    <span class="message">@typeStr stayed in @meta.ToTerritoryId</span>
+                                    <span class="message">@L["UnitStayed", typeStr, Names.Territory(meta.ToTerritoryId)]</span>
                                 }
                                 else
                                 {
-                                    string originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.FromTerritoryId)?.Name ?? meta.FromTerritoryId;
-                                    string targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.ToTerritoryId)?.Name ?? meta.ToTerritoryId;
-                                    
+                                    string originName = Names.Territory(meta.FromTerritoryId);
+                                    string targetName = Names.Territory(meta.ToTerritoryId);
+
                                     if (!string.IsNullOrEmpty(meta.DefendersStr))
                                     {
-                                        string peaceOrHostile = meta.IsHostileMove == true ? "hostilely" : "peacefully";
-                                        <span class="message">@typeStr moved @peaceOrHostile to @targetName from @originName, awaiting response from @meta.DefendersStr</span>
+                                        string peaceOrHostile = meta.IsHostileMove == true ? L["Hostilely"].Value : L["Peacefully"].Value;
+                                        <span class="message">@L["UnitMovedAwaitingResponse", typeStr, peaceOrHostile, targetName, originName, LocalizeNationList(meta.DefendersStr)]</span>
                                     }
                                     else
                                     {
-                                        <span class="message">@typeStr moved to @targetName from @originName (Hostile: @meta.IsHostileMove)</span>
+                                        <span class="message">@L["UnitMoved", typeStr, targetName, originName, meta.IsHostileMove]</span>
                                     }
                                 }
                             }
@@ -183,14 +197,14 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.TerritoryId != null)
                             {
-                                string targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
+                                string targetName = Names.Territory(meta.TerritoryId);
                                 if (meta.IsResponse == true)
                                 {
-                                    <span class="message">@meta.DefenderNation @meta.DefenderUnitType?.ToString().ToLower() chose FIGHT against @meta.AggressorNation @meta.UnitType?.ToString().ToLower() in @targetName. Both destroyed</span>
+                                    <span class="message">@L["BattleResponseFight", Names.Nation(meta.DefenderNation), LocalizeUnitType(meta.DefenderUnitType), Names.Nation(meta.AggressorNation), LocalizeUnitType(meta.UnitType), targetName]</span>
                                 }
                                 else
                                 {
-                                    <span class="message">@meta.UnitType?.ToString().ToLower() attacked @meta.DefenderNation @meta.DefenderUnitType?.ToString().ToLower() in @targetName. Both destroyed</span>
+                                    <span class="message">@L["BattleAttack", LocalizeUnitType(meta.UnitType), Names.Nation(meta.DefenderNation), LocalizeUnitType(meta.DefenderUnitType), targetName]</span>
                                 }
                             }
                         }
@@ -203,14 +217,14 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<FlagPlacementMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.TerritoryId != null)
                             {
-                                string territoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
+                                string territoryName = Names.Territory(meta.TerritoryId);
                                 if (meta.OldController.HasValue)
                                 {
-                                    <span class="message">took control of @territoryName from @meta.OldController.Value</span>
+                                    <span class="message">@L["TookControlOfTerritoryFrom", territoryName, Names.Nation(meta.OldController.Value)]</span>
                                 }
                                 else
                                 {
-                                    <span class="message">took control of @territoryName</span>
+                                    <span class="message">@L["TookControlOfTerritory", territoryName]</span>
                                 }
                             }
                         }
@@ -223,8 +237,7 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.TerritoryId != null)
                             {
-                                string territoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
-                                <span class="message">built a factory in @territoryName</span>
+                                <span class="message">@L["BuiltFactory", Names.Territory(meta.TerritoryId)]</span>
                             }
                         }
                         catch { }
@@ -236,8 +249,7 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.TerritoryId != null)
                             {
-                                string territoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
-                                <span class="message">destroyed @action.Nation factory in @territoryName</span>
+                                <span class="message">@L["DestroyedFactory", Names.Nation(action.Nation), Names.Territory(meta.TerritoryId)]</span>
                             }
                         }
                         catch { }
@@ -251,11 +263,11 @@
                             {
                                 if (meta.IsForceStop)
                                 {
-                                    <span class="message">chose to FORCE STOP @meta.Nation on Investor</span>
+                                    <span class="message">@L["SwissBankForceStop", Names.Nation(meta.Nation)]</span>
                                 }
                                 else
                                 {
-                                    <span class="message">chose to PASS on forcing @meta.Nation to stop</span>
+                                    <span class="message">@L["SwissBankPass", Names.Nation(meta.Nation)]</span>
                                 }
                             }
                         }
@@ -268,8 +280,7 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.TerritoryId != null)
                             {
-                                string territoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
-                                <span class="message">@meta.RespondingNationStr agreed to PEACE with @meta.AggressorNation in @territoryName</span>
+                                <span class="message">@L["BattleResponsePeace", LocalizeNationList(meta.RespondingNationStr), Names.Nation(meta.AggressorNation), Names.Territory(meta.TerritoryId)]</span>
                             }
                         }
                         catch { }
@@ -281,10 +292,9 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<HostilityMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.TerritoryId != null)
                             {
-                                string typeStr = meta.UnitType.ToString().ToLower();
-                                string statusStr = meta.IsHostile ? "hostile" : "friendly";
-                                string territoryName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Name ?? meta.TerritoryId;
-                                <span class="message">@typeStr in @territoryName converted to @statusStr</span>
+                                string typeStr = Names.UnitType(meta.UnitType);
+                                string statusStr = meta.IsHostile ? L["Hostile"].Value : L["Friendly"].Value;
+                                <span class="message">@L["HostilityToggled", typeStr, Names.Territory(meta.TerritoryId), statusStr]</span>
                             }
                         }
                         catch { }
@@ -296,31 +306,32 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<ProductionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null)
                             {
-                                var locationNames = meta.Units.Select(u => $"{u.UnitType} in {u.TerritoryName}");
-                                <span class="message">produced @meta.ProducedCount units (@string.Join(", ", locationNames))</span>
+                                // TerritoryId rather than the English TerritoryName baked in at log time — same reasoning as Import above.
+                                var locationNames = meta.Units.Select(u => L["UnitInTerritory", Names.UnitType(u.UnitType), Names.Territory(u.TerritoryId)].Value);
+                                <span class="message">@L["ProducedUnits", meta.ProducedCount, string.Join(", ", locationNames)]</span>
                             }
                         }
                         catch { }
                     }
                     @if (action.ActionType == "JoinGame")
                     {
-                        <span class="message">joined the game</span>
+                        <span class="message">@L["JoinedGame"]</span>
                     }
                     else if (action.ActionType == "LeaveGame")
                     {
-                        <span class="message">left the game</span>
+                        <span class="message">@L["LeftGame"]</span>
                     }
                     else if (action.ActionType == "StartGame")
                     {
-                        <span class="message">started the game</span>
+                        <span class="message">@L["StartedGame"]</span>
                     }
                     else if (action.ActionType == "PauseGame")
                     {
-                        <span class="message text-warning">paused the game</span>
+                        <span class="message text-warning">@L["PausedGame"]</span>
                     }
                     else if (action.ActionType == "ResumeGame")
                     {
-                        <span class="message text-success">resumed the game</span>
+                        <span class="message text-success">@L["ResumedGame"]</span>
                     }
                     else if (action.ActionType == "InvestorBonus" && !string.IsNullOrEmpty(action.Metadata))
                     {
@@ -329,7 +340,7 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<Imperial2030.Shared.Models.InvestorMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.Type == "InvestorBonus")
                             {
-                                <span class="message">received @(meta.PaidAmount)M Investor bonus</span>
+                                <span class="message">@L["ReceivedInvestorBonus", meta.PaidAmount]</span>
                             }
                         }
                         catch { }
@@ -343,26 +354,26 @@
                             {
                                 if (meta.Type == "InterestPaid")
                                 {
-                                    <span class="message">paid @(meta.PaidAmount)M interest to @meta.PayeeName</span>
+                                    <span class="message">@L["InterestPaid", meta.PaidAmount, meta.PayeeName]</span>
                                 }
                                 else if (meta.Type == "InterestPartial")
                                 {
-                                    <span class="message">paid partial @(meta.PaidAmount)M interest to @meta.PayeeName (insufficient funds for full @(meta.ExpectedAmount)M)</span>
+                                    <span class="message">@L["InterestPartial", meta.PaidAmount, meta.PayeeName, meta.ExpectedAmount]</span>
                                 }
                                 else if (meta.Type == "UnableToPay")
                                 {
                                     if (meta.TreasuryEmpty == true)
                                     {
-                                        <span class="message">unable to pay interest to @meta.PayeeName (treasury empty)</span>
+                                        <span class="message">@L["UnableToPayTreasuryEmpty", meta.PayeeName]</span>
                                     }
                                     else
                                     {
-                                        <span class="message">unable to pay @(meta.ExpectedAmount)M interest to @meta.PayeeName (insufficient funds)</span>
+                                        <span class="message">@L["UnableToPay", meta.ExpectedAmount, meta.PayeeName]</span>
                                     }
                                 }
                                 else if (meta.Type == "PersonallyContributed")
                                 {
-                                    <span class="message">personally contributed @(meta.PersonalContribution)M to cover interest deficit</span>
+                                    <span class="message">@L["PersonallyContributed", meta.PersonalContribution]</span>
                                 }
                             }
                         }
@@ -380,7 +391,23 @@
 
     private ElementReference terminalBodyRef;
 
+    /// <summary>
+    /// Localizes a comma-joined list of nation names that the server pre-composed into the action
+    /// metadata (ActionMetadata.DefendersStr / RespondingNationStr are built with string.Join over
+    /// Nation values). Splitting and re-mapping keeps those nations translated without changing the
+    /// logged format. Anything that does not parse as a Nation is passed through unchanged.
+    /// </summary>
+    private string LocalizeNationList(string? joinedNations)
+    {
+        if (string.IsNullOrEmpty(joinedNations)) return string.Empty;
 
+        var parts = joinedNations.Split(',').Select(p => p.Trim())
+            .Select(p => Enum.TryParse<Nation>(p, out var n) ? Names.Nation(n) : p);
+        return string.Join(", ", parts);
+    }
+
+    /// <summary>Localized unit type, or empty when the metadata did not record one.</summary>
+    private string LocalizeUnitType(UnitType? unitType) => unitType.HasValue ? Names.UnitType(unitType.Value) : string.Empty;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {

@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="Language_Label" xml:space="preserve">
+    <value>Language</value>
+  </data>
+
+  <!-- Common -->
+  <data name="Common_Cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="Common_Close" xml:space="preserve"><value>Close</value></data>
+  <data name="Common_Confirm" xml:space="preserve"><value>Confirm</value></data>
+  <data name="Common_Loading" xml:space="preserve"><value>Loading...</value></data>
+  <data name="Common_None" xml:space="preserve"><value>None</value></data>
+  <data name="Common_Delete" xml:space="preserve"><value>Delete</value></data>
+  <data name="Common_Bank" xml:space="preserve"><value>Bank</value></data>
+  <data name="Common_Unknown" xml:space="preserve"><value>Unknown</value></data>
+
+  <!-- App chrome: nav, layout top bar, and the two single-string pages (App, Logout).
+       These live here rather than in their own .resx pairs because each component owns only one or
+       two strings; anything page-sized gets its own file. -->
+  <data name="Nav_Lobby" xml:space="preserve"><value>Lobby</value></data>
+  <data name="Nav_Menu" xml:space="preserve"><value>Navigation menu</value></data>
+  <data name="Layout_GuestBadge" xml:space="preserve"><value>Guest (Watch Only)</value></data>
+  <data name="Layout_Login" xml:space="preserve"><value>Login</value></data>
+  <data name="Layout_Register" xml:space="preserve"><value>Register</value></data>
+  <data name="Layout_Logout" xml:space="preserve"><value>Logout</value></data>
+  <data name="Layout_Hello" xml:space="preserve"><value>Hello, {0}!</value></data>
+  <data name="Layout_About" xml:space="preserve"><value>About</value></data>
+  <data name="Logout_Message" xml:space="preserve"><value>Logging out...</value></data>
+  <data name="App_NotAuthorized" xml:space="preserve"><value>You are not authorized to access this resource.</value></data>
+  <data name="App_NotFoundTitle" xml:space="preserve"><value>Not found</value></data>
+  <data name="App_NotFoundBody" xml:space="preserve"><value>Sorry, there's nothing at this address.</value></data>
+  <data name="Auth_ParseResponseFailed" xml:space="preserve"><value>Failed to parse response.</value></data>
+
+  <!-- Nations -->
+  <data name="Nation_Russia" xml:space="preserve"><value>Russia</value></data>
+  <data name="Nation_China" xml:space="preserve"><value>China</value></data>
+  <data name="Nation_India" xml:space="preserve"><value>India</value></data>
+  <data name="Nation_Brazil" xml:space="preserve"><value>Brazil</value></data>
+  <data name="Nation_USA" xml:space="preserve"><value>USA</value></data>
+  <data name="Nation_Europe" xml:space="preserve"><value>Europe</value></data>
+
+  <!-- Nation abbreviations (rondel markers) -->
+  <data name="NationAbbrev_Russia" xml:space="preserve"><value>RUS</value></data>
+  <data name="NationAbbrev_China" xml:space="preserve"><value>CHN</value></data>
+  <data name="NationAbbrev_India" xml:space="preserve"><value>IND</value></data>
+  <data name="NationAbbrev_Brazil" xml:space="preserve"><value>BRA</value></data>
+  <data name="NationAbbrev_USA" xml:space="preserve"><value>USA</value></data>
+  <data name="NationAbbrev_Europe" xml:space="preserve"><value>EU</value></data>
+
+  <!-- Rondel slots, keyed by index: Production and Maneuver each occupy two slots -->
+  <data name="Rondel_Slot_0" xml:space="preserve"><value>Taxation</value></data>
+  <data name="Rondel_Slot_1" xml:space="preserve"><value>Factory</value></data>
+  <data name="Rondel_Slot_2" xml:space="preserve"><value>Production</value></data>
+  <data name="Rondel_Slot_3" xml:space="preserve"><value>Maneuver</value></data>
+  <data name="Rondel_Slot_4" xml:space="preserve"><value>Investor</value></data>
+  <data name="Rondel_Slot_5" xml:space="preserve"><value>Import</value></data>
+  <data name="Rondel_Slot_6" xml:space="preserve"><value>Production</value></data>
+  <data name="Rondel_Slot_7" xml:space="preserve"><value>Maneuver</value></data>
+
+  <!-- Units -->
+  <data name="UnitType_Army" xml:space="preserve"><value>Army</value></data>
+  <data name="UnitType_Fleet" xml:space="preserve"><value>Fleet</value></data>
+  <data name="UnitGlyph_Army" xml:space="preserve"><value>A</value></data>
+  <data name="UnitGlyph_Fleet" xml:space="preserve"><value>F</value></data>
+
+  <!-- Maneuver phases -->
+  <data name="ManeuverPhase_None" xml:space="preserve"><value>None</value></data>
+  <data name="ManeuverPhase_Fleets" xml:space="preserve"><value>Fleets</value></data>
+  <data name="ManeuverPhase_Armies" xml:space="preserve"><value>Armies</value></data>
+  <data name="ManeuverPhaseSingular_Fleets" xml:space="preserve"><value>Fleet</value></data>
+  <data name="ManeuverPhaseSingular_Armies" xml:space="preserve"><value>Army</value></data>
+
+  <!-- Phase names as recorded in the action log's metadata by the server -->
+  <data name="PhaseName_Fleets" xml:space="preserve"><value>Fleets</value></data>
+  <data name="PhaseName_Armies" xml:space="preserve"><value>Armies</value></data>
+  <data name="PhaseName_Turn" xml:space="preserve"><value>Turn</value></data>
+
+  <!-- Game status -->
+  <data name="GameStatus_Lobby" xml:space="preserve"><value>Lobby</value></data>
+  <data name="GameStatus_InProgress" xml:space="preserve"><value>In Progress</value></data>
+  <data name="GameStatus_Finished" xml:space="preserve"><value>Finished</value></data>
+
+  <!-- Bot strategy labels (the identifier itself stays English — it is the wire value) -->
+  <data name="BotType_Default" xml:space="preserve"><value>Default</value></data>
+  <data name="BotType_Aggressive" xml:space="preserve"><value>Aggressive</value></data>
+  <data name="BotType_Friendly" xml:space="preserve"><value>Friendly</value></data>
+  <data name="BotType_Greedy" xml:space="preserve"><value>Greedy</value></data>
+  <data name="BotType_RL" xml:space="preserve"><value>RL</value></data>
+  <data name="BotType_Random" xml:space="preserve"><value>Random</value></data>
+
+  <!-- Territories: home provinces -->
+  <data name="Territory_Moscow" xml:space="preserve"><value>Moscow</value></data>
+  <data name="Territory_Vladivostok" xml:space="preserve"><value>Vladivostok</value></data>
+  <data name="Territory_Murmansk" xml:space="preserve"><value>Murmansk</value></data>
+  <data name="Territory_Novosibirsk" xml:space="preserve"><value>Novosibirsk</value></data>
+  <data name="Territory_Beijing" xml:space="preserve"><value>Beijing</value></data>
+  <data name="Territory_Shanghai" xml:space="preserve"><value>Shanghai</value></data>
+  <data name="Territory_Chongqing" xml:space="preserve"><value>Chongqing</value></data>
+  <data name="Territory_Urumqi" xml:space="preserve"><value>Urumqi</value></data>
+  <data name="Territory_NewDelhi" xml:space="preserve"><value>New Delhi</value></data>
+  <data name="Territory_Mumbai" xml:space="preserve"><value>Mumbai</value></data>
+  <data name="Territory_Kolkata" xml:space="preserve"><value>Kolkata</value></data>
+  <data name="Territory_Chennai" xml:space="preserve"><value>Chennai</value></data>
+  <data name="Territory_Brasilia" xml:space="preserve"><value>Brasilia</value></data>
+  <data name="Territory_RioDeJaneiro" xml:space="preserve"><value>Rio De Janeiro</value></data>
+  <data name="Territory_Manaus" xml:space="preserve"><value>Manaus</value></data>
+  <data name="Territory_Fortaleza" xml:space="preserve"><value>Fortaleza</value></data>
+  <data name="Territory_NewYork" xml:space="preserve"><value>New York</value></data>
+  <data name="Territory_SanFrancisco" xml:space="preserve"><value>San Francisco</value></data>
+  <data name="Territory_NewOrleans" xml:space="preserve"><value>New Orleans</value></data>
+  <data name="Territory_Chicago" xml:space="preserve"><value>Chicago</value></data>
+  <data name="Territory_Berlin" xml:space="preserve"><value>Berlin</value></data>
+  <data name="Territory_London" xml:space="preserve"><value>London</value></data>
+  <data name="Territory_Paris" xml:space="preserve"><value>Paris</value></data>
+  <data name="Territory_Rome" xml:space="preserve"><value>Rome</value></data>
+
+  <!-- Territories: neutral land -->
+  <data name="Territory_Switzerland" xml:space="preserve"><value>Switzerland</value></data>
+  <data name="Territory_Ukraine" xml:space="preserve"><value>Ukraine</value></data>
+  <data name="Territory_Korea" xml:space="preserve"><value>Korea</value></data>
+  <data name="Territory_Mongolia" xml:space="preserve"><value>Mongolia</value></data>
+  <data name="Territory_Kazakhstan" xml:space="preserve"><value>Kazakhstan</value></data>
+  <data name="Territory_Japan" xml:space="preserve"><value>Japan</value></data>
+  <data name="Territory_Turkey" xml:space="preserve"><value>Turkey</value></data>
+  <data name="Territory_Guinea" xml:space="preserve"><value>Guinea</value></data>
+  <data name="Territory_Quebec" xml:space="preserve"><value>Quebec</value></data>
+  <data name="Territory_Mexico" xml:space="preserve"><value>Mexico</value></data>
+  <data name="Territory_Colombia" xml:space="preserve"><value>Colombia</value></data>
+  <data name="Territory_Afghanistan" xml:space="preserve"><value>Afghanistan</value></data>
+  <data name="Territory_Alaska" xml:space="preserve"><value>Alaska</value></data>
+  <data name="Territory_Canada" xml:space="preserve"><value>Canada</value></data>
+  <data name="Territory_Peru" xml:space="preserve"><value>Peru</value></data>
+  <data name="Territory_Argentina" xml:space="preserve"><value>Argentina</value></data>
+  <data name="Territory_Iran" xml:space="preserve"><value>Iran</value></data>
+  <data name="Territory_North-Africa" xml:space="preserve"><value>North-Africa</value></data>
+  <data name="Territory_Nigeria" xml:space="preserve"><value>Nigeria</value></data>
+  <data name="Territory_Congo" xml:space="preserve"><value>Congo</value></data>
+  <data name="Territory_South-Africa" xml:space="preserve"><value>South Africa</value></data>
+  <data name="Territory_East-Africa" xml:space="preserve"><value>East Africa</value></data>
+  <data name="Territory_NearEast" xml:space="preserve"><value>Near East</value></data>
+  <data name="Territory_Indochina" xml:space="preserve"><value>Indochina</value></data>
+  <data name="Territory_Indonesia" xml:space="preserve"><value>Indonesia</value></data>
+  <data name="Territory_Philippines" xml:space="preserve"><value>Philippines</value></data>
+  <data name="Territory_Australia" xml:space="preserve"><value>Australia</value></data>
+  <data name="Territory_NewZealand" xml:space="preserve"><value>New Zealand</value></data>
+
+  <!-- Territories: sea regions -->
+  <data name="Territory_MediterraneanSea" xml:space="preserve"><value>Mediterranean Sea</value></data>
+  <data name="Territory_NorthAtlantic" xml:space="preserve"><value>North Atlantic</value></data>
+  <data name="Territory_GulfOfGuinea" xml:space="preserve"><value>Gulf of Guinea</value></data>
+  <data name="Territory_NorthPacific" xml:space="preserve"><value>North Pacific</value></data>
+  <data name="Territory_SouthPacific" xml:space="preserve"><value>South Pacific</value></data>
+  <data name="Territory_SouthAtlantic" xml:space="preserve"><value>South Atlantic</value></data>
+  <data name="Territory_IndianOcean" xml:space="preserve"><value>Indian Ocean</value></data>
+  <data name="Territory_SeaOfJapan" xml:space="preserve"><value>Sea Of Japan</value></data>
+  <data name="Territory_ChinaSea" xml:space="preserve"><value>China Sea</value></data>
+  <data name="Territory_CaribbeanSea" xml:space="preserve"><value>Caribbean Sea</value></data>
+  <data name="Territory_TasmanSea" xml:space="preserve"><value>Tasman Sea</value></data>
+</root>

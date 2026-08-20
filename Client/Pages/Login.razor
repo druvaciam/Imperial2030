@@ -2,8 +2,9 @@
 @using Imperial2030.Shared.Auth
 @inject Imperial2030.Client.Services.AuthService AuthService
 @inject NavigationManager NavigationManager
+@inject IStringLocalizer<Login> L
 
-<h3>Login</h3>
+<h3>@L["Title"]</h3>
 
 @if (ShowErrors)
 {
@@ -14,29 +15,29 @@
 
 <div class="card">
     <div class="card-body">
-        <h5 class="card-title">Please enter your details</h5>
+        <h5 class="card-title">@L["CardTitle"]</h5>
         <EditForm Model="loginRequest" OnValidSubmit="HandleLogin">
             <DataAnnotationsValidator />
             <ValidationSummary />
 
             <div class="mb-3">
-                <label for="username" class="form-label">User Name</label>
+                <label for="username" class="form-label">@L["UserName"]</label>
                 <InputText id="username" class="form-control" @bind-Value="loginRequest.UserName" />
             </div>
             <div class="mb-3">
-                <label for="password" class="form-label">Password</label>
+                <label for="password" class="form-label">@L["Password"]</label>
                 <InputText id="password" type="password" class="form-control" @bind-Value="loginRequest.Password" />
             </div>
 
-            <button type="submit" class="btn btn-primary" disabled="@isLoggingIn">Login</button>
+            <button type="submit" class="btn btn-primary" disabled="@isLoggingIn">@L["SubmitButton"]</button>
         </EditForm>
 
         <div class="text-center my-3">
-            <span class="text-muted">— or —</span>
+            <span class="text-muted">@L["OrSeparator"]</span>
         </div>
 
         <button class="btn btn-outline-secondary w-100" @onclick="HandleGuestLogin" disabled="@isLoggingIn">
-            <span class="oi oi-eye me-2"></span>Continue as Guest (Watch Only)
+            <span class="oi oi-eye me-2"></span>@L["GuestButton"]
         </button>
     </div>
 </div>
@@ -59,7 +60,7 @@
         }
         else
         {
-            Error = result.Error ?? "Login failed.";
+            Error = result.Error ?? L["LoginFailed"];
             ShowErrors = true;
         }
     }
@@ -77,7 +78,7 @@
         }
         else
         {
-            Error = result.Error ?? "Guest login failed.";
+            Error = result.Error ?? L["GuestLoginFailed"];
             ShowErrors = true;
         }
 

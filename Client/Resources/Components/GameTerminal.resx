@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="Header" xml:space="preserve"><value>&gt; COMMAND LOG</value></data>
+  <data name="NoHistory" xml:space="preserve"><value>// No history recorded</value></data>
+
+  <!-- Investment -->
+  <data name="PassedOnInvestment" xml:space="preserve"><value>passed on investment</value></data>
+  <data name="UpgradedBond" xml:space="preserve"><value>upgraded {0} {1}M to {2}M bond</value></data>
+  <data name="BoughtBond" xml:space="preserve"><value>bought {0} {1}M bond</value></data>
+  <data name="TookControlOfNation" xml:space="preserve"><value> and took control of {0}</value></data>
+  <data name="TookControlOfNationFrom" xml:space="preserve"><value> and took control of {0} from {1}</value></data>
+  <data name="SwissBankKicked" xml:space="preserve"><value>System: {0} was kicked to Switzerland (Swiss Bank)!</value></data>
+
+  <!-- Taxation -->
+  <data name="CollectedTaxes" xml:space="preserve"><value>collected taxes: {0}M (Soldiers' Pay: {1}M, Treasury Gain: {2}M, Bonus: {3}M, Power: {4})</value></data>
+
+  <!-- Import / production: {1} is a comma-joined list of UnitInTerritory entries -->
+  <data name="ImportedUnits" xml:space="preserve"><value>imported {0} units ({1})</value></data>
+  <data name="ProducedUnits" xml:space="preserve"><value>produced {0} units ({1})</value></data>
+  <data name="UnitInTerritory" xml:space="preserve"><value>{0} in {1}</value></data>
+
+  <!-- Turn and phase -->
+  <data name="EndedTurn" xml:space="preserve"><value>ended their turn</value></data>
+  <data name="AutoSkippedPhase" xml:space="preserve"><value>auto-skipped {0} maneuver phase</value></data>
+  <data name="AutoEndedPhase" xml:space="preserve"><value>auto-ended {0} maneuver phase</value></data>
+  <data name="EndedPhase" xml:space="preserve"><value>ended {0} maneuver phase</value></data>
+
+  <!-- Rondel -->
+  <data name="RondelMoved" xml:space="preserve"><value>moved to {0} from {1} (Cost: {2}M)</value></data>
+  <data name="RondelStart" xml:space="preserve"><value>Start</value></data>
+
+  <!-- Unit movement -->
+  <data name="UnitStayed" xml:space="preserve"><value>{0} stayed in {1}</value></data>
+  <data name="UnitMovedAwaitingResponse" xml:space="preserve"><value>{0} moved {1} to {2} from {3}, awaiting response from {4}</value></data>
+  <data name="UnitMoved" xml:space="preserve"><value>{0} moved to {1} from {2} (Hostile: {3})</value></data>
+  <data name="Hostilely" xml:space="preserve"><value>hostilely</value></data>
+  <data name="Peacefully" xml:space="preserve"><value>peacefully</value></data>
+
+  <!-- Battles -->
+  <data name="BattleResponseFight" xml:space="preserve"><value>{0} {1} chose FIGHT against {2} {3} in {4}. Both destroyed</value></data>
+  <data name="BattleAttack" xml:space="preserve"><value>{0} attacked {1} {2} in {3}. Both destroyed</value></data>
+  <data name="BattleResponsePeace" xml:space="preserve"><value>{0} agreed to PEACE with {1} in {2}</value></data>
+  <data name="AllPartiesPeace" xml:space="preserve"><value>All parties agreed to PEACE in {0}.</value></data>
+
+  <!-- Territory and factories -->
+  <data name="TookControlOfTerritory" xml:space="preserve"><value>took control of {0}</value></data>
+  <data name="TookControlOfTerritoryFrom" xml:space="preserve"><value>took control of {0} from {1}</value></data>
+  <data name="BuiltFactory" xml:space="preserve"><value>built a factory in {0}</value></data>
+  <data name="DestroyedFactory" xml:space="preserve"><value>destroyed {0} factory in {1}</value></data>
+
+  <!-- Hostility toggle -->
+  <data name="HostilityToggled" xml:space="preserve"><value>{0} in {1} converted to {2}</value></data>
+  <data name="Hostile" xml:space="preserve"><value>hostile</value></data>
+  <data name="Friendly" xml:space="preserve"><value>friendly</value></data>
+
+  <!-- Swiss Bank -->
+  <data name="SwissBankForceStop" xml:space="preserve"><value>chose to FORCE STOP {0} on Investor</value></data>
+  <data name="SwissBankPass" xml:space="preserve"><value>chose to PASS on forcing {0} to stop</value></data>
+
+  <!-- Lobby lifecycle -->
+  <data name="JoinedGame" xml:space="preserve"><value>joined the game</value></data>
+  <data name="LeftGame" xml:space="preserve"><value>left the game</value></data>
+  <data name="StartedGame" xml:space="preserve"><value>started the game</value></data>
+  <data name="PausedGame" xml:space="preserve"><value>paused the game</value></data>
+  <data name="ResumedGame" xml:space="preserve"><value>resumed the game</value></data>
+
+  <!-- Investor interest -->
+  <data name="ReceivedInvestorBonus" xml:space="preserve"><value>received {0}M Investor bonus</value></data>
+  <data name="InterestPaid" xml:space="preserve"><value>paid {0}M interest to {1}</value></data>
+  <data name="InterestPartial" xml:space="preserve"><value>paid partial {0}M interest to {1} (insufficient funds for full {2}M)</value></data>
+  <data name="UnableToPayTreasuryEmpty" xml:space="preserve"><value>unable to pay interest to {0} (treasury empty)</value></data>
+  <data name="UnableToPay" xml:space="preserve"><value>unable to pay {0}M interest to {1} (insufficient funds)</value></data>
+  <data name="PersonallyContributed" xml:space="preserve"><value>personally contributed {0}M to cover interest deficit</value></data>
+</root>

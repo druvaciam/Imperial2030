@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="TitleYourTurnPrefix" xml:space="preserve"><value>⚠️ ВАШ ХОД! - </value></data>
+  <data name="LoadingArchives" xml:space="preserve"><value>Загрузка імперскіх архіваў...</value></data>
+
+  <!-- Top bar -->
+  <data name="TopBar_GameId" xml:space="preserve"><value>ID гульні: {0}...</value></data>
+  <data name="TopBar_Host" xml:space="preserve"><value>Гаспадар:</value></data>
+  <data name="TopBar_JoinCode" xml:space="preserve"><value>Код далучэння:</value></data>
+  <data name="TopBar_VariantTaxBonus" xml:space="preserve"><value>Варыянт: падатковы бонус</value></data>
+  <data name="TopBar_PauseGame" xml:space="preserve"><value>Прыпыніць гульню</value></data>
+  <data name="TopBar_ResumeGame" xml:space="preserve"><value>Працягнуць гульню</value></data>
+  <data name="TopBar_Pause" xml:space="preserve"><value>ПАЎЗА</value></data>
+  <data name="TopBar_Resume" xml:space="preserve"><value>ПРАЦЯГ</value></data>
+
+  <!-- Pending battle panel -->
+  <data name="Battle_PendingTitle" xml:space="preserve"><value>БІТВА Ў ЧАКАННІ</value></data>
+  <data name="Battle_Prompt" xml:space="preserve"><value>Войскі &lt;strong&gt;{0}&lt;/strong&gt; мірна сустрэлі войскі &lt;strong&gt;{1}&lt;/strong&gt;. Ці прымаеце вы (як &lt;strong&gt;{2}&lt;/strong&gt;) суіснаванне, ці выбіраеце бітву?</value></data>
+  <data name="Battle_AcceptPeace" xml:space="preserve"><value>Прыняць мір</value></data>
+  <data name="Battle_Fight" xml:space="preserve"><value>БІТВА!</value></data>
+  <data name="Battle_Waiting" xml:space="preserve"><value>&lt;strong&gt;{0}&lt;/strong&gt; на мірную прапанову &lt;strong&gt;{1}&lt;/strong&gt;...</value></data>
+  <data name="Battle_WaitingPrefix" xml:space="preserve"><value>Чакаем адказу ад</value></data>
+
+  <!-- Swiss Bank panel -->
+  <data name="Swiss_Title" xml:space="preserve"><value>РАШЭННЕ ШВЕЙЦАРСКАГА БАНКА</value></data>
+  <data name="Swiss_Explanation" xml:space="preserve"><value>&lt;strong&gt;{0}&lt;/strong&gt; прапускае Інвестара, але мае грошы на выплату ўсіх адсоткаў.</value></data>
+  <data name="Swiss_Question" xml:space="preserve"><value>Хочаце прымусіць спыніцца на Інвестары?</value></data>
+  <data name="Swiss_ForceStopTitle" xml:space="preserve"><value>Вы атрымаеце {0} M адсоткаў, калі прымусіце.</value></data>
+  <data name="Swiss_ForceStop" xml:space="preserve"><value>ПРЫМУСІЦЬ СПЫНІЦЦА</value></data>
+  <data name="Swiss_AllowPassTitle" xml:space="preserve"><value>Вы не атрымаеце ніякіх адсоткаў.</value></data>
+  <data name="Swiss_AllowPass" xml:space="preserve"><value>ДАЗВОЛІЦЬ ПРАЙСЦІ</value></data>
+  <data name="Swiss_Waiting" xml:space="preserve"><value>Чакаем рашэння гульцоў Швейцарскага банка (&lt;strong&gt;{0}&lt;/strong&gt;)...</value></data>
+
+  <!-- Players panel -->
+  <data name="Players_Title" xml:space="preserve"><value>Гульцы</value></data>
+  <data name="Players_Observers" xml:space="preserve"><value>Назіральнікаў: {0}</value></data>
+  <data name="Players_BotPlayer" xml:space="preserve"><value>Бот</value></data>
+  <data name="Players_InGame" xml:space="preserve"><value>У гульні</value></data>
+  <data name="Players_Online" xml:space="preserve"><value>У сетцы</value></data>
+  <data name="Players_Offline" xml:space="preserve"><value>Не ў сетцы</value></data>
+  <data name="Players_ControlledNations" xml:space="preserve"><value>Кантраляваныя нацыі</value></data>
+  <data name="Players_Cash" xml:space="preserve"><value>Грошы</value></data>
+  <data name="Players_VpTooltip" xml:space="preserve"><value>Цяперашнія пераможныя ачкі (грошы + вартасць інвестыцыяў × множнік)</value></data>
+  <data name="Players_Vp" xml:space="preserve"><value>{0} ПА</value></data>
+  <data name="Players_RemoveBot" xml:space="preserve"><value>Выдаліць бота</value></data>
+  <data name="Players_InvestorCard" xml:space="preserve"><value>КАРТА ІНВЕСТАРА</value></data>
+
+  <!-- Investor panel -->
+  <data name="Investor_Title" xml:space="preserve"><value>Фаза Інвестара</value></data>
+  <data name="Investor_AvailableToInvest" xml:space="preserve"><value>Даступна для інвестыцыяў:</value></data>
+  <data name="Investor_HoldsCard" xml:space="preserve"><value>У вас карта Інвестара. Вы атрымалі бонус $2M. Інвестуйце або прапусціце.</value></data>
+  <data name="Investor_SwissBank" xml:space="preserve"><value>Вы — Швейцарскі банк. Інвестуйце або прапусціце.</value></data>
+  <data name="Investor_Pass" xml:space="preserve"><value>Прапусціць (без інвестыцыяў)</value></data>
+  <data name="Investor_AvailableBonds" xml:space="preserve"><value>Даступныя аблігацыі</value></data>
+  <data name="Investor_BondInterest" xml:space="preserve"><value>{0} M адс.</value></data>
+  <data name="Investor_BondCost" xml:space="preserve"><value>{0} M</value></data>
+  <data name="Investor_Upgrade" xml:space="preserve"><value>Палепшыць з {0} M (даплата {1} M)</value></data>
+  <data name="Investor_WaitingAction" xml:space="preserve"><value>Чакаем дзеяння Інвестара...</value></data>
+  <data name="Investor_CurrentActor" xml:space="preserve"><value>Цяперашні гулец: {0}</value></data>
+
+  <!-- Rondel / turn actions -->
+  <data name="CurrentTurn" xml:space="preserve"><value>Цяперашні ход</value></data>
+  <data name="BuildFactory_Title" xml:space="preserve"><value>Пабудаваць фабрыку</value></data>
+  <data name="BuildFactory_Prompt" xml:space="preserve"><value>Абярыце родную тэрыторыю для пабудовы фабрыкі (кошт: 5M).</value></data>
+  <data name="Import_Title" xml:space="preserve"><value>Імпарт адзінак</value></data>
+  <data name="Import_Prompt" xml:space="preserve"><value>Кошт: 1M за адзінку. Максімум 3.</value></data>
+  <data name="Import_AddUnit" xml:space="preserve"><value>+ Дадаць адзінку</value></data>
+  <data name="Import_Confirm" xml:space="preserve"><value>Пацвердзіць імпарт ({0}M)</value></data>
+  <data name="ExecuteProduction" xml:space="preserve"><value>Выканаць вытворчасць</value></data>
+  <data name="ExecuteTaxation" xml:space="preserve"><value>Сабраць падаткі</value></data>
+  <data name="EndTurn" xml:space="preserve"><value>Завяршыць ход</value></data>
+  <data name="EndTurn_WaitingInvestor" xml:space="preserve"><value>(чакаем Інвестара)</value></data>
+
+  <!-- Nations panel -->
+  <data name="Nations_Title" xml:space="preserve"><value>Нацыі</value></data>
+  <data name="Nations_Treasury" xml:space="preserve"><value>Казна:</value></data>
+  <data name="Nations_Power" xml:space="preserve"><value>Магутнасць:</value></data>
+  <data name="Nations_TaxPreview" xml:space="preserve"><value>Падаткі зараз: магутнасць +{0}, казна {1} M, бонус +{2} M</value></data>
+  <data name="Nations_Controller" xml:space="preserve"><value>Кір.: {0}</value></data>
+  <data name="Nations_Flags" xml:space="preserve"><value>Сцягі: {0}</value></data>
+  <data name="Nations_Armies" xml:space="preserve"><value>Арміі: {0}/{1}</value></data>
+  <data name="Nations_Fleets" xml:space="preserve"><value>Флоты: {0}/{1}</value></data>
+  <data name="Nations_Factories" xml:space="preserve"><value>Фабрыкі: {0}</value></data>
+
+  <!-- Host controls -->
+  <data name="Host_RandomBot" xml:space="preserve"><value>Выпадковы выбар</value></data>
+  <data name="Host_BotOption" xml:space="preserve"><value>Бот «{0}»</value></data>
+  <data name="Host_AddBot" xml:space="preserve"><value>🤖 Дадаць бота</value></data>
+  <data name="Host_StartGame" xml:space="preserve"><value>Пачаць гульню</value></data>
+  <data name="LeaveGame" xml:space="preserve"><value>Пакінуць гульню</value></data>
+  <data name="ReturnToLobby" xml:space="preserve"><value>Вярнуцца ў лобі</value></data>
+
+  <!-- Replay controls -->
+  <data name="Replay_Start" xml:space="preserve"><value>Пачаць паўтор</value></data>
+  <data name="Replay_Export" xml:space="preserve"><value>Экспарт</value></data>
+  <data name="Replay_Pause" xml:space="preserve"><value>Паўза</value></data>
+  <data name="Replay_Resume" xml:space="preserve"><value>Працяг</value></data>
+  <data name="Replay_Reset" xml:space="preserve"><value>Скід</value></data>
+  <data name="Replay_Exit" xml:space="preserve"><value>Выйсці з паўтору</value></data>
+  <data name="Replay_Banner" xml:space="preserve"><value>ПАЎТОР</value></data>
+  <data name="Replay_Progress" xml:space="preserve"><value>Дзеянне {0} / {1} {2}</value></data>
+  <data name="Replay_Paused" xml:space="preserve"><value>(паўза)</value></data>
+  <data name="Replay_Complete" xml:space="preserve"><value>(завершана)</value></data>
+  <data name="Replay_Starting" xml:space="preserve"><value>Запуск…</value></data>
+  <data name="Replay_StartFailed" xml:space="preserve"><value>Не ўдалося пачаць паўтор: {0}</value></data>
+
+  <!-- Turn alert overlays -->
+  <data name="Alert_GamePaused" xml:space="preserve"><value>ГУЛЬНЯ ПРЫПЫНЕНА</value></data>
+  <data name="Alert_GamePausedSub" xml:space="preserve"><value>Боты прыпыненыя. Націсніце «Працяг», каб прадоўжыць.</value></data>
+  <data name="Alert_YourMove" xml:space="preserve"><value>ВАШ ХОД!</value></data>
+  <data name="Alert_YouControl" xml:space="preserve"><value>Вы кіруеце: {0}</value></data>
+  <data name="Alert_InvestorPhase" xml:space="preserve"><value>ФАЗА ІНВЕСТАРА</value></data>
+  <data name="Alert_YourTurnToAct" xml:space="preserve"><value>Ваша чарга дзейнічаць</value></data>
+  <data name="Alert_ObserverMode" xml:space="preserve"><value>РЭЖЫМ НАЗІРАЛЬНІКА</value></data>
+  <data name="Alert_Watching" xml:space="preserve"><value>Вы назіраеце за гэтай гульнёй</value></data>
+
+  <!-- Game over -->
+  <data name="GameOver_Title" xml:space="preserve"><value>ГУЛЬНЯ СКОНЧАНА</value></data>
+  <data name="GameOver_EndedBy" xml:space="preserve"><value>Завершана: {0} дасягнула {1} магутнасці</value></data>
+  <data name="GameOver_Rank" xml:space="preserve"><value>Месца</value></data>
+  <data name="GameOver_Player" xml:space="preserve"><value>Гулец</value></data>
+  <data name="GameOver_Cash" xml:space="preserve"><value>Грошы</value></data>
+  <data name="GameOver_BondValue" xml:space="preserve"><value>Вартасць інвестыцыяў</value></data>
+  <data name="GameOver_TotalVp" xml:space="preserve"><value>Усяго ПА</value></data>
+
+  <!-- Lobby placeholder board -->
+  <data name="Placeholder_WaitingToStart" xml:space="preserve"><value>Чакаем пачатку гульні...</value></data>
+  <data name="Placeholder_GameId" xml:space="preserve"><value>ID гульні: {0}</value></data>
+
+  <!-- Assets sidebar -->
+  <data name="Assets_Title" xml:space="preserve"><value>Актывы</value></data>
+  <data name="Assets_Governments" xml:space="preserve"><value>Урады</value></data>
+  <data name="Assets_Power" xml:space="preserve"><value>Магутнасць:</value></data>
+  <data name="Assets_Treasury" xml:space="preserve"><value>Казна:</value></data>
+  <data name="Assets_Cash" xml:space="preserve"><value>Грошы:</value></data>
+  <data name="Assets_Bonds" xml:space="preserve"><value>Аблігацыі</value></data>
+  <data name="Assets_Bond" xml:space="preserve"><value>Аблігацыя {0}</value></data>
+  <data name="Assets_NoBonds" xml:space="preserve"><value>Аблігацыяў няма.</value></data>
+  <data name="Assets_GlobalBonds" xml:space="preserve"><value>Усе аблігацыі</value></data>
+  <data name="Assets_BoughtOnly" xml:space="preserve"><value>Толькі купленыя</value></data>
+
+  <!-- Toasts, confirms and warnings -->
+  <data name="Toast_GameDeleted" xml:space="preserve"><value>Гаспадар выдаліў гэту гульню.</value></data>
+  <data name="Toast_GameNotFound" xml:space="preserve"><value>Гульня не знойдзена або доступ забаронены.</value></data>
+  <data name="Toast_StartGameFailed" xml:space="preserve"><value>Не ўдалося пачаць гульню: {0}</value></data>
+  <data name="Toast_AddBotFailed" xml:space="preserve"><value>Не ўдалося дадаць бота: {0}</value></data>
+  <data name="Toast_RemoveBotFailed" xml:space="preserve"><value>Не ўдалося выдаліць бота: {0}</value></data>
+  <data name="Toast_RondelTooFar" xml:space="preserve"><value>Нельга рухацца больш чым на {0} пазіцый па рандэлі!</value></data>
+  <data name="Confirm_MoveCost" xml:space="preserve"><value>Гэты рух будзе каштаваць {0}M. Працягнуць?</value></data>
+  <data name="Warn_NoTreasuryForFactory" xml:space="preserve"><value>У вашай казне менш за 5M. Вы не зможаце пабудаваць фабрыку.</value></data>
+  <data name="Warn_AllFactoriesBuilt" xml:space="preserve"><value>Ва ўсіх вашых родных правінцыях ужо пабудаваныя фабрыкі. Больш будаваць няма дзе.</value></data>
+  <data name="Warn_NoFactories" xml:space="preserve"><value>У вас няма фабрыкаў. Вы не вырабіце ніводнай адзінкі.</value></data>
+  <data name="Warn_FactoriesBlockaded" xml:space="preserve"><value>Усе вашы фабрыкі заблакаваныя варожымі арміямі. Вы не зможаце нічога вырабіць.</value></data>
+  <data name="Warn_NoUnitsToManeuver" xml:space="preserve"><value>У вас няма арміяў ці флотаў на дошцы для манеўру.</value></data>
+  <data name="Warn_InterestShortfall" xml:space="preserve"><value>Гэта нацыя мае толькі {0}M, але вінна {1}M іншым гульцам. Вы атрымаеце 0M з вашых {2}M адсоткаў.</value></data>
+  <data name="Warn_NoTreasuryForImport" xml:space="preserve"><value>У вашай казне 0M. Вы не зможаце імпартаваць адзінкі.</value></data>
+  <data name="Toast_MoveFailed" xml:space="preserve"><value>Не ўдалося рушыць: {0}</value></data>
+  <data name="Toast_Error" xml:space="preserve"><value>Памылка: {0}</value></data>
+  <data name="Toast_ResponseFailed" xml:space="preserve"><value>Не ўдалося адказаць: {0}</value></data>
+  <data name="Toast_FinishManeuverFirst" xml:space="preserve"><value>Спачатку завяршыце фазу манеўру ({0}).</value></data>
+  <data name="Toast_EndTurnFailed" xml:space="preserve"><value>Не ўдалося завяршыць ход: {0}</value></data>
+  <data name="Toast_BattleResponseFailed" xml:space="preserve"><value>Не ўдалося адправіць адказ на бітву.</value></data>
+  <data name="Toast_BuildFactoryFailed" xml:space="preserve"><value>Не ўдалося пабудаваць фабрыку: {0}</value></data>
+  <data name="Toast_TaxationFailed" xml:space="preserve"><value>Не ўдалося сабраць падаткі: {0}</value></data>
+  <data name="Toast_ProductionFailed" xml:space="preserve"><value>Не ўдалося выканаць вытворчасць: {0}</value></data>
+  <data name="Toast_InvestmentFailed" xml:space="preserve"><value>Не ўдалося інвеставаць: {0}</value></data>
+  <data name="Toast_InsufficientFunds" xml:space="preserve"><value>Не хапае сродкаў!</value></data>
+  <data name="Toast_ImportFailed" xml:space="preserve"><value>Не ўдалося імпартаваць: {0}</value></data>
+  <data name="Toast_LeaveGameFailed" xml:space="preserve"><value>Не ўдалося пакінуць гульню: {0}</value></data>
+  <data name="Toast_TogglePauseFailed" xml:space="preserve"><value>Не ўдалося перамкнуць паўзу: {0}</value></data>
+  <data name="Toast_TogglePauseError" xml:space="preserve"><value>Памылка пры перамыканні паўзы: {0}</value></data>
+
+  <!-- Server-pushed toasts (Shared/Constants/ToastCodes.cs). Whole sentences per case, not a base
+       message plus a glued-on suffix - see the note in ToastCodes. -->
+  <data name="Toast_InvestmentBought" xml:space="preserve"><value>{0} купіў аблігацыю {1} на {2}M</value></data>
+  <data name="Toast_InvestmentBoughtTookControl" xml:space="preserve"><value>{0} купіў аблігацыю {1} на {2}M і ўзяў кантроль над {1}</value></data>
+  <data name="Toast_InvestmentBoughtTookControlFrom" xml:space="preserve"><value>{0} купіў аблігацыю {1} на {2}M і адабраў кантроль над {1} у {3}</value></data>
+  <data name="Toast_InvestmentUpgraded" xml:space="preserve"><value>{0} палепшыў аблігацыю {1} з {2}M да {3}M</value></data>
+  <data name="Toast_InvestmentUpgradedTookControl" xml:space="preserve"><value>{0} палепшыў аблігацыю {1} з {2}M да {3}M і ўзяў кантроль над {1}</value></data>
+  <data name="Toast_InvestmentUpgradedTookControlFrom" xml:space="preserve"><value>{0} палепшыў аблігацыю {1} з {2}M да {3}M і адабраў кантроль над {1} у {4}</value></data>
+  <data name="Toast_SwissForcedStop" xml:space="preserve"><value>{0} прымусіў {1} спыніцца на Інвестары.</value></data>
+  <data name="Toast_SwissPassed" xml:space="preserve"><value>{0} не стаў прымушаць {1} спыняцца.</value></data>
+  <data name="Toast_GamePaused" xml:space="preserve"><value>Гульня прыпынена.</value></data>
+  <data name="Toast_GameResumed" xml:space="preserve"><value>Гульня працягнута.</value></data>
+  <data name="Toast_BattleFight" xml:space="preserve"><value>{0} выбраў БІТВУ супраць {1}!</value></data>
+  <data name="Toast_BattlePeace" xml:space="preserve"><value>{0} пагадзіўся на МІР.</value></data>
+</root>

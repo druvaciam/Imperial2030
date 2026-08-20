@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <!-- Slice descriptions, keyed by rondel slot index (Production and Maneuver occupy two slots each) -->
+  <data name="Desc_Slot_0" xml:space="preserve"><value>Collect taxes based on factories and flags, pay soldiers, and boost power.</value></data>
+  <data name="Desc_Slot_1" xml:space="preserve"><value>Build a factory in a home city for 5M.</value></data>
+  <data name="Desc_Slot_2" xml:space="preserve"><value>Produce armies and fleets at your factories.</value></data>
+  <data name="Desc_Slot_3" xml:space="preserve"><value>Move your fleets and armies.</value></data>
+  <data name="Desc_Slot_4" xml:space="preserve"><value>Pay bond interest and trigger Investor action.</value></data>
+  <data name="Desc_Slot_5" xml:space="preserve"><value>Import up to 3 units for 1M each.</value></data>
+  <data name="Desc_Slot_6" xml:space="preserve"><value>Produce armies and fleets at your factories.</value></data>
+  <data name="Desc_Slot_7" xml:space="preserve"><value>Move your fleets and armies.</value></data>
+
+  <data name="YouSuffix" xml:space="preserve"><value> (You)</value></data>
+  <data name="Treasury" xml:space="preserve"><value>Treasury: {0}M</value></data>
+
+  <!-- Taxation preview -->
+  <data name="Tax_Revenue" xml:space="preserve"><value>Revenue: {0}M</value></data>
+  <data name="Tax_SoldiersPay" xml:space="preserve"><value>Soldiers' Pay: {0}M</value></data>
+  <data name="Tax_TreasuryGain" xml:space="preserve"><value>Nation Treasury Gain: {0}M</value></data>
+  <data name="Tax_ControllerBonus" xml:space="preserve"><value>Controller {0}{1} Bonus: {2}M</value></data>
+  <data name="Tax_PowerGain" xml:space="preserve"><value>Power Gain: {0}</value></data>
+
+  <!-- Investor preview -->
+  <data name="Investor_NoBonds" xml:space="preserve"><value>No bonds outstanding. No payouts.</value></data>
+  <data name="Investor_Payouts" xml:space="preserve"><value>Payouts:</value></data>
+  <data name="Investor_PayoutLine" xml:space="preserve"><value>- {0}{1}: {2}M</value></data>
+  <data name="Investor_TreasuryMax" xml:space="preserve"><value> (Treasury max)</value></data>
+  <data name="Investor_Insufficient" xml:space="preserve"><value>Insufficient Treasury Funds!
+Controller must cover deficit.</value></data>
+  <data name="Investor_NothingReceived" xml:space="preserve"><value> (0M received)</value></data>
+  <data name="Investor_DeficitLine" xml:space="preserve"><value>{0}{1} (Controller) pays deficit: {2}M out of pocket</value></data>
+
+  <!-- Factory preview -->
+  <data name="Factory_CurrentFactories" xml:space="preserve"><value>Current Factories: {0} / {1}</value></data>
+  <data name="Factory_CanBuild" xml:space="preserve"><value>Can Build: {0}</value></data>
+  <data name="Factory_No_MaxReached" xml:space="preserve"><value>No (Max Factories Reached)</value></data>
+  <data name="Factory_No_Need5M" xml:space="preserve"><value>No (Need 5M)</value></data>
+  <data name="Factory_No_Blocked" xml:space="preserve"><value>No (Blocked by Hostiles)</value></data>
+  <data name="Answer_Yes" xml:space="preserve"><value>Yes</value></data>
+
+  <!-- Import preview -->
+  <data name="Import_CanImport" xml:space="preserve"><value>Can Import: {0}</value></data>
+  <data name="Import_No_Need1M" xml:space="preserve"><value>No (Need 1M)</value></data>
+  <data name="Import_MaxUnits" xml:space="preserve"><value>Max Units: {0}</value></data>
+
+  <!-- Production preview -->
+  <data name="Production_Armies" xml:space="preserve"><value>Armies to Produce: {0} (Max: {1}, Blocked: {2})</value></data>
+  <data name="Production_Fleets" xml:space="preserve"><value>Fleets to Produce: {0} (Max: {1}, Blocked: {2})</value></data>
+
+  <!-- Maneuver preview -->
+  <data name="Maneuver_FleetsReady" xml:space="preserve"><value>Fleets ready to move: {0}</value></data>
+  <data name="Maneuver_ArmiesReady" xml:space="preserve"><value>Armies ready to move: {0}</value></data>
+</root>

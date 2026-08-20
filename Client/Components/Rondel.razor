@@ -1,6 +1,8 @@
 @using Imperial2030.Shared.Models
 @using System.Globalization
 @using System.Linq
+@inject IStringLocalizer<Rondel> L
+@inject DisplayNameLocalizer Names
 
 <div class="rondel-container @(IsMyTurn && !IsLocked ? "my-turn-highlight" : "")">
     <svg viewBox="-105 -105 210 210" class="rondel-svg" style="width: 100%; height: auto;">
@@ -46,7 +48,7 @@
                       font-size="10" 
                       font-weight="bold"
                       style="pointer-events: none;">
-                    @segment.Name
+                    @Names.RondelSlot(index)
                 </text>
             </g>
         }
@@ -130,17 +132,9 @@
 
     private string GetSliceTooltip(int index)
     {
-        var segment = Imperial2030.Shared.Constants.RondelData.GetSlotInfo(index);
-        string baseMsg = segment.Name switch
-        {
-            "Taxation" => "Collect taxes based on factories and flags, pay soldiers, and boost power.",
-            "Factory" => "Build a factory in a home city for 5M.",
-            "Production" => "Produce armies and fleets at your factories.",
-            "Maneuver" => "Move your fleets and armies.",
-            "Investor" => "Pay bond interest and trigger Investor action.",
-            "Import" => "Import up to 3 units for 1M each.",
-            _ => ""
-        };
+        // Keyed by slot index, not by slot name: the name is now localized, so switching on the
+        // English string (as this did) would silently stop matching in any other language.
+        string baseMsg = L[$"Desc_Slot_{index}"];
 
         if (Game == null || string.IsNullOrEmpty(baseMsg)) return baseMsg;
 
@@ -185,8 +179,8 @@
 
             int powerGain = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
 
-            string controllerName = nationState.ControllerName ?? "None";
-            string youIndicator = Game.Players.FirstOrDefault(p => p.Id == CurrentPlayerId)?.UserName == controllerName ? " (You)" : "";
+            string controllerName = nationState.ControllerName ?? Names.Nation((Nation?)null);
+            string youIndicator = Game.Players.FirstOrDefault(p => p.Id == CurrentPlayerId)?.UserName == controllerName ? L["YouSuffix"] : "";
             int newTreasury = tempTreasury - actualBonus;
             int treasuryGain = newTreasury - nationState.Treasury;
 
@@ -194,8 +188,8 @@
             string tGainStr = treasuryGain > 0 ? $"+{treasuryGain}" : treasuryGain.ToString();
             string bonusStr = actualBonus > 0 ? $"+{actualBonus}" : actualBonus.ToString();
             string powerStr = powerGain > 0 ? $"+{powerGain}" : powerGain.ToString();
-            
-            return $"{baseMsg}\n\nRevenue: {totalTaxRevenue}M\nSoldiers' Pay: {payStr}M\nNation Treasury Gain: {tGainStr}M\nController {controllerName}{youIndicator} Bonus: {bonusStr}M\nPower Gain: {powerStr}";
+
+            return $"{baseMsg}\n\n{L["Tax_Revenue", totalTaxRevenue]}\n{L["Tax_SoldiersPay", payStr]}\n{L["Tax_TreasuryGain", tGainStr]}\n{L["Tax_ControllerBonus", controllerName, youIndicator, bonusStr]}\n{L["Tax_PowerGain", powerStr]}";
         }
         else if (index == Imperial2030.Shared.Constants.RondelData.InvestorSlot) // Investor Calculation
         {
@@ -213,25 +207,25 @@
             }
 
             int treasuryAmount = nationState.Treasury;
-            string details = $"{baseMsg}\n\nTreasury: {treasuryAmount}M\n";
+            string details = $"{baseMsg}\n\n{L["Treasury", treasuryAmount]}\n";
             string meUserName = Game.Players.FirstOrDefault(p => p.Id == CurrentPlayerId)?.UserName ?? "";
 
             if (payouts.Count == 0)
             {
-                details += "No bonds outstanding. No payouts.";
+                details += L["Investor_NoBonds"];
                 return details;
             }
 
-            string ctrlName = nationState.ControllerName ?? "None";
-            string ctrlSuffix = ctrlName == meUserName ? " (You)" : "";
+            string ctrlName = nationState.ControllerName ?? Names.Nation((Nation?)null);
+            string ctrlSuffix = ctrlName == meUserName ? L["YouSuffix"] : "";
 
             if (treasuryAmount >= totalOwed)
             {
-                details += "Payouts:\n";
+                details += L["Investor_Payouts"] + "\n";
                 foreach (var kvp in payouts.OrderByDescending(p => p.Value))
                 {
-                    string suffix = kvp.Key == meUserName ? " (You)" : "";
-                    details += $"- {kvp.Key}{suffix}: {kvp.Value}M\n";
+                    string suffix = kvp.Key == meUserName ? L["YouSuffix"] : "";
+                    details += L["Investor_PayoutLine", kvp.Key, suffix, kvp.Value] + "\n";
                 }
             }
             else
@@ -247,27 +241,29 @@
                 if (treasuryAmount >= owedToOthers)
                 {
                     // Treasury can pay others, controller gets whatever is left.
-                    details += "Payouts:\n";
+                    details += L["Investor_Payouts"] + "\n";
                     int actualControllerPay = treasuryAmount - owedToOthers;
                     foreach (var kvp in payouts.OrderByDescending(p => p.Value))
                     {
-                        string suffix = kvp.Key == meUserName ? " (You)" : "";
+                        string suffix = kvp.Key == meUserName ? L["YouSuffix"] : "";
                         int receiveAmount = kvp.Key == ctrlName ? actualControllerPay : kvp.Value;
-                        details += $"- {kvp.Key}{suffix}: {receiveAmount}M{(kvp.Key == ctrlName && actualControllerPay < kvp.Value ? " (Treasury max)" : "")}\n";
+                        string cap = kvp.Key == ctrlName && actualControllerPay < kvp.Value ? L["Investor_TreasuryMax"] : "";
+                        details += L["Investor_PayoutLine", kvp.Key, suffix, receiveAmount] + cap + "\n";
                     }
                 }
                 else
                 {
                     // Treasury cannot even pay others. Controller gets nothing, AND pays out of pocket.
                     int deficit = owedToOthers - treasuryAmount;
-                    details += "Insufficient Treasury Funds!\nController must cover deficit.\n\nPayouts:\n";
+                    details += L["Investor_Insufficient"] + "\n\n" + L["Investor_Payouts"] + "\n";
                     foreach (var kvp in payouts.OrderByDescending(p => p.Value))
                     {
-                        string suffix = kvp.Key == meUserName ? " (You)" : "";
+                        string suffix = kvp.Key == meUserName ? L["YouSuffix"] : "";
                         int receiveAmount = kvp.Key == ctrlName ? 0 : kvp.Value;
-                        details += $"- {kvp.Key}{suffix}: {receiveAmount}M{(kvp.Key == ctrlName ? " (0M received)" : "")}\n";
+                        string none = kvp.Key == ctrlName ? L["Investor_NothingReceived"] : "";
+                        details += L["Investor_PayoutLine", kvp.Key, suffix, receiveAmount] + none + "\n";
                     }
-                    details += $"\n{ctrlName}{ctrlSuffix} (Controller) pays deficit: {deficit}M out of pocket";
+                    details += "\n" + L["Investor_DeficitLine", ctrlName, ctrlSuffix, deficit];
                 }
             }
             return details;
@@ -294,18 +290,18 @@
             }
             
             string canBuild;
-            if (myFactories >= maxFactories) canBuild = "No (Max Factories Reached)";
-            else if (nationState.Treasury < 5) canBuild = "No (Need 5M)";
-            else if (!hasValidEmptyCity) canBuild = "No (Blocked by Hostiles)";
-            else canBuild = "Yes";
+            if (myFactories >= maxFactories) canBuild = L["Factory_No_MaxReached"];
+            else if (nationState.Treasury < 5) canBuild = L["Factory_No_Need5M"];
+            else if (!hasValidEmptyCity) canBuild = L["Factory_No_Blocked"];
+            else canBuild = L["Answer_Yes"];
 
-            return $"{baseMsg}\n\nTreasury: {nationState.Treasury}M\nCurrent Factories: {myFactories} / {maxFactories}\nCan Build: {canBuild}";
+            return $"{baseMsg}\n\n{L["Treasury", nationState.Treasury]}\n{L["Factory_CurrentFactories", myFactories, maxFactories]}\n{L["Factory_CanBuild", canBuild]}";
         }
         else if (index == Imperial2030.Shared.Constants.RondelData.ImportSlot) // Import
         {
-            string canImport = nationState.Treasury >= 1 ? "Yes" : "No (Need 1M)";
+            string canImport = nationState.Treasury >= 1 ? L["Answer_Yes"] : L["Import_No_Need1M"];
             int maxUnits = Math.Min(3, nationState.Treasury);
-            return $"{baseMsg}\n\nTreasury: {nationState.Treasury}M\nCan Import: {canImport}\nMax Units: {maxUnits}";
+            return $"{baseMsg}\n\n{L["Treasury", nationState.Treasury]}\n{L["Import_CanImport", canImport]}\n{L["Import_MaxUnits", maxUnits]}";
         }
         else if (Imperial2030.Shared.Constants.RondelData.IsProductionSlot(index)) // Production
         {
@@ -341,30 +337,21 @@
             int actualFleetProd = Math.Min(availableFleetsToProduce, Math.Max(0, fleetProd - blockedFleets));
 
             string details = $"{baseMsg}\n";
-            details += $"\nArmies to Produce: {actualArmyProd} (Max: {maxArmies}, Blocked: {blockedArmies})";
-            details += $"\nFleets to Produce: {actualFleetProd} (Max: {maxFleets}, Blocked: {blockedFleets})";
+            details += "\n" + L["Production_Armies", actualArmyProd, maxArmies, blockedArmies];
+            details += "\n" + L["Production_Fleets", actualFleetProd, maxFleets, blockedFleets];
             return details;
         }
         else if (Imperial2030.Shared.Constants.RondelData.IsManeuverSlot(index)) // Maneuver
         {
             int armies = Game.Units.Count(u => u.Nation == CurrentTurnNation && u.UnitType == Imperial2030.Shared.Models.UnitType.Army);
             int fleets = Game.Units.Count(u => u.Nation == CurrentTurnNation && u.UnitType == Imperial2030.Shared.Models.UnitType.Fleet);
-            return $"{baseMsg}\n\nFleets ready to move: {fleets}\nArmies ready to move: {armies}";
+            return $"{baseMsg}\n\n{L["Maneuver_FleetsReady", fleets]}\n{L["Maneuver_ArmiesReady", armies]}";
         }
 
         return baseMsg;
     }
 
-    private string GetNationAbbreviation(Nation nation) => nation switch
-    {
-        Nation.Russia => "RUS",
-        Nation.China => "CHN",
-        Nation.India => "IND",
-        Nation.Brazil => "BRA",
-        Nation.USA => "USA",
-        Nation.Europe => "EU",
-        _ => nation.ToString().Substring(0, 2).ToUpper()
-    };
+    private string GetNationAbbreviation(Nation nation) => Names.NationAbbrev(nation);
 
 
     private string GetNationColor(Nation nation) => Imperial2030.Shared.Constants.NationData.GetColor(nation);

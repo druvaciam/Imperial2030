@@ -1618,7 +1618,6 @@ public class GamesController : ControllerBase
             UpdateNationController(_context, game, ns.Nation);
             var newControllerId = ns.ControllerId;
 
-            string controlChangeMessage = "";
             string? newControllerName = null;
             string? oldControllerName = null;
 
@@ -1632,14 +1631,7 @@ public class GamesController : ControllerBase
                 oldControllerName = game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value)?.GetPlayerName(_context);
             }
 
-            if (oldControllerId != newControllerId)
-            {
-                controlChangeMessage = $" and took control of {bond.Nation}";
-                if (oldControllerName != null)
-                {
-                    controlChangeMessage += $" from {oldControllerName}";
-                }
-            }
+            bool tookControl = oldControllerId != newControllerId;
 
             bool isSwissBankKicked = oldControllerId.HasValue && !game.NationStates.Any(n => n.ControllerId == oldControllerId.Value);
 
@@ -1654,11 +1646,10 @@ public class GamesController : ControllerBase
                 isSwissBankKicked,
                 tradeInCost);
 
-            string baseToastMessage = tradeInCost.HasValue
-                ? $"{actingPlayer.GetPlayerName(_context)} upgraded {bond.Nation} {tradeInCost.Value}M to {bond.Cost}M bond"
-                : $"{actingPlayer.GetPlayerName(_context)} bought {bond.Nation} {bond.Cost}M bond";
+            var investmentToast = ToastBuilder.BuildInvestmentToast(
+                actingPlayer.GetPlayerName(_context), bond.Nation, bond.Cost, tradeInCost, tookControl, oldControllerName);
 
-            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{baseToastMessage}{controlChangeMessage}", false); }
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", investmentToast, false); }
         }
         else
         {
@@ -2064,7 +2055,7 @@ public class GamesController : ControllerBase
 
             await _context.SaveChangesAsync();
             if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
-            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} forced {nationState.Nation} to stop on Investor.", false); }
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", ToastBuilder.BuildSwissBankToast(responderName, nationState.Nation, isForceStop: true), false); }
             _botService.TriggerBotTurn(gameId);
             return Ok();
         }
@@ -2105,7 +2096,7 @@ public class GamesController : ControllerBase
 
                 await _context.SaveChangesAsync();
                 if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
-                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} passed on forcing {nationState.Nation} to stop.", false); }
+                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", ToastBuilder.BuildSwissBankToast(responderName, nationState.Nation, isForceStop: false), false); }
                 _botService.TriggerBotTurn(gameId);
                 return Ok();
             }
@@ -2113,7 +2104,7 @@ public class GamesController : ControllerBase
             {
                 await _context.SaveChangesAsync();
                 if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
-                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{responderName} passed on forcing {nationState.Nation} to stop.", false); }
+                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", ToastBuilder.BuildSwissBankToast(responderName, nationState.Nation, isForceStop: false), false); }
                 _botService.TriggerBotTurn(gameId);
                 return Ok();
             }
@@ -2155,7 +2146,7 @@ public class GamesController : ControllerBase
         await _context.SaveChangesAsync();
 
         if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
-        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", game.IsPaused ? "Game Paused." : "Game Resumed.", false); }
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", ToastBuilder.BuildPauseToast(game.IsPaused), false); }
 
         if (!game.IsPaused)
         {

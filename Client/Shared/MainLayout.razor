@@ -1,8 +1,15 @@
 @inherits LayoutComponentBase
+@inject LanguageService LanguageService
+@inject IStringLocalizer<SharedResource> Shared
 
 <div class="page">
     <div class="sidebar">
-        <NavMenu />
+        @* The sidebar itself stretches to the full page height so its gradient never stops short on
+           a long page; this inner wrapper is what stays pinned while scrolling. One element cannot
+           do both — stretching and sticking are mutually exclusive. *@
+        <div class="sidebar-sticky">
+            <NavMenu />
+        </div>
     </div>
 
     <main>
@@ -10,26 +17,36 @@
             <div class="me-4 d-flex gap-3 align-items-center">
                 <SectionOutlet SectionName="top-bar-info" />
             </div>
+            <select class="form-select form-select-sm w-auto bg-dark text-white border-secondary me-3 py-0"
+                    title="@Shared["Language_Label"]"
+                    aria-label="@Shared["Language_Label"]"
+                    value="@LanguageService.CurrentCulture.Name"
+                    @onchange="OnCultureChanged">
+                @foreach (var culture in LanguageService.SupportedCultures)
+                {
+                    <option value="@culture.Name" selected="@(culture.Name == LanguageService.CurrentCulture.Name)">@culture.DisplayName</option>
+                }
+            </select>
             <AuthorizeView>
                 <Authorized>
                     @if (context.User.IsInRole("Guest"))
                     {
-                        <span class="me-3 text-muted d-none d-sm-inline"><span class="oi oi-eye me-1"></span>Guest (Watch Only)</span>
-                        <a href="register" class="me-2">Register</a>
-                        <a href="logout">Logout</a>
+                        <span class="me-3 text-muted d-none d-sm-inline"><span class="oi oi-eye me-1"></span>@Shared["Layout_GuestBadge"]</span>
+                        <a href="register" class="me-2">@Shared["Layout_Register"]</a>
+                        <a href="logout">@Shared["Layout_Logout"]</a>
                     }
                     else
                     {
-                        <span class="me-3 d-none d-sm-inline">Hello, @context.User.Identity?.Name!</span>
-                        <a href="logout">Logout</a>
+                        <span class="me-3 d-none d-sm-inline">@Shared["Layout_Hello", context.User.Identity?.Name ?? ""]</span>
+                        <a href="logout">@Shared["Layout_Logout"]</a>
                     }
                 </Authorized>
                 <NotAuthorized>
-                    <a href="login">Login</a>
-                    <a href="register" class="ms-3">Register</a>
+                    <a href="login">@Shared["Layout_Login"]</a>
+                    <a href="register" class="ms-3">@Shared["Layout_Register"]</a>
                 </NotAuthorized>
             </AuthorizeView>
-            <a href="https://docs.microsoft.com/aspnet/" target="_blank" class="ms-3">About</a>
+            <a href="about" class="ms-3">@Shared["Layout_About"]</a>
         </div>
 
         <article class="content px-4">
@@ -37,3 +54,16 @@
         </article>
     </main>
 </div>
+
+@code {
+    // Switching language reloads the app (see LanguageService.SetCultureAsync for why that is
+    // required rather than preferred), so there is no local state to update here.
+    private async Task OnCultureChanged(ChangeEventArgs e)
+    {
+        var selected = e.Value?.ToString();
+        if (!string.IsNullOrEmpty(selected))
+        {
+            await LanguageService.SetCultureAsync(selected);
+        }
+    }
+}

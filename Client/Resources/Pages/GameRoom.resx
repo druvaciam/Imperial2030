@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="TitleYourTurnPrefix" xml:space="preserve"><value>⚠️ YOUR TURN! - </value></data>
+  <data name="LoadingArchives" xml:space="preserve"><value>Loading imperial archives...</value></data>
+
+  <!-- Top bar -->
+  <data name="TopBar_GameId" xml:space="preserve"><value>Game ID: {0}...</value></data>
+  <data name="TopBar_Host" xml:space="preserve"><value>Host:</value></data>
+  <data name="TopBar_JoinCode" xml:space="preserve"><value>Join Code:</value></data>
+  <data name="TopBar_VariantTaxBonus" xml:space="preserve"><value>Variant: Tax Bonus</value></data>
+  <data name="TopBar_PauseGame" xml:space="preserve"><value>Pause game</value></data>
+  <data name="TopBar_ResumeGame" xml:space="preserve"><value>Resume game</value></data>
+  <data name="TopBar_Pause" xml:space="preserve"><value>PAUSE</value></data>
+  <data name="TopBar_Resume" xml:space="preserve"><value>RESUME</value></data>
+
+  <!-- Pending battle panel -->
+  <data name="Battle_PendingTitle" xml:space="preserve"><value>PENDING BATTLE</value></data>
+  <data name="Battle_Prompt" xml:space="preserve"><value>&lt;strong&gt;{0}&lt;/strong&gt; forces have encountered &lt;strong&gt;{1}&lt;/strong&gt; forces peacefully. Do you (as &lt;strong&gt;{2}&lt;/strong&gt;) accept coexistence, or choose to fight?</value></data>
+  <data name="Battle_AcceptPeace" xml:space="preserve"><value>Accept Peace</value></data>
+  <data name="Battle_Fight" xml:space="preserve"><value>FIGHT!</value></data>
+  <data name="Battle_Waiting" xml:space="preserve"><value>&lt;strong&gt;{0}&lt;/strong&gt; to respond to &lt;strong&gt;{1}&lt;/strong&gt; peace offer...</value></data>
+  <data name="Battle_WaitingPrefix" xml:space="preserve"><value>Waiting for</value></data>
+
+  <!-- Swiss Bank panel -->
+  <data name="Swiss_Title" xml:space="preserve"><value>SWISS BANK DECISION</value></data>
+  <data name="Swiss_Explanation" xml:space="preserve"><value>&lt;strong&gt;{0}&lt;/strong&gt; is skipping Investor but has money to pay all interest.</value></data>
+  <data name="Swiss_Question" xml:space="preserve"><value>Do you want to force them to stop on Investor?</value></data>
+  <data name="Swiss_ForceStopTitle" xml:space="preserve"><value>You will receive {0} M in interest if forced.</value></data>
+  <data name="Swiss_ForceStop" xml:space="preserve"><value>FORCE STOP</value></data>
+  <data name="Swiss_AllowPassTitle" xml:space="preserve"><value>You will not receive any interest.</value></data>
+  <data name="Swiss_AllowPass" xml:space="preserve"><value>ALLOW PASS</value></data>
+  <data name="Swiss_Waiting" xml:space="preserve"><value>Waiting for Swiss Bank players (&lt;strong&gt;{0}&lt;/strong&gt;) to decide...</value></data>
+
+  <!-- Players panel -->
+  <data name="Players_Title" xml:space="preserve"><value>Players</value></data>
+  <data name="Players_Observers" xml:space="preserve"><value>{0} observer(s) watching</value></data>
+  <data name="Players_BotPlayer" xml:space="preserve"><value>Bot Player</value></data>
+  <data name="Players_InGame" xml:space="preserve"><value>In Game</value></data>
+  <data name="Players_Online" xml:space="preserve"><value>Online</value></data>
+  <data name="Players_Offline" xml:space="preserve"><value>Offline</value></data>
+  <data name="Players_ControlledNations" xml:space="preserve"><value>Controlled Nations</value></data>
+  <data name="Players_Cash" xml:space="preserve"><value>Cash</value></data>
+  <data name="Players_VpTooltip" xml:space="preserve"><value>Current Victory Points (Cash + Bond Value * Multiplier)</value></data>
+  <data name="Players_Vp" xml:space="preserve"><value>{0} VP</value></data>
+  <data name="Players_RemoveBot" xml:space="preserve"><value>Remove bot</value></data>
+  <data name="Players_InvestorCard" xml:space="preserve"><value>INVESTOR CARD</value></data>
+
+  <!-- Investor panel -->
+  <data name="Investor_Title" xml:space="preserve"><value>Investor Phase</value></data>
+  <data name="Investor_AvailableToInvest" xml:space="preserve"><value>Available to Invest:</value></data>
+  <data name="Investor_HoldsCard" xml:space="preserve"><value>You hold the Investor Card. You have received a $2M bonus. Choose to invest or pass.</value></data>
+  <data name="Investor_SwissBank" xml:space="preserve"><value>You are a Swiss Bank. Choose to invest or pass.</value></data>
+  <data name="Investor_Pass" xml:space="preserve"><value>Pass (No Investment)</value></data>
+  <data name="Investor_AvailableBonds" xml:space="preserve"><value>Available Bonds</value></data>
+  <data name="Investor_BondInterest" xml:space="preserve"><value>{0} M Int.</value></data>
+  <data name="Investor_BondCost" xml:space="preserve"><value>{0} M</value></data>
+  <data name="Investor_Upgrade" xml:space="preserve"><value>Upgrade from {0} M (Pay {1} M)</value></data>
+  <data name="Investor_WaitingAction" xml:space="preserve"><value>Waiting for Investor Action...</value></data>
+  <data name="Investor_CurrentActor" xml:space="preserve"><value>Current Actor: {0}</value></data>
+
+  <!-- Rondel / turn actions -->
+  <data name="CurrentTurn" xml:space="preserve"><value>Current Turn</value></data>
+  <data name="BuildFactory_Title" xml:space="preserve"><value>Build Factory</value></data>
+  <data name="BuildFactory_Prompt" xml:space="preserve"><value>Select a home territory to build a factory (Cost: 5M).</value></data>
+  <data name="Import_Title" xml:space="preserve"><value>Import Units</value></data>
+  <data name="Import_Prompt" xml:space="preserve"><value>Cost: 1M per unit. Max 3.</value></data>
+  <data name="Import_AddUnit" xml:space="preserve"><value>+ Add Unit</value></data>
+  <data name="Import_Confirm" xml:space="preserve"><value>Confirm Import ({0}M)</value></data>
+  <data name="ExecuteProduction" xml:space="preserve"><value>Execute Production</value></data>
+  <data name="ExecuteTaxation" xml:space="preserve"><value>Execute Taxation</value></data>
+  <data name="EndTurn" xml:space="preserve"><value>End Turn</value></data>
+  <data name="EndTurn_WaitingInvestor" xml:space="preserve"><value>(Waiting for Investor)</value></data>
+
+  <!-- Nations panel -->
+  <data name="Nations_Title" xml:space="preserve"><value>Nations</value></data>
+  <data name="Nations_Treasury" xml:space="preserve"><value>Treasury:</value></data>
+  <data name="Nations_Power" xml:space="preserve"><value>Power:</value></data>
+  <data name="Nations_TaxPreview" xml:space="preserve"><value>Tax now: Power +{0}, Treasury {1} M, Bonus +{2} M</value></data>
+  <data name="Nations_Controller" xml:space="preserve"><value>Ctrl: {0}</value></data>
+  <data name="Nations_Flags" xml:space="preserve"><value>Flags: {0}</value></data>
+  <data name="Nations_Armies" xml:space="preserve"><value>Armies: {0}/{1}</value></data>
+  <data name="Nations_Fleets" xml:space="preserve"><value>Fleets: {0}/{1}</value></data>
+  <data name="Nations_Factories" xml:space="preserve"><value>Factories: {0}</value></data>
+
+  <!-- Host controls -->
+  <data name="Host_RandomBot" xml:space="preserve"><value>Random Selection</value></data>
+  <data name="Host_BotOption" xml:space="preserve"><value>{0} Bot</value></data>
+  <data name="Host_AddBot" xml:space="preserve"><value>🤖 Add Bot</value></data>
+  <data name="Host_StartGame" xml:space="preserve"><value>Start Game</value></data>
+  <data name="LeaveGame" xml:space="preserve"><value>Leave Game</value></data>
+  <data name="ReturnToLobby" xml:space="preserve"><value>Return to Lobby</value></data>
+
+  <!-- Replay controls -->
+  <data name="Replay_Start" xml:space="preserve"><value>Start Replay</value></data>
+  <data name="Replay_Export" xml:space="preserve"><value>Export</value></data>
+  <data name="Replay_Pause" xml:space="preserve"><value>Pause</value></data>
+  <data name="Replay_Resume" xml:space="preserve"><value>Resume</value></data>
+  <data name="Replay_Reset" xml:space="preserve"><value>Reset</value></data>
+  <data name="Replay_Exit" xml:space="preserve"><value>Exit Replay</value></data>
+  <data name="Replay_Banner" xml:space="preserve"><value>REPLAY</value></data>
+  <data name="Replay_Progress" xml:space="preserve"><value>Action {0} / {1} {2}</value></data>
+  <data name="Replay_Paused" xml:space="preserve"><value>(Paused)</value></data>
+  <data name="Replay_Complete" xml:space="preserve"><value>(Finished)</value></data>
+  <data name="Replay_Starting" xml:space="preserve"><value>Starting…</value></data>
+  <data name="Replay_StartFailed" xml:space="preserve"><value>Failed to start replay: {0}</value></data>
+
+  <!-- Turn alert overlays -->
+  <data name="Alert_GamePaused" xml:space="preserve"><value>GAME PAUSED</value></data>
+  <data name="Alert_GamePausedSub" xml:space="preserve"><value>Bots are paused. Click Resume to continue.</value></data>
+  <data name="Alert_YourMove" xml:space="preserve"><value>IT IS YOUR MOVE!</value></data>
+  <data name="Alert_YouControl" xml:space="preserve"><value>You control {0}</value></data>
+  <data name="Alert_InvestorPhase" xml:space="preserve"><value>INVESTOR PHASE</value></data>
+  <data name="Alert_YourTurnToAct" xml:space="preserve"><value>It is your turn to act</value></data>
+  <data name="Alert_ObserverMode" xml:space="preserve"><value>OBSERVER MODE</value></data>
+  <data name="Alert_Watching" xml:space="preserve"><value>You are watching this game</value></data>
+
+  <!-- Game over -->
+  <data name="GameOver_Title" xml:space="preserve"><value>GAME OVER</value></data>
+  <data name="GameOver_EndedBy" xml:space="preserve"><value>Ended by {0} reaching {1} Power</value></data>
+  <data name="GameOver_Rank" xml:space="preserve"><value>Rank</value></data>
+  <data name="GameOver_Player" xml:space="preserve"><value>Player</value></data>
+  <data name="GameOver_Cash" xml:space="preserve"><value>Cash</value></data>
+  <data name="GameOver_BondValue" xml:space="preserve"><value>Bond Value</value></data>
+  <data name="GameOver_TotalVp" xml:space="preserve"><value>Total VP</value></data>
+
+  <!-- Lobby placeholder board -->
+  <data name="Placeholder_WaitingToStart" xml:space="preserve"><value>Waiting for game to start...</value></data>
+  <data name="Placeholder_GameId" xml:space="preserve"><value>Game ID: {0}</value></data>
+
+  <!-- Assets sidebar -->
+  <data name="Assets_Title" xml:space="preserve"><value>Assets</value></data>
+  <data name="Assets_Governments" xml:space="preserve"><value>Governments</value></data>
+  <data name="Assets_Power" xml:space="preserve"><value>Power:</value></data>
+  <data name="Assets_Treasury" xml:space="preserve"><value>Treasury:</value></data>
+  <data name="Assets_Cash" xml:space="preserve"><value>Cash:</value></data>
+  <data name="Assets_Bonds" xml:space="preserve"><value>Bonds</value></data>
+  <data name="Assets_Bond" xml:space="preserve"><value>Bond {0}</value></data>
+  <data name="Assets_NoBonds" xml:space="preserve"><value>No bonds held.</value></data>
+  <data name="Assets_GlobalBonds" xml:space="preserve"><value>Global Bonds</value></data>
+  <data name="Assets_BoughtOnly" xml:space="preserve"><value>Bought only</value></data>
+
+  <!-- Toasts, confirms and warnings -->
+  <data name="Toast_GameDeleted" xml:space="preserve"><value>The game has been deleted by the host.</value></data>
+  <data name="Toast_GameNotFound" xml:space="preserve"><value>Game not found or access denied.</value></data>
+  <data name="Toast_StartGameFailed" xml:space="preserve"><value>Failed to start game: {0}</value></data>
+  <data name="Toast_AddBotFailed" xml:space="preserve"><value>Failed to add bot: {0}</value></data>
+  <data name="Toast_RemoveBotFailed" xml:space="preserve"><value>Failed to remove bot: {0}</value></data>
+  <data name="Toast_RondelTooFar" xml:space="preserve"><value>You cannot move more than {0} spaces on the rondel!</value></data>
+  <data name="Confirm_MoveCost" xml:space="preserve"><value>This move will cost {0}M. Proceed?</value></data>
+  <data name="Warn_NoTreasuryForFactory" xml:space="preserve"><value>You have less than 5M in your treasury. You will not be able to build a factory.</value></data>
+  <data name="Warn_AllFactoriesBuilt" xml:space="preserve"><value>All of your home provinces already have factories built. You cannot build any more.</value></data>
+  <data name="Warn_NoFactories" xml:space="preserve"><value>You do not have any factories. You will not produce any units.</value></data>
+  <data name="Warn_FactoriesBlockaded" xml:space="preserve"><value>All of your factories are blockaded by hostile armies. You cannot produce any units.</value></data>
+  <data name="Warn_NoUnitsToManeuver" xml:space="preserve"><value>You have no armies or fleets on the board to maneuver.</value></data>
+  <data name="Warn_InterestShortfall" xml:space="preserve"><value>This nation only has {0}M, but owes {1}M to other players. You will earn 0M from your {2}M interest.</value></data>
+  <data name="Warn_NoTreasuryForImport" xml:space="preserve"><value>You have 0M in your treasury. You will not be able to import any units.</value></data>
+  <data name="Toast_MoveFailed" xml:space="preserve"><value>Move failed: {0}</value></data>
+  <data name="Toast_Error" xml:space="preserve"><value>Error: {0}</value></data>
+  <data name="Toast_ResponseFailed" xml:space="preserve"><value>Response failed: {0}</value></data>
+  <data name="Toast_FinishManeuverFirst" xml:space="preserve"><value>Finish your maneuver phase ({0}) first.</value></data>
+  <data name="Toast_EndTurnFailed" xml:space="preserve"><value>Failed to end turn: {0}</value></data>
+  <data name="Toast_BattleResponseFailed" xml:space="preserve"><value>Failed to submit battle response.</value></data>
+  <data name="Toast_BuildFactoryFailed" xml:space="preserve"><value>Failed to build factory: {0}</value></data>
+  <data name="Toast_TaxationFailed" xml:space="preserve"><value>Taxation failed: {0}</value></data>
+  <data name="Toast_ProductionFailed" xml:space="preserve"><value>Production failed: {0}</value></data>
+  <data name="Toast_InvestmentFailed" xml:space="preserve"><value>Investment failed: {0}</value></data>
+  <data name="Toast_InsufficientFunds" xml:space="preserve"><value>Insufficient funds!</value></data>
+  <data name="Toast_ImportFailed" xml:space="preserve"><value>Import failed: {0}</value></data>
+  <data name="Toast_LeaveGameFailed" xml:space="preserve"><value>Failed to leave game: {0}</value></data>
+  <data name="Toast_TogglePauseFailed" xml:space="preserve"><value>Failed to toggle pause: {0}</value></data>
+  <data name="Toast_TogglePauseError" xml:space="preserve"><value>Error toggling pause: {0}</value></data>
+
+  <!-- Server-pushed toasts (Shared/Constants/ToastCodes.cs). Whole sentences per case, not a base
+       message plus a glued-on suffix - see the note in ToastCodes. -->
+  <data name="Toast_InvestmentBought" xml:space="preserve"><value>{0} bought {1} {2}M bond</value></data>
+  <data name="Toast_InvestmentBoughtTookControl" xml:space="preserve"><value>{0} bought {1} {2}M bond and took control of {1}</value></data>
+  <data name="Toast_InvestmentBoughtTookControlFrom" xml:space="preserve"><value>{0} bought {1} {2}M bond and took control of {1} from {3}</value></data>
+  <data name="Toast_InvestmentUpgraded" xml:space="preserve"><value>{0} upgraded {1} {2}M to {3}M bond</value></data>
+  <data name="Toast_InvestmentUpgradedTookControl" xml:space="preserve"><value>{0} upgraded {1} {2}M to {3}M bond and took control of {1}</value></data>
+  <data name="Toast_InvestmentUpgradedTookControlFrom" xml:space="preserve"><value>{0} upgraded {1} {2}M to {3}M bond and took control of {1} from {4}</value></data>
+  <data name="Toast_SwissForcedStop" xml:space="preserve"><value>{0} forced {1} to stop on Investor.</value></data>
+  <data name="Toast_SwissPassed" xml:space="preserve"><value>{0} passed on forcing {1} to stop.</value></data>
+  <data name="Toast_GamePaused" xml:space="preserve"><value>Game Paused.</value></data>
+  <data name="Toast_GameResumed" xml:space="preserve"><value>Game Resumed.</value></data>
+  <data name="Toast_BattleFight" xml:space="preserve"><value>{0} chose FIGHT against {1}!</value></data>
+  <data name="Toast_BattlePeace" xml:space="preserve"><value>{0} agreed to PEACE.</value></data>
+</root>

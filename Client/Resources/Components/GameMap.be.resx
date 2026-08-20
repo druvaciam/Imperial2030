@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="UnitSelectedBanner" xml:space="preserve"><value>Адзінка абрана. Націсніце на месца прызначэння, каб рушыць, або сюды, каб адмяніць выбар.</value></data>
+  <data name="TurnMarker" xml:space="preserve"><value>ХОД</value></data>
+
+  <!-- Convoy modal -->
+  <data name="Convoy_Title" xml:space="preserve"><value>Абярыце шлях канвою</value></data>
+  <data name="Convoy_Prompt" xml:space="preserve"><value>Даступна некалькі маршрутаў канвою. Абярыце адзін:</value></data>
+  <data name="Convoy_Route" xml:space="preserve"><value>Маршрут {0}: праз {1}</value></data>
+
+  <!-- Stance (foreign territory) modal -->
+  <data name="Stance_Title" xml:space="preserve"><value>Выяўлена чужая тэрыторыя / адзінкі</value></data>
+  <data name="Stance_Body" xml:space="preserve"><value>Вы рухаецеся ў рэгіён з чужымі адзінкамі або чужой роднай тэрыторыяй.</value></data>
+  <data name="Stance_Prompt" xml:space="preserve"><value>Абярыце вашу пазіцыю:</value></data>
+  <data name="Stance_Peaceful" xml:space="preserve"><value>Мірна / суіснаванне</value></data>
+  <data name="Stance_Attack" xml:space="preserve"><value>Атакаваць {0}</value></data>
+  <data name="Stance_EnterHostilely" xml:space="preserve"><value>Увайсці варожа</value></data>
+
+  <!-- Stationary battle modal -->
+  <data name="Stationary_Title" xml:space="preserve"><value>Бітва на месцы</value></data>
+  <data name="Stationary_Prompt" xml:space="preserve"><value>Абярыце ворага для атакі:</value></data>
+
+  <!-- Destroy factory modal -->
+  <data name="Destroy_Title" xml:space="preserve"><value>Знішчыць фабрыку?</value></data>
+  <data name="Destroy_Occupied" xml:space="preserve"><value>Вы занялі чужую фабрыку ў {0}.</value></data>
+  <data name="Destroy_Question" xml:space="preserve"><value>Хочаце яе знішчыць?</value></data>
+  <data name="Destroy_Warning" xml:space="preserve"><value>Увага: гэта знішчыць вашы 3 атакуючыя арміі разам з фабрыкай.</value></data>
+  <data name="Destroy_Confirm" xml:space="preserve"><value>Знішчыць фабрыку</value></data>
+  <data name="Destroy_Failed" xml:space="preserve"><value>Не ўдалося знішчыць фабрыку. (Праверка на серверы не прайшла)</value></data>
+
+  <!-- Move warning modal -->
+  <data name="MoveWarning_Title" xml:space="preserve"><value>Пацвердзіце рух</value></data>
+  <data name="MoveWarning_Question" xml:space="preserve"><value>Вы ўпэўнены, што хочаце працягнуць?</value></data>
+  <data name="MoveWarning_Cancel" xml:space="preserve"><value>Адмена (зняць выбар)</value></data>
+  <data name="MoveWarning_Confirm" xml:space="preserve"><value>Рушыць адзінку</value></data>
+  <data name="MoveWarning_HomeToHome" xml:space="preserve"><value>Вы перамяшчаеце адзінку з роднай тэрыторыі ({0}) на іншую родную тэрыторыю ({1}). Гэта вычарпае яе рух.</value></data>
+  <data name="MoveWarning_FriendlyPresent" xml:space="preserve"><value>У {0} ужо ёсць саюзная адзінка. Рух сюды вычарпае рух гэтай адзінкі.</value></data>
+
+  <!-- Territory tooltip -->
+  <data name="Tooltip_Owner" xml:space="preserve"><value>Уладальнік: {0}</value></data>
+  <data name="Tooltip_HomeTerritory" xml:space="preserve"><value>Родная тэрыторыя: {0}</value></data>
+  <data name="Tooltip_FactoryYes" xml:space="preserve"><value>Фабрыка: так</value></data>
+  <data name="Tooltip_Armies" xml:space="preserve"><value>Арміі: {0}</value></data>
+  <data name="Tooltip_Fleets" xml:space="preserve"><value>Флоты: {0}</value></data>
+  <data name="Tooltip_NationCount" xml:space="preserve"><value>{0}: {1}</value></data>
+  <data name="Tooltip_ClickToSelect" xml:space="preserve"><value>Націсніце, каб абраць {0} для руху.</value></data>
+
+  <!-- Factory build from the map -->
+  <data name="Factory_NotHomeCity" xml:space="preserve"><value>Гэта не родны горад</value></data>
+  <data name="Factory_AlreadyExists" xml:space="preserve"><value>Фабрыка ўжо існуе</value></data>
+  <data name="Factory_Need5M" xml:space="preserve"><value>Нацыі патрэбна 5M, каб пабудаваць фабрыку.</value></data>
+  <data name="Factory_BuildConfirm" xml:space="preserve"><value>Пабудаваць фабрыку ў {0} за 5M?</value></data>
+  <data name="Factory_BuildFailed" xml:space="preserve"><value>Памылка: {0}</value></data>
+
+  <!-- Errors -->
+  <data name="HostilityToggleFailed" xml:space="preserve"><value>Не ўдалося перамкнуць варожасць: {0}</value></data>
+  <data name="AdvancePhaseFailed" xml:space="preserve"><value>Не ўдалося перайсці да наступнай фазы.</value></data>
+  <data name="MoveFailed" xml:space="preserve"><value>Не ўдалося рушыць: {0}</value></data>
+
+  <data name="EndPhase" xml:space="preserve"><value>Завяршыць фазу</value></data>
+  <data name="BattleButton" xml:space="preserve"><value>Бітва!</value></data>
+  <data name="MakeFriendly" xml:space="preserve"><value>Зрабіць мірным</value></data>
+  <data name="MakeHostile" xml:space="preserve"><value>Зрабіць варожым</value></data>
+</root>

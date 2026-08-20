@@ -874,7 +874,7 @@ public class ManeuverController : ControllerBase
                 game.Units.Remove(aggUnit);
 
                 GameLogger.LogBattleResponseDestruction(_context, game, respondingNation, myUnit.UnitType, aggressorNation, aggUnit.UnitType, territoryId, respondingPlayerName);
-                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} chose FIGHT against {aggressorNation}!", false); }
+                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", ToastBuilder.BuildBattleResponseToast(respondingNation, aggressorNation, isFight: true), false); }
             }
 
                 game.PendingBattleTerritoryId = null;
@@ -893,7 +893,7 @@ public class ManeuverController : ControllerBase
             game.PendingBattleDefenders = defenders;
             _context.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
             GameLogger.LogBattleResponsePeace(_context, game, respondingNation, game.PendingBattleAggressorNation.Value, game.PendingBattleTerritoryId, respondingPlayerName);
-            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", $"{respondingNation} agreed to PEACE.", false); }
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", ToastBuilder.BuildBattleResponseToast(respondingNation, respondingNation, isFight: false), false); }
 
             var territoryId = game.PendingBattleTerritoryId;
             var aggressorNation = game.PendingBattleAggressorNation.Value;
