@@ -4,7 +4,12 @@
 
 <div class="page">
     <div class="sidebar">
-        <NavMenu />
+        @* The sidebar itself stretches to the full page height so its gradient never stops short on
+           a long page; this inner wrapper is what stays pinned while scrolling. One element cannot
+           do both — stretching and sticking are mutually exclusive. *@
+        <div class="sidebar-sticky">
+            <NavMenu />
+        </div>
     </div>
 
     <main>
@@ -41,7 +46,7 @@
                     <a href="register" class="ms-3">@Shared["Layout_Register"]</a>
                 </NotAuthorized>
             </AuthorizeView>
-            <a href="https://docs.microsoft.com/aspnet/" target="_blank" class="ms-3">@Shared["Layout_About"]</a>
+            <a href="about" class="ms-3">@Shared["Layout_About"]</a>
         </div>
 
         <article class="content px-4">

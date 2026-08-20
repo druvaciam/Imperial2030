@@ -60,7 +60,16 @@ main {
 
     .sidebar {
         width: 180px;
-        height: 100vh;
+        /* min-height, not height: as a flex item in the row layout the sidebar stretches to the
+           full height of .page, so its gradient covers the whole column on pages taller than the
+           viewport. A fixed height: 100vh left everything below the first screenful with no
+           background at all. min-height keeps it full-bleed on short pages too. */
+        min-height: 100vh;
+    }
+
+    /* Sticky lives on the inner wrapper rather than .sidebar, because an element cannot both
+       stretch to its container and stay pinned to the viewport. */
+    .sidebar-sticky {
         position: sticky;
         top: 0;
     }

@@ -38,18 +38,35 @@
 
     <div class="row mb-4">
         <div class="col">
-            <div class="d-flex flex-wrap gap-2 align-items-center">
-                <input type="checkbox" class="btn-check" id="filterLobby" @bind="showLobbyGames" autocomplete="off" />
-                <label class="btn btn-outline-success btn-sm" for="filterLobby">@L["Filter_Lobby"]</label>
+            @* Real checkboxes rather than Bootstrap's btn-check toggle buttons: as filled-vs-outlined
+               buttons there was no visible affordance for "checked", so the row read as four coloured
+               buttons instead of four on/off filters. The status colour is kept as the checkbox's
+               accent so each filter still matches the badge colour on the game cards. *@
+            <div class="d-flex flex-wrap gap-3 align-items-center filter-bar">
+                <label class="filter-check" for="filterLobby">
+                    <input type="checkbox" id="filterLobby" @bind="showLobbyGames" @bind:after="SaveFiltersAsync" autocomplete="off" />
+                    <span class="filter-swatch filter-lobby"></span>
+                    <span>@L["Filter_Lobby"]</span>
+                </label>
 
-                <input type="checkbox" class="btn-check" id="filterInProgress" @bind="showInProgressGames" autocomplete="off" />
-                <label class="btn btn-outline-warning btn-sm" for="filterInProgress">@L["Filter_InProgress"]</label>
+                <label class="filter-check" for="filterInProgress">
+                    <input type="checkbox" id="filterInProgress" @bind="showInProgressGames" @bind:after="SaveFiltersAsync" autocomplete="off" />
+                    <span class="filter-swatch filter-inprogress"></span>
+                    <span>@L["Filter_InProgress"]</span>
+                </label>
 
-                <input type="checkbox" class="btn-check" id="filterFinished" @bind="showFinishedGames" autocomplete="off" />
-                <label class="btn btn-outline-secondary btn-sm" for="filterFinished">@L["Filter_Finished"]</label>
+                <label class="filter-check" for="filterFinished">
+                    <input type="checkbox" id="filterFinished" @bind="showFinishedGames" @bind:after="SaveFiltersAsync" autocomplete="off" />
+                    <span class="filter-swatch filter-finished"></span>
+                    <span>@L["Filter_Finished"]</span>
+                </label>
 
-                <input type="checkbox" class="btn-check" id="filterMyGames" @bind="showOnlyMyGames" autocomplete="off" />
-                <label class="btn btn-outline-info btn-sm ms-sm-2" for="filterMyGames">@L["Filter_MyGames"]</label>
+                <span class="filter-divider" aria-hidden="true"></span>
+
+                <label class="filter-check" for="filterMyGames">
+                    <input type="checkbox" id="filterMyGames" @bind="showOnlyMyGames" @bind:after="SaveFiltersAsync" autocomplete="off" />
+                    <span>@L["Filter_MyGames"]</span>
+                </label>
             </div>
         </div>
     </div>
@@ -292,6 +309,81 @@
     </div>
 }
 
+<style>
+    .filter-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0;
+        padding: 0.3rem 0.7rem 0.3rem 0.55rem;
+        border-radius: 6px;
+        cursor: pointer;
+        color: #aab7c4;
+        font-size: 0.9rem;
+        user-select: none;
+        transition: background-color 0.15s, color 0.15s;
+    }
+
+    .filter-check:hover {
+        background-color: rgba(255, 255, 255, 0.06);
+        color: #ecf0f1;
+    }
+
+    .filter-check input[type="checkbox"] {
+        width: 1.05rem;
+        height: 1.05rem;
+        margin: 0;
+        cursor: pointer;
+        /* Native control kept visible - that tick is the whole point of the change. accent-color
+           tints it per filter without having to hand-draw a checkbox. */
+        accent-color: #6c757d;
+        flex-shrink: 0;
+    }
+
+    /* An unchecked filter is dimmed; a checked one is full white, so "on" is legible at a glance
+       even for someone who is not looking directly at the tick. */
+    .filter-check:has(input:checked) {
+        color: #fff;
+        font-weight: 600;
+    }
+
+    .filter-check:has(#filterLobby:checked) input { accent-color: #2ecc71; }
+    .filter-check:has(#filterInProgress:checked) input { accent-color: #f1c40f; }
+    .filter-check:has(#filterFinished:checked) input { accent-color: #95a5a6; }
+    .filter-check:has(#filterMyGames:checked) input { accent-color: #3498db; }
+
+    /* Small colour chip tying each status filter to the badge colour used on the game cards. */
+    .filter-swatch {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        opacity: 0.55;
+        transition: opacity 0.15s;
+    }
+
+    .filter-check:has(input:checked) .filter-swatch {
+        opacity: 1;
+    }
+
+    .filter-lobby { background-color: #2ecc71; }
+    .filter-inprogress { background-color: #f1c40f; }
+    .filter-finished { background-color: #95a5a6; }
+
+    /* Separates the three status filters from the unrelated "my games only" filter. */
+    .filter-divider {
+        width: 1px;
+        height: 1.35rem;
+        background-color: rgba(255, 255, 255, 0.18);
+    }
+
+    @@media (max-width: 575.98px) {
+        .filter-divider {
+            display: none;
+        }
+    }
+</style>
+
 @implements IAsyncDisposable
 @using Microsoft.AspNetCore.SignalR.Client
 
@@ -307,6 +399,66 @@
     private bool showFinishedGames = true;
     private bool showOnlyMyGames = false;
     private bool isGuest = false;
+
+    /// <summary>localStorage key holding the lobby's filter checkboxes.</summary>
+    private const string FilterStorageKey = "Imperial2030.lobbyFilters";
+
+    /// <summary>
+    /// Persisted shape of the filter row. These are preferences rather than transient input, so they
+    /// survive a reload — which matters because switching language reloads the whole app (see
+    /// LanguageService.SetCultureAsync) and would otherwise silently reset every filter.
+    ///
+    /// The search box is deliberately not persisted: a search term that outlives the session looks
+    /// like missing games rather than an active filter.
+    /// </summary>
+    private class LobbyFilterState
+    {
+        public bool ShowLobby { get; set; } = true;
+        public bool ShowInProgress { get; set; } = true;
+        public bool ShowFinished { get; set; } = true;
+        public bool OnlyMine { get; set; }
+    }
+
+    private async Task LoadFiltersAsync()
+    {
+        try
+        {
+            var stored = await JS.InvokeAsync<string?>("localStorage.getItem", FilterStorageKey);
+            if (string.IsNullOrEmpty(stored)) return;
+
+            var state = System.Text.Json.JsonSerializer.Deserialize<LobbyFilterState>(stored);
+            if (state == null) return;
+
+            showLobbyGames = state.ShowLobby;
+            showInProgressGames = state.ShowInProgress;
+            showFinishedGames = state.ShowFinished;
+            showOnlyMyGames = state.OnlyMine;
+        }
+        catch (Exception)
+        {
+            // Unreadable or malformed storage (private mode, hand-edited value): keep the defaults
+            // rather than failing to render the lobby at all.
+        }
+    }
+
+    private async Task SaveFiltersAsync()
+    {
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(new LobbyFilterState
+            {
+                ShowLobby = showLobbyGames,
+                ShowInProgress = showInProgressGames,
+                ShowFinished = showFinishedGames,
+                OnlyMine = showOnlyMyGames
+            });
+            await JS.InvokeVoidAsync("localStorage.setItem", FilterStorageKey, json);
+        }
+        catch (Exception)
+        {
+            // Storage unavailable — the filters still work for this session, they just won't persist.
+        }
+    }
 
     private bool isCreateModalOpen = false;
     private CreateGameRequest newGameRequest = new CreateGameRequest();
@@ -359,6 +511,7 @@
 
         isGuest = user.IsInRole("Guest");
 
+        await LoadFiltersAsync();
         await LoadGames();
 
         var token = await JS.InvokeAsync<string>("localStorage.getItem", "authToken");

@@ -1,0 +1,246 @@
+@page "/about"
+@using Imperial2030.Shared.Constants
+@using Imperial2030.Shared.Models
+@inject IStringLocalizer<About> L
+@inject DisplayNameLocalizer Names
+@inject NavigationManager Navigation
+
+@* Deliberately [AllowAnonymous] (no [Authorize] attribute): someone deciding whether to register
+   should be able to read what the game is first. *@
+
+<PageTitle>@L["Title"] - Imperial 2030</PageTitle>
+
+<div class="about-page container py-4">
+
+    <header class="mb-5 text-center">
+        <h1 class="display-5 text-white fw-bold mb-2">@L["Title"]</h1>
+        <p class="lead text-white-50 mx-auto" style="max-width: 680px;">@L["Subtitle"]</p>
+    </header>
+
+    <section class="about-panel mb-4">
+        <h2 class="about-heading">@L["Premise_Heading"]</h2>
+        <p>@L["Premise_Body"]</p>
+
+        <div class="nation-strip">
+            @foreach (var nation in new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe })
+            {
+                <span class="nation-chip" style="border-color: @NationData.GetColor(nation);">
+                    <span class="nation-dot" style="background-color: @NationData.GetColor(nation);"></span>
+                    @Names.Nation(nation)
+                </span>
+            }
+        </div>
+
+        <p class="about-note mb-0">@L["Premise_Note"]</p>
+    </section>
+
+    <section class="about-panel about-panel-accent mb-4">
+        <h2 class="about-heading">@L["Winning_Heading"]</h2>
+        <p>@L["Winning_Body", GameConstants.MaxPowerPoints]</p>
+        <p class="about-emphasis">@L["Winning_Emphasis"]</p>
+        <p class="about-note mb-0">@L["Winning_Tie"]</p>
+    </section>
+
+    <section class="about-panel mb-4">
+        <h2 class="about-heading">@L["Rondel_Heading"]</h2>
+        <p>@L["Rondel_Body"]</p>
+
+        @* Built from RondelData rather than a hardcoded list, so the wheel shown here can never
+           drift from the one the game actually uses. *@
+        <ol class="rondel-list">
+            @for (int slot = 0; slot < RondelData.SlotCount; slot++)
+            {
+                <li>
+                    <span class="rondel-swatch" style="background-color: @RondelData.GetSlotColor(slot);"></span>
+                    @Names.RondelSlot(slot)
+                </li>
+            }
+        </ol>
+
+        <p class="about-note mb-0">@L["Rondel_Note"]</p>
+    </section>
+
+    <section class="about-panel mb-4">
+        <h2 class="about-heading">@L["Actions_Heading"]</h2>
+        <div class="action-grid">
+            @foreach (var (slot, nameKey, bodyKey) in ActionSummaries)
+            {
+                <div class="action-card" style="border-left-color: @RondelData.GetSlotColor(slot);">
+                    <h3 class="action-title">@L[nameKey]</h3>
+                    <p class="mb-0">@L[bodyKey]</p>
+                </div>
+            }
+        </div>
+    </section>
+
+    <section class="about-panel mb-4">
+        <h2 class="about-heading">@L["Investor_Heading"]</h2>
+        <p>@L["Investor_Body"]</p>
+        <p class="about-emphasis">@L["Investor_Emphasis"]</p>
+        <p class="mb-0">@L["Investor_Card"]</p>
+    </section>
+
+    <section class="about-panel mb-4">
+        <h2 class="about-heading">@L["Swiss_Heading"]</h2>
+        <p class="mb-0">@L["Swiss_Body"]</p>
+    </section>
+
+    <section class="about-panel about-panel-muted mb-4">
+        <h2 class="about-heading">@L["Source_Heading"]</h2>
+        <p>@L["Source_Body"]</p>
+        <p class="about-note mb-0">@L["Source_Distinction"]</p>
+    </section>
+
+    <div class="text-center">
+        <button class="btn btn-outline-light px-4" @onclick="@(() => Navigation.NavigateTo("/"))">
+            @L["BackToLobby"]
+        </button>
+    </div>
+</div>
+
+@code {
+    // Each action paired with the rondel slot it sits on, so its accent colour comes from
+    // RondelData and matches the wheel the player sees in game.
+    private static readonly (int Slot, string NameKey, string BodyKey)[] ActionSummaries =
+    {
+        (RondelData.TaxationSlot,   "Action_Taxation",   "Action_Taxation_Body"),
+        (RondelData.FactorySlot,    "Action_Factory",    "Action_Factory_Body"),
+        (RondelData.ProductionSlot1,"Action_Production", "Action_Production_Body"),
+        (RondelData.ManeuverSlot1,  "Action_Maneuver",   "Action_Maneuver_Body"),
+        (RondelData.InvestorSlot,   "Action_Investor",   "Action_Investor_Body"),
+        (RondelData.ImportSlot,     "Action_Import",     "Action_Import_Body"),
+    };
+}
+
+<style>
+    .about-page {
+        max-width: 900px;
+    }
+
+    .about-panel {
+        background-color: #2c3e50;
+        border-radius: 10px;
+        padding: 1.5rem 1.75rem;
+        color: #ecf0f1;
+        line-height: 1.65;
+    }
+
+    .about-panel-accent {
+        border: 1px solid rgba(241, 196, 15, 0.45);
+        background-color: #33475b;
+    }
+
+    .about-panel-muted {
+        background-color: #26333f;
+    }
+
+    .about-heading {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: #f1c40f;
+        margin-bottom: 0.9rem;
+    }
+
+    .about-emphasis {
+        border-left: 3px solid #f1c40f;
+        padding-left: 0.9rem;
+        color: #fff;
+        font-weight: 600;
+    }
+
+    .about-note {
+        color: #aab7c4;
+        font-size: 0.92rem;
+    }
+
+    /* Nations */
+    .nation-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 1.1rem 0;
+    }
+
+    .nation-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        border: 1px solid;
+        border-radius: 999px;
+        padding: 0.2rem 0.8rem;
+        font-size: 0.88rem;
+        font-weight: 600;
+        background-color: rgba(0, 0, 0, 0.2);
+    }
+
+    .nation-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    /* Rondel order */
+    .rondel-list {
+        list-style: none;
+        counter-reset: rondel;
+        padding-left: 0;
+        margin: 1.1rem 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+
+    .rondel-list li {
+        counter-increment: rondel;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        background-color: rgba(0, 0, 0, 0.22);
+        border-radius: 6px;
+        padding: 0.25rem 0.7rem;
+        font-size: 0.88rem;
+    }
+
+    .rondel-list li::before {
+        content: counter(rondel);
+        color: #7f8c8d;
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+
+    .rondel-swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        display: inline-block;
+    }
+
+    /* Action cards */
+    .action-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 0.9rem;
+    }
+
+    .action-card {
+        background-color: rgba(0, 0, 0, 0.22);
+        border-left: 4px solid;
+        border-radius: 6px;
+        padding: 0.9rem 1rem;
+        font-size: 0.92rem;
+    }
+
+    .action-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #fff;
+        margin-bottom: 0.4rem;
+    }
+
+    @@media (max-width: 575.98px) {
+        .about-panel {
+            padding: 1.15rem 1.15rem;
+        }
+    }
+</style>
