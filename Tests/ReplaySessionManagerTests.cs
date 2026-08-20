@@ -374,5 +374,129 @@ namespace Imperial2030.Tests
             Assert.IsType<NotFoundResult>(gamesController.GetReplayState(replaySessionId, replaySessionManager).Result);
             Assert.Equal(0, await replaySessionManager.EvictIdleSessionsAsync());
         }
+
+        [Theory]
+        // Already on the grid: unchanged.
+        [InlineData(5_000, 5_000)]
+        [InlineData(500, 500)]
+        [InlineData(10_000, 10_000)]
+        // Off-grid values snap to the nearest step.
+        [InlineData(700, 500)]
+        [InlineData(800, 1_000)]
+        [InlineData(3_249, 3_000)]
+        [InlineData(3_250, 3_500)]
+        // Out of range clamps rather than being rejected - including the values that would break
+        // playback outright: 0 would spin the replay loop, negative is nonsense.
+        [InlineData(0, 500)]
+        [InlineData(-5_000, 500)]
+        [InlineData(60_000, 10_000)]
+        [InlineData(int.MaxValue, 10_000)]
+        public void ReplaySpeed_Normalize_SnapsToStepAndClampsToRange(int requested, int expected)
+        {
+            Assert.Equal(expected, ReplaySpeed.Normalize(requested));
+        }
+
+        [Fact]
+        public async Task ReplaySpeed_IsPerSession_AndNormalizedServerSide()
+        {
+            // Playback speed lives on the session, not the manager: two viewers watching replays at the
+            // same time must not shove each other's pacing around. Also guards that the endpoint
+            // normalizes rather than trusting the request - a 0ms pace would spin the replay loop.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+
+            var mockHub = new Mock<IHubContext<GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            var mockClientProxy = new Mock<IClientProxy>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+            mockClients.Setup(c => c.All).Returns(mockClientProxy.Object);
+
+            var mockPresenceTracker = new Mock<PresenceTracker>();
+            var store = new Mock<IUserStore<ApplicationUser>>();
+            var mockUserManager = new Mock<UserManager<ApplicationUser>>(store.Object, null, null, null, null, null, null, null, null);
+            var mockNotificationService = new Mock<INotificationService>();
+            var mockLogger = new Mock<Microsoft.Extensions.Logging.ILogger<BotService>>();
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object, [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()], mockLogger.Object);
+            botService.SkipDelays = true;
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var mockServiceProvider = new Mock<IServiceProvider>();
+                var scopeContext = GetDbContext(dbName);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(ApplicationDbContext))).Returns(scopeContext);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(INotificationService))).Returns(mockNotificationService.Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(IHubContext<GameHub>))).Returns(mockHub.Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(PresenceTracker))).Returns(mockPresenceTracker.Object);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(BotService))).Returns(botService);
+                mockServiceProvider.Setup(sp => sp.GetService(typeof(UserManager<ApplicationUser>))).Returns(mockUserManager.Object);
+                scope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+                return scope.Object;
+            });
+
+            var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, mockNotificationService.Object);
+            const string hostUserId = "host-user-id";
+            SetControllerUser(gamesController, hostUserId);
+
+            var createReq = new CreateGameRequest { Name = "ReplaySpeedTestGame", MaxPlayers = 2, IsPrivate = false, VariantBonusOnlyForTaxIncreases = false };
+            var createRes = await gamesController.CreateGame(createReq);
+            var gameDto = Assert.IsType<GameDto>(Assert.IsType<CreatedAtActionResult>(createRes.Result).Value);
+            var gameId = gameDto.Id;
+
+            context.Players.Add(new Player { GameId = gameId, UserId = "human-0", BotName = "human-0", IsHost = false, IsBot = false });
+            await context.SaveChangesAsync();
+            var hostPlayer = context.Players.First(p => p.UserId == hostUserId);
+            hostPlayer.BotName = hostUserId;
+            await context.SaveChangesAsync();
+
+            await gamesController.StartGame(gameId);
+
+            context.ChangeTracker.Clear();
+            var game = await context.Games.FirstAsync(g => g.Id == gameId);
+            var russiaNs = await context.NationStates.FirstAsync(n => n.GameId == gameId && n.Nation == Nation.Russia);
+            russiaNs.Power = GameConstants.MaxPowerPoints;
+            russiaNs.RondelPosition = RondelData.TaxationSlot;
+            game.CurrentTurnNation = Nation.Russia;
+            await context.SaveChangesAsync();
+
+            var russiaController = await context.Players.FirstAsync(p => p.Id == russiaNs.ControllerId);
+            SetControllerUser(gamesController, russiaController.UserId!);
+            await gamesController.ExecuteTaxation(gameId);
+
+            var replaySessionManager = new ReplaySessionManager(mockScopeFactory.Object, NullLogger<ReplaySessionManager>.Instance) { PacingMs = 0 };
+            SetControllerUser(gamesController, hostUserId);
+
+            // Two independent viewers of the same finished game.
+            var sessionA = Assert.IsType<Guid>(Assert.IsType<OkObjectResult>(await gamesController.StartReplay(gameId, replaySessionManager)).Value);
+            var sessionB = Assert.IsType<Guid>(Assert.IsType<OkObjectResult>(await gamesController.StartReplay(gameId, replaySessionManager)).Value);
+
+            int PacingOf(Guid id) =>
+                Assert.IsType<ReplayStateDto>(Assert.IsType<OkObjectResult>(gamesController.GetReplayState(id, replaySessionManager).Result).Value).PacingMs;
+
+            // Off-grid and out-of-range requests come back normalized, not as sent.
+            Assert.IsType<OkObjectResult>(gamesController.SetReplaySpeed(sessionA, 2_600, replaySessionManager));
+            Assert.Equal(2_500, PacingOf(sessionA));
+
+            Assert.IsType<OkObjectResult>(gamesController.SetReplaySpeed(sessionA, 0, replaySessionManager));
+            Assert.Equal(ReplaySpeed.MinPacingMs, PacingOf(sessionA));
+
+            Assert.IsType<OkObjectResult>(gamesController.SetReplaySpeed(sessionA, 99_000, replaySessionManager));
+            Assert.Equal(ReplaySpeed.MaxPacingMs, PacingOf(sessionA));
+
+            // ...and none of it leaked into the other viewer's session.
+            Assert.Equal(0, PacingOf(sessionB));
+
+            // A reset keeps the viewer's chosen speed rather than snapping back to the default.
+            Assert.IsType<OkResult>(await gamesController.ResetReplay(sessionA, replaySessionManager));
+            Assert.Equal(ReplaySpeed.MaxPacingMs, PacingOf(sessionA));
+
+            // Unknown session is a 404, not a silent no-op.
+            Assert.IsType<NotFoundResult>(gamesController.SetReplaySpeed(Guid.NewGuid(), 1_000, replaySessionManager));
+
+            await gamesController.StopReplay(sessionA, replaySessionManager);
+            await gamesController.StopReplay(sessionB, replaySessionManager);
+        }
     }
 }

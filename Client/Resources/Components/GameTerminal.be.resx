@@ -43,15 +43,20 @@
   <data name="RondelStart" xml:space="preserve"><value>Пачатак</value></data>
 
   <!-- Unit movement -->
-  <data name="UnitStayed" xml:space="preserve"><value>{0} застаўся ў {1}</value></data>
-  <data name="UnitMovedAwaitingResponse" xml:space="preserve"><value>{0} рушыў {1} у {2} з {3}, чакаецца адказ ад {4}</value></data>
-  <data name="UnitMoved" xml:space="preserve"><value>{0} рушыў у {1} з {2} (варожа: {3})</value></data>
+  <data name="UnitStayed_Army" xml:space="preserve"><value>армія засталася ў {0}</value></data>
+  <data name="UnitStayed_Fleet" xml:space="preserve"><value>флот застаўся ў {0}</value></data>
+  <data name="UnitMovedAwaitingResponse_Army" xml:space="preserve"><value>армія перамясцілася {0} ў {1} з {2}, чакаецца адказ ад {3}</value></data>
+  <data name="UnitMovedAwaitingResponse_Fleet" xml:space="preserve"><value>флот перамясціўся {0} ў {1} з {2}, чакаецца адказ ад {3}</value></data>
+  <data name="UnitMoved_Army" xml:space="preserve"><value>армія перамясцілася ў {0} з {1} (варожа: {2})</value></data>
+  <data name="UnitMoved_Fleet" xml:space="preserve"><value>флот перамясціўся ў {0} з {1} (варожа: {2})</value></data>
   <data name="Hostilely" xml:space="preserve"><value>варожа</value></data>
   <data name="Peacefully" xml:space="preserve"><value>мірна</value></data>
 
   <!-- Battles -->
-  <data name="BattleResponseFight" xml:space="preserve"><value>{0} {1} выбраў БІТВУ супраць {2} {3} у {4}. Абодва знішчаны</value></data>
-  <data name="BattleAttack" xml:space="preserve"><value>{0} атакаваў {1} {2} у {3}. Абодва знішчаны</value></data>
+  <data name="BattleResponseFight_Army" xml:space="preserve"><value>{0}, армія: выбрала БІТВУ супраць {1} ({2}) у {3}. Абодва знішчаны</value></data>
+  <data name="BattleResponseFight_Fleet" xml:space="preserve"><value>{0}, флот: выбраў БІТВУ супраць {1} ({2}) у {3}. Абодва знішчаны</value></data>
+  <data name="BattleAttack_Army" xml:space="preserve"><value>армія атакавала {0} ({1}) у {2}. Абодва знішчаны</value></data>
+  <data name="BattleAttack_Fleet" xml:space="preserve"><value>флот атакаваў {0} ({1}) у {2}. Абодва знішчаны</value></data>
   <data name="BattleResponsePeace" xml:space="preserve"><value>{0} пагадзіўся на МІР з {1} у {2}</value></data>
   <data name="AllPartiesPeace" xml:space="preserve"><value>Усе бакі пагадзіліся на МІР у {0}.</value></data>
 
@@ -62,7 +67,8 @@
   <data name="DestroyedFactory" xml:space="preserve"><value>знішчыў фабрыку {0} у {1}</value></data>
 
   <!-- Hostility toggle -->
-  <data name="HostilityToggled" xml:space="preserve"><value>{0} у {1} стаў {2}</value></data>
+  <data name="HostilityToggled_Army" xml:space="preserve"><value>армія ў {0} стала {1}</value></data>
+  <data name="HostilityToggled_Fleet" xml:space="preserve"><value>флот ў {0} стаў {1}</value></data>
   <data name="Hostile" xml:space="preserve"><value>варожым</value></data>
   <data name="Friendly" xml:space="preserve"><value>мірным</value></data>
 

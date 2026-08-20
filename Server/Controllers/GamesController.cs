@@ -751,10 +751,25 @@ public class GamesController : ControllerBase
             CurrentActionIndex = session.CurrentActionIndex,
             TotalActions = session.Actions.Count,
             IsPaused = session.IsPaused,
+            PacingMs = session.PacingMs,
             IsComplete = session.IsComplete,
             ErrorMessage = session.ErrorMessage,
             Game = session.LatestSnapshot
         });
+    }
+
+    /// <summary>
+    /// Sets the playback speed (delay between actions) for one replay session. The requested value is
+    /// normalized server-side onto the allowed range/step, and the applied value is returned so the
+    /// client shows what actually took effect rather than what it asked for.
+    /// </summary>
+    [HttpPost("replay/{replaySessionId}/speed")]
+    [AllowAnonymous]
+    public IActionResult SetReplaySpeed(Guid replaySessionId, [FromQuery] int pacingMs, [FromServices] Imperial2030.Server.Services.ReplaySessionManager replaySessionManager)
+    {
+        var applied = replaySessionManager.SetSpeed(replaySessionId, pacingMs);
+        if (applied == null) return NotFound();
+        return Ok(new { PacingMs = applied.Value });
     }
 
     [HttpPost("replay/{replaySessionId}/pause")]

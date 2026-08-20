@@ -215,4 +215,11 @@
   <data name="Territory_ChinaSea" xml:space="preserve"><value>China Sea</value></data>
   <data name="Territory_CaribbeanSea" xml:space="preserve"><value>Caribbean Sea</value></data>
   <data name="Territory_TasmanSea" xml:space="preserve"><value>Tasman Sea</value></data>
+
+  <!-- Lowercase unit nouns for mid-sentence use. UnitType_* stays capitalised because it also
+       labels the Import dropdown and the Production/Import lists, where it starts a phrase. -->
+  <data name="UnitTypeLower_Army" xml:space="preserve"><value>army</value></data>
+  <data name="UnitTypeLower_Fleet" xml:space="preserve"><value>fleet</value></data>
+  <data name="Common_Yes" xml:space="preserve"><value>yes</value></data>
+  <data name="Common_No" xml:space="preserve"><value>no</value></data>
 </root>

@@ -43,15 +43,20 @@
   <data name="RondelStart" xml:space="preserve"><value>Start</value></data>
 
   <!-- Unit movement -->
-  <data name="UnitStayed" xml:space="preserve"><value>{0} stayed in {1}</value></data>
-  <data name="UnitMovedAwaitingResponse" xml:space="preserve"><value>{0} moved {1} to {2} from {3}, awaiting response from {4}</value></data>
-  <data name="UnitMoved" xml:space="preserve"><value>{0} moved to {1} from {2} (Hostile: {3})</value></data>
+  <data name="UnitStayed_Army" xml:space="preserve"><value>army stayed in {0}</value></data>
+  <data name="UnitStayed_Fleet" xml:space="preserve"><value>fleet stayed in {0}</value></data>
+  <data name="UnitMovedAwaitingResponse_Army" xml:space="preserve"><value>army moved {0} to {1} from {2}, awaiting response from {3}</value></data>
+  <data name="UnitMovedAwaitingResponse_Fleet" xml:space="preserve"><value>fleet moved {0} to {1} from {2}, awaiting response from {3}</value></data>
+  <data name="UnitMoved_Army" xml:space="preserve"><value>army moved to {0} from {1} (Hostile: {2})</value></data>
+  <data name="UnitMoved_Fleet" xml:space="preserve"><value>fleet moved to {0} from {1} (Hostile: {2})</value></data>
   <data name="Hostilely" xml:space="preserve"><value>hostilely</value></data>
   <data name="Peacefully" xml:space="preserve"><value>peacefully</value></data>
 
   <!-- Battles -->
-  <data name="BattleResponseFight" xml:space="preserve"><value>{0} {1} chose FIGHT against {2} {3} in {4}. Both destroyed</value></data>
-  <data name="BattleAttack" xml:space="preserve"><value>{0} attacked {1} {2} in {3}. Both destroyed</value></data>
+  <data name="BattleResponseFight_Army" xml:space="preserve"><value>{0} army chose FIGHT against {1} {2} in {3}. Both destroyed</value></data>
+  <data name="BattleResponseFight_Fleet" xml:space="preserve"><value>{0} fleet chose FIGHT against {1} {2} in {3}. Both destroyed</value></data>
+  <data name="BattleAttack_Army" xml:space="preserve"><value>army attacked {0} {1} in {2}. Both destroyed</value></data>
+  <data name="BattleAttack_Fleet" xml:space="preserve"><value>fleet attacked {0} {1} in {2}. Both destroyed</value></data>
   <data name="BattleResponsePeace" xml:space="preserve"><value>{0} agreed to PEACE with {1} in {2}</value></data>
   <data name="AllPartiesPeace" xml:space="preserve"><value>All parties agreed to PEACE in {0}.</value></data>
 
@@ -62,7 +67,8 @@
   <data name="DestroyedFactory" xml:space="preserve"><value>destroyed {0} factory in {1}</value></data>
 
   <!-- Hostility toggle -->
-  <data name="HostilityToggled" xml:space="preserve"><value>{0} in {1} converted to {2}</value></data>
+  <data name="HostilityToggled_Army" xml:space="preserve"><value>army in {0} converted to {1}</value></data>
+  <data name="HostilityToggled_Fleet" xml:space="preserve"><value>fleet in {0} converted to {1}</value></data>
   <data name="Hostile" xml:space="preserve"><value>hostile</value></data>
   <data name="Friendly" xml:space="preserve"><value>friendly</value></data>
 

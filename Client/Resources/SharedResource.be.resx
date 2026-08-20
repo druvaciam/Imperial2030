@@ -215,4 +215,11 @@
   <data name="Territory_ChinaSea" xml:space="preserve"><value>Кітайскае мора</value></data>
   <data name="Territory_CaribbeanSea" xml:space="preserve"><value>Карыбскае мора</value></data>
   <data name="Territory_TasmanSea" xml:space="preserve"><value>Тасманава мора</value></data>
+
+  <!-- Lowercase unit nouns for mid-sentence use. UnitType_* stays capitalised because it also
+       labels the Import dropdown and the Production/Import lists, where it starts a phrase. -->
+  <data name="UnitTypeLower_Army" xml:space="preserve"><value>армія</value></data>
+  <data name="UnitTypeLower_Fleet" xml:space="preserve"><value>флот</value></data>
+  <data name="Common_Yes" xml:space="preserve"><value>так</value></data>
+  <data name="Common_No" xml:space="preserve"><value>не</value></data>
 </root>

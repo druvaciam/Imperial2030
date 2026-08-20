@@ -2,6 +2,7 @@
 @using Imperial2030.Shared.Constants
 @inject IJSRuntime JSRuntime
 @inject IStringLocalizer<GameTerminal> L
+@inject IStringLocalizer<SharedResource> Shared
 @inject DisplayNameLocalizer Names
 
 <div class="game-terminal-container">
@@ -166,10 +167,13 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.FromTerritoryId != null && meta.ToTerritoryId != null)
                             {
-                                string typeStr = Names.UnitType(action.ActionType == "MoveFleet" ? UnitType.Fleet : UnitType.Army);
+                                // Message key varies by unit type, not just an interpolated noun: in
+                                // gendered languages the verb has to agree with the unit ("армія рушыла"
+                                // vs "флот рушыў"), which a single template cannot express.
+                                string unitSuffix = action.ActionType == "MoveFleet" ? "Fleet" : "Army";
                                 if (meta.FromTerritoryId == meta.ToTerritoryId)
                                 {
-                                    <span class="message">@L["UnitStayed", typeStr, Names.Territory(meta.ToTerritoryId)]</span>
+                                    <span class="message">@L[$"UnitStayed_{unitSuffix}", Names.Territory(meta.ToTerritoryId)]</span>
                                 }
                                 else
                                 {
@@ -179,11 +183,11 @@
                                     if (!string.IsNullOrEmpty(meta.DefendersStr))
                                     {
                                         string peaceOrHostile = meta.IsHostileMove == true ? L["Hostilely"].Value : L["Peacefully"].Value;
-                                        <span class="message">@L["UnitMovedAwaitingResponse", typeStr, peaceOrHostile, targetName, originName, LocalizeNationList(meta.DefendersStr)]</span>
+                                        <span class="message">@L[$"UnitMovedAwaitingResponse_{unitSuffix}", peaceOrHostile, targetName, originName, LocalizeNationList(meta.DefendersStr)]</span>
                                     }
                                     else
                                     {
-                                        <span class="message">@L["UnitMoved", typeStr, targetName, originName, meta.IsHostileMove]</span>
+                                        <span class="message">@L[$"UnitMoved_{unitSuffix}", targetName, originName, Shared[meta.IsHostileMove == true ? "Common_Yes" : "Common_No"]]</span>
                                     }
                                 }
                             }
@@ -200,11 +204,11 @@
                                 string targetName = Names.Territory(meta.TerritoryId);
                                 if (meta.IsResponse == true)
                                 {
-                                    <span class="message">@L["BattleResponseFight", Names.Nation(meta.DefenderNation), LocalizeUnitType(meta.DefenderUnitType), Names.Nation(meta.AggressorNation), LocalizeUnitType(meta.UnitType), targetName]</span>
+                                    <span class="message">@L[$"BattleResponseFight_{UnitKeySuffix(meta.DefenderUnitType)}", Names.Nation(meta.DefenderNation), Names.Nation(meta.AggressorNation), LocalizeUnitType(meta.UnitType), targetName]</span>
                                 }
                                 else
                                 {
-                                    <span class="message">@L["BattleAttack", LocalizeUnitType(meta.UnitType), Names.Nation(meta.DefenderNation), LocalizeUnitType(meta.DefenderUnitType), targetName]</span>
+                                    <span class="message">@L[$"BattleAttack_{UnitKeySuffix(meta.UnitType)}", Names.Nation(meta.DefenderNation), LocalizeUnitType(meta.DefenderUnitType), targetName]</span>
                                 }
                             }
                         }
@@ -292,9 +296,9 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<HostilityMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.TerritoryId != null)
                             {
-                                string typeStr = Names.UnitType(meta.UnitType);
+                                string unitSuffix = UnitKeySuffix(meta.UnitType);
                                 string statusStr = meta.IsHostile ? L["Hostile"].Value : L["Friendly"].Value;
-                                <span class="message">@L["HostilityToggled", typeStr, Names.Territory(meta.TerritoryId), statusStr]</span>
+                                <span class="message">@L[$"HostilityToggled_{unitSuffix}", Names.Territory(meta.TerritoryId), statusStr]</span>
                             }
                         }
                         catch { }
@@ -407,7 +411,14 @@
     }
 
     /// <summary>Localized unit type, or empty when the metadata did not record one.</summary>
-    private string LocalizeUnitType(UnitType? unitType) => unitType.HasValue ? Names.UnitType(unitType.Value) : string.Empty;
+    /// <summary>
+    /// Lowercase unit noun for use inside a sentence (an object, not the subject). The capitalised
+    /// Names.UnitType is the standalone label used by the Import dropdown and unit lists.
+    /// </summary>
+    private string LocalizeUnitType(UnitType? unitType) => unitType.HasValue ? Names.UnitTypeLower(unitType.Value) : string.Empty;
+
+    /// <summary>Resource-key suffix selecting the message variant whose verb agrees with this unit.</summary>
+    private static string UnitKeySuffix(UnitType? unitType) => unitType == UnitType.Fleet ? "Fleet" : "Army";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
