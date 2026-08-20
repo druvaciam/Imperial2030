@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="Title" xml:space="preserve"><value>How to Play</value></data>
+  <data name="Subtitle" xml:space="preserve"><value>Imperial 2030 — a strategy game of investment and influence, for 2 to 6 players, with no dice and no card luck.</value></data>
+
+  <!-- Premise -->
+  <data name="Premise_Heading" xml:space="preserve"><value>You are not a country</value></data>
+  <data name="Premise_Body" xml:space="preserve"><value>Six great powers compete on the board: Russia, China, India, Brazil, the United States and Europe. You do not play any of them. You play an international investor who buys their debt — and whoever has lent a nation the most money commands its armies, its fleets and its treasury. Control is never permanent: it moves to whoever outbids you, so today's ally is tomorrow's rival.</value></data>
+  <data name="Premise_Note" xml:space="preserve"><value>All six nations act in every game, whatever the player count. A nation nobody has lent money to simply has no government yet, and its turn is skipped.</value></data>
+
+  <!-- Winning -->
+  <data name="Winning_Heading" xml:space="preserve"><value>How you win</value></data>
+  <data name="Winning_Body" xml:space="preserve"><value>The game ends the moment any nation reaches {0} power points. Your score is then the interest on each of your bonds multiplied by that nation's Power Factor, plus whatever cash you are holding. Highest score wins.</value></data>
+  <data name="Winning_Emphasis" xml:space="preserve"><value>So backing a strong nation matters more than backing many. A large bond in a nation that never gains power is worth nothing.</value></data>
+  <data name="Winning_Tie" xml:space="preserve"><value>Ties are broken by who has lent more to the highest-scoring nation, then the next, and so on.</value></data>
+
+  <!-- Rondel -->
+  <data name="Rondel_Heading" xml:space="preserve"><value>The rondel</value></data>
+  <data name="Rondel_Body" xml:space="preserve"><value>A nation's whole turn is one decision: which of the eight spaces on the wheel to move to. You always move clockwise and can never stay put. The next three spaces are free; each space beyond that costs the nation's government (1 + Power Factor) million out of their own pocket. Six spaces is the furthest you may move.</value></data>
+  <data name="Rondel_Note" xml:space="preserve"><value>Production and Maneuver each appear twice on the wheel, so the same action can often be reached two ways — one of them cheaper.</value></data>
+
+  <!-- Actions -->
+  <data name="Actions_Heading" xml:space="preserve"><value>The six actions</value></data>
+  <data name="Action_Taxation" xml:space="preserve"><value>Taxation</value></data>
+  <data name="Action_Taxation_Body" xml:space="preserve"><value>Collect 2M per unoccupied factory and 1M per flag, capped at 23M. The treasury then pays 1M per army and fleet in soldiers' pay, and pays you a success bonus scaled to the revenue. The nation gains power points on the same scale — this is the only action that advances the game towards its end.</value></data>
+  <data name="Action_Factory" xml:space="preserve"><value>Factory</value></data>
+  <data name="Action_Factory_Body" xml:space="preserve"><value>Build one factory for 5M in an empty home city with no hostile army in it. Brown cities take armament facilities, light blue cities take shipyards.</value></data>
+  <data name="Action_Production" xml:space="preserve"><value>Production</value></data>
+  <data name="Action_Production_Body" xml:space="preserve"><value>Every factory not blocked by a hostile army produces one unit for free — an army from a brown city, a fleet from a light blue one.</value></data>
+  <data name="Action_Maneuver" xml:space="preserve"><value>Maneuver</value></data>
+  <data name="Action_Maneuver_Body" xml:space="preserve"><value>Fleets move one sea region; armies move one land region, ride your own fleets as a convoy, or use rail between home provinces. Meeting a foreign unit is a battle only if someone wants it — otherwise both sides simply coexist. Battles destroy units one for one.</value></data>
+  <data name="Action_Investor" xml:space="preserve"><value>Investor</value></data>
+  <data name="Action_Investor_Body" xml:space="preserve"><value>The nation pays interest to its bondholders, then investment happens. Passing over this space still triggers the investment — only landing on it triggers the interest payment.</value></data>
+  <data name="Action_Import" xml:space="preserve"><value>Import</value></data>
+  <data name="Action_Import_Body" xml:space="preserve"><value>Buy up to three units at 1M each, placed in home provinces free of hostile armies. Fleets only in harbour cities.</value></data>
+
+  <!-- Investor detail -->
+  <data name="Investor_Heading" xml:space="preserve"><value>Interest, and the trap in it</value></data>
+  <data name="Investor_Body" xml:space="preserve"><value>When a nation lands on Investor, its treasury pays every bondholder their interest. Other players are paid first. If the treasury cannot cover them, the nation's own government forfeits their interest entirely and has to make up the shortfall out of their personal cash.</value></data>
+  <data name="Investor_Emphasis" xml:space="preserve"><value>Running a nation broke is therefore expensive for you personally — not for the nation.</value></data>
+  <data name="Investor_Card" xml:space="preserve"><value>The investor card holder collects 2M from the bank and may buy one bond, or trade one up by paying the difference. The card then passes to the left.</value></data>
+
+  <!-- Swiss Bank -->
+  <data name="Swiss_Heading" xml:space="preserve"><value>The Swiss Bank</value></data>
+  <data name="Swiss_Body" xml:space="preserve"><value>A player who controls no nation is not out of the game — they hold a Swiss Bank instead, which lets them invest each Investor turn without the card. They can also force a nation that meant to skip over Investor to stop on it, provided its treasury can actually pay everyone. It is the main way a player with no government claws their way back in.</value></data>
+
+  <!-- Source -->
+  <data name="Source_Heading" xml:space="preserve"><value>About these rules</value></data>
+  <data name="Source_Body" xml:space="preserve"><value>This is a summary of the mechanics as this server implements them, written from the official Imperial 2030 rulebook by Mac Gerdts. It is not a replacement for the rulebook and skips many details and edge cases.</value></data>
+  <data name="Source_Distinction" xml:space="preserve"><value>Imperial 2030 is a separate, rebalanced game from the earlier "Imperial" — it has these six nations, not the original's European powers. Rules found for "Imperial" will not all apply here.</value></data>
+
+  <data name="BackToLobby" xml:space="preserve"><value>Back to the lobby</value></data>
+</root>

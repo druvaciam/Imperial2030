@@ -17,16 +17,43 @@
             style="position:fixed;top:0;left:0;width:100%;height:100%;background-color:#1a1a1d;display:flex;align-items:center;justify-content:center;color:#f1c40f;font-family:sans-serif;flex-direction:column;">
             <div class="spinner-border text-warning" role="status"
                 style="width: 3rem; height: 3rem; margin-bottom: 1rem;"></div>
-            <h2>Loading Imperial 2030...</h2>
+            <h2 id="boot-loading">Loading Imperial 2030...</h2>
         </div>
     </div>
 
     <div id="blazor-error-ui">
         <!-- Minimal error UI -->
-        <span style="font-size: 0.9rem;">Something went wrong.</span>
-        <a href="" class="reload" style="color: #f1c40f; font-weight: bold; margin-left: 10px;">Reload</a>
+        <span id="boot-error" style="font-size: 0.9rem;">Something went wrong.</span>
+        <a href="" class="reload" id="boot-reload" style="color: #f1c40f; font-weight: bold; margin-left: 10px;">Reload</a>
         <a class="dismiss">🗙</a>
     </div>
+    <script>
+        // This markup renders before .NET starts, so it cannot use IStringLocalizer. It reads the
+        // same localStorage key LanguageService writes and swaps the handful of boot strings itself.
+        // Keep these in sync with SharedResource.resx if the wording there changes.
+        (function () {
+            var translations = {
+                be: {
+                    title: 'Imperial 2030',
+                    loading: 'Загрузка Imperial 2030...',
+                    error: 'Нешта пайшло не так.',
+                    reload: 'Перазагрузіць'
+                }
+            };
+            try {
+                var culture = localStorage.getItem('Imperial2030.culture');
+                document.documentElement.lang = culture || 'en';
+                var t = translations[culture];
+                if (!t) return;
+                document.title = t.title;
+                document.getElementById('boot-loading').textContent = t.loading;
+                document.getElementById('boot-error').textContent = t.error;
+                document.getElementById('boot-reload').textContent = t.reload;
+            } catch (e) {
+                // Storage unavailable (private mode / blocked cookies) — keep the English default.
+            }
+        })();
+    </script>
     <script src="_framework/blazor.webassembly.js"></script>
     <script>
         window.updateTerritoryTooltips = (tooltips) => {

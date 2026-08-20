@@ -9,15 +9,18 @@
 @inject HttpClient Http
 @inject Imperial2030.Client.Services.ManeuverService ManeuverService
 @inject AuthenticationStateProvider AuthStateProvider
+@inject IStringLocalizer<GameRoom> L
+@inject IStringLocalizer<SharedResource> Shared
+@inject DisplayNameLocalizer Names
 @implements IAsyncDisposable
 
-<PageTitle>@(IsMyTurn() ? "⚠️ YOUR TURN! - " : "")@(game != null ? $"{game.Name} - " : "")Imperial 2030</PageTitle>
+<PageTitle>@(IsMyTurn() ? L["TitleYourTurnPrefix"].Value : "")@(game != null ? $"{game.Name} - " : "")Imperial 2030</PageTitle>
 
 @if (game == null)
 {
         <div class="text-center mt-5">
             <div class="spinner-border text-primary" role="status"></div>
-            <p class="mt-2 text-white">Loading imperial archives...</p>
+            <p class="mt-2 text-white">@L["LoadingArchives"]</p>
         </div>
 }
 else
@@ -26,18 +29,18 @@ else
 
             <SectionContent SectionName="top-bar-info">
                 <span class="text-white-50 small"><strong>@game.Name</strong></span>
-                <span class="text-white-50 small px-3 d-none d-md-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">Game ID: @GameId.ToString().Substring(0, 8)...</span>
+                <span class="text-white-50 small px-3 d-none d-md-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">@L["TopBar_GameId", GameId.ToString().Substring(0, 8)]</span>
                 @if (game.Players.FirstOrDefault(p => p.IsHost) is var host && host != null)
                 {
-                    <span class="text-white-50 small px-3 d-none d-md-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">Host: <strong class="text-white">@host.UserName</strong></span>
+                    <span class="text-white-50 small px-3 d-none d-md-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">@L["TopBar_Host"] <strong class="text-white">@host.UserName</strong></span>
                 }
                 @if (game.IsPrivate && MyPlayer != null && game.HostId == MyPlayer.UserId && game.JoinCode != null)
                 {
-                    <span class="text-info small px-3 d-none d-lg-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">Join Code: <strong>@game.JoinCode</strong></span>
+                    <span class="text-info small px-3 d-none d-lg-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">@L["TopBar_JoinCode"] <strong>@game.JoinCode</strong></span>
                 }
                 @if (game.VariantBonusOnlyForTaxIncreases)
                 {
-                    <span class="badge bg-warning text-dark ms-2">Variant: Tax Bonus</span>
+                    <span class="badge bg-warning text-dark ms-2">@L["TopBar_VariantTaxBonus"]</span>
                 }
                 @if (game.Status == GameStatus.InProgress && IsSinglePlayerGame() && MyPlayer != null)
                 {
@@ -45,9 +48,9 @@ else
                             style="height: 28px; border-radius: 6px;"
                             @onclick="TogglePauseGame"
                             disabled="@isTogglingPause"
-                            title="@(game.IsPaused ? "Resume game" : "Pause game")">
+                            title="@(game.IsPaused ? L["TopBar_ResumeGame"].Value : L["TopBar_PauseGame"].Value)">
                         <i class="bi @(game.IsPaused ? "bi-play-fill" : "bi-pause-fill")"></i>
-                        @(game.IsPaused ? "RESUME" : "PAUSE")
+                        @(game.IsPaused ? L["TopBar_Resume"] : L["TopBar_Pause"])
                     </button>
                 }
             </SectionContent>
@@ -57,11 +60,8 @@ else
             {
                         <div class="panel mb-3 border border-warning" style="background-color: rgba(230, 126, 34, 0.1);">
                             <div class="text-center">
-                                <h4 class="text-warning mb-2 fw-bold"><i class="oi oi-warning"></i> PENDING BATTLE</h4>
-                        @{
-                            var pendingTerritoryName = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == game.PendingBattleTerritoryId)?.Name ?? game.PendingBattleTerritoryId;
-                        }
-                                <h5 class="text-white">@pendingTerritoryName.ToUpper()</h5>
+                                <h4 class="text-warning mb-2 fw-bold"><i class="oi oi-warning"></i> @L["Battle_PendingTitle"]</h4>
+                                <h5 class="text-white">@Names.Territory(game.PendingBattleTerritoryId).ToUpper()</h5>
                                 <hr class="border-warning" />
 
                         @{
@@ -76,21 +76,21 @@ else
                         @if (amIDefender)
                         {
                             var currentRespondingNation = myDefendingNations.First();
-                                        <p class="mb-3 small"><strong>@game.PendingBattleAggressorNation</strong> forces have encountered <strong>@currentRespondingNation's</strong> forces peacefully. Do you (as <strong>@currentRespondingNation</strong>) accept coexistence, or choose to fight?</p>
+                                        <p class="mb-3 small">@((MarkupString)L["Battle_Prompt", Names.Nation(game.PendingBattleAggressorNation), Names.Nation(currentRespondingNation), Names.Nation(currentRespondingNation)].Value)</p>
                                         <div class="d-flex flex-column gap-2 mt-2">
                                             <button class="btn btn-sm btn-success fw-bold" @onclick="() => RespondToBattle(false)">
-                                                <i class="oi oi-thumb-up"></i> Accept Peace
+                                                <i class="oi oi-thumb-up"></i> @L["Battle_AcceptPeace"]
                                             </button>
                                             <button class="btn btn-sm btn-danger fw-bold" @onclick="() => RespondToBattle(true)">
-                                                <i class="oi oi-fire"></i> FIGHT!
+                                                <i class="oi oi-fire"></i> @L["Battle_Fight"]
                                             </button>
                                         </div>
                         }
                         else
                         {
-                                        <p class="small mb-0">Waiting for <strong>@string.Join(", ", game.PendingBattleDefenders)</strong> to respond to <strong>@game.PendingBattleAggressorNation's</strong> peace offer...</p>
+                                        <p class="small mb-0">@L["Battle_WaitingPrefix"] @((MarkupString)L["Battle_Waiting", string.Join(", ", game.PendingBattleDefenders.Select(d => Names.Nation(d))), Names.Nation(game.PendingBattleAggressorNation)].Value)</p>
                                         <div class="spinner-border spinner-border-sm text-warning mt-2" role="status">
-                                            <span class="visually-hidden">Loading...</span>
+                                            <span class="visually-hidden">@Shared["Common_Loading"]</span>
                                         </div>
                         }
                             </div>
@@ -101,8 +101,8 @@ else
             {
                         <div class="panel mb-3 border border-info" style="background-color: rgba(23, 162, 184, 0.1);">
                             <div class="text-center">
-                                <h4 class="text-info mb-2 fw-bold"><i class="oi oi-info"></i> SWISS BANK DECISION</h4>
-                                <p class="small mb-2"><strong>@game.PendingSwissBankForceNation</strong> is skipping Investor but has money to pay all interest.</p>
+                                <h4 class="text-info mb-2 fw-bold"><i class="oi oi-info"></i> @L["Swiss_Title"]</h4>
+                                <p class="small mb-2">@((MarkupString)L["Swiss_Explanation", Names.Nation(game.PendingSwissBankForceNation)].Value)</p>
                                 <hr class="border-info" />
 
                         @{
@@ -115,26 +115,26 @@ else
                             int totalInterest = myBonds.Sum(b => b.Interest);
                             bool hasInvestment = totalInterest > 0;
 
-                                        <p class="mb-3 small">Do you want to force them to stop on Investor?</p>
+                                        <p class="mb-3 small">@L["Swiss_Question"]</p>
                                         <div class="d-flex flex-column gap-2 mt-2">
                                             <button class="btn btn-sm btn-success fw-bold @(hasInvestment ? "pulse-valid-invest" : "")" 
-                                                    title="You will receive @totalInterest M in interest if forced."
+                                                    title="@L["Swiss_ForceStopTitle", totalInterest]"
                                                     @onclick="() => RespondToSwissBank(true)">
-                                                <i class="oi oi-media-pause"></i> FORCE STOP
+                                                <i class="oi oi-media-pause"></i> @L["Swiss_ForceStop"]
                                             </button>
                                             <button class="btn btn-sm btn-danger fw-bold @(!hasInvestment ? "pulse-pass-invest" : "")" 
-                                                    title="You will not receive any interest."
+                                                    title="@L["Swiss_AllowPassTitle"]"
                                                     @onclick="() => RespondToSwissBank(false)">
-                                                <i class="oi oi-media-skip-forward"></i> ALLOW PASS
+                                                <i class="oi oi-media-skip-forward"></i> @L["Swiss_AllowPass"]
                                             </button>
                                         </div>
                         }
                         else
                         {
                             var respondersNames = game.Players.Where(p => game.PendingSwissBankResponders.Contains(p.Id)).Select(p => p.UserName);
-                                        <p class="small mb-0">Waiting for Swiss Bank players (<strong>@string.Join(", ", respondersNames)</strong>) to decide...</p>
+                                        <p class="small mb-0">@((MarkupString)L["Swiss_Waiting", string.Join(", ", respondersNames)].Value)</p>
                                         <div class="spinner-border spinner-border-sm text-info mt-2" role="status">
-                                            <span class="visually-hidden">Loading...</span>
+                                            <span class="visually-hidden">@Shared["Common_Loading"]</span>
                                         </div>
                         }
                             </div>
@@ -143,10 +143,10 @@ else
 
                 <div class="panel">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h4 class="m-0">Players</h4>
+                        <h4 class="m-0">@L["Players_Title"]</h4>
                     @if (observerCount > 0)
                     {
-                                <span class="badge bg-secondary" title="@observerCount observer(s) watching">
+                                <span class="badge bg-secondary" title="@L["Players_Observers", observerCount]">
                                     <i class="oi oi-eye pe-1"></i> @observerCount
                                 </span>
                     }
@@ -159,19 +159,19 @@ else
                                         <span class="d-flex align-items-center gap-2 flex-grow-1" style="min-width: 0; padding-right: 8px;">
                                 @if (player.IsBot)
                                 {
-                                                <span class="flex-shrink-0" title="Bot Player">🤖</span>
+                                                <span class="flex-shrink-0" title="@L["Players_BotPlayer"]">🤖</span>
                                 }
                                 else
                                 {
                                                 <span class="rounded-circle d-inline-block flex-shrink-0" 
                                                       style="width: 10px; height: 10px; background-color: @(player.IsOnline ? (player.IsActiveInGame ? "#28a745" : "#ffc107") : "#dc3545");"
-                                                      title="@(player.IsOnline ? (player.IsActiveInGame ? "In Game" : "Online") : "Offline")"></span>
+                                                      title="@(player.IsOnline ? (player.IsActiveInGame ? L["Players_InGame"].Value : L["Players_Online"].Value) : L["Players_Offline"].Value)"></span>
                                 }
                                         <span class="text-truncate" style="font-size: 0.85em;" title="@player.UserName">@player.UserName</span>
-                                        <span class="ms-1 flex-shrink-0 fw-bold" style="font-size: 0.85em; white-space: nowrap; color: #ced4da;" title="Controlled Nations">@GetPlayerControlledNationsString(player)</span>
+                                        <span class="ms-1 flex-shrink-0 fw-bold" style="font-size: 0.85em; white-space: nowrap; color: #ced4da;" title="@L["Players_ControlledNations"]">@GetPlayerControlledNationsString(player)</span>
                                     </span>
                                     <div class="d-flex align-items-center justify-content-end gap-1 flex-shrink-0">
-                                        <span class="badge bg-warning text-dark position-relative" title="Cash">
+                                        <span class="badge bg-warning text-dark position-relative" title="@L["Players_Cash"]">
                                             $@(player.Cash)M
                                             @if (_playerCashEffects.TryGetValue(player.Id, out var effect) && (DateTime.Now - effect.Timestamp).TotalSeconds < 5.5)
                                             {
@@ -180,17 +180,17 @@ else
                                                 </span>
                                             }
                                         </span>
-                                        <span class="badge bg-success" title="Current Victory Points (Cash + Bond Value * Multiplier)">@GetPlayerScore(player) VP</span>
+                                        <span class="badge bg-success" title="@L["Players_VpTooltip"]">@L["Players_Vp", GetPlayerScore(player)]</span>
                                 @if (player.IsBot && IsHost && game.Status == GameStatus.Lobby)
                                 {
-                                                <button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size: 0.7rem; line-height: 1;" @onclick="@(() => RemoveBot(player.Id))" title="Remove bot">✕</button>
+                                                <button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size: 0.7rem; line-height: 1;" @onclick="@(() => RemoveBot(player.Id))" title="@L["Players_RemoveBot"]">✕</button>
                                 }
                                     </div>
                                     </div>
                                     @if (game.InvestorCardHolderId == player.Id)
                                     {
                                         <div class="w-100 mt-2 text-center text-info fw-bold" style="background-color: rgba(23, 162, 184, 0.1); padding: 2px 0; border-radius: 4px; font-size: 0.85em; letter-spacing: 1px;">
-                                            INVESTOR CARD
+                                            @L["Players_InvestorCard"]
                                         </div>
                                     }
                                 </li>
@@ -202,21 +202,21 @@ else
             @if (game.IsInvestorTurn)
             {
                         <div class="panel mt-3 border-info @(MyPlayer?.Id == game.ActingPlayerId ? "panel-investor-pulse" : "")">
-                            <h4 class="text-info">Investor Phase</h4>
+                            <h4 class="text-info">@L["Investor_Title"]</h4>
                     @if (MyPlayer?.Id == game.ActingPlayerId)
                     {
                                     <div class="d-flex justify-content-between align-items-center mb-3 mt-2 bg-dark p-2 rounded border border-warning">
-                                        <span class="text-white fw-bold">Available to Invest:</span>
+                                        <span class="text-white fw-bold">@L["Investor_AvailableToInvest"]</span>
                                         <span class="badge bg-warning text-dark" style="font-size: 1.1em;">$@(MyPlayer.Cash)M</span>
                                     </div>
                                     <p class="small text-muted mb-3">
                                         @if (game.InvestorCardHolderId == MyPlayer.Id)
                                         {
-                                            <text>You hold the Investor Card. You have received a $2M bonus. Choose to invest or pass.</text>
+                                            <text>@L["Investor_HoldsCard"]</text>
                                         }
                                         else
                                         {
-                                            <text>You are a Swiss Bank. Choose to invest or pass.</text>
+                                            <text>@L["Investor_SwissBank"]</text>
                                         }
                                     </p>
 
@@ -233,9 +233,9 @@ else
                                                  }
                                              }
                                          }
-                                         <button class="btn btn-secondary @(!hasValidOption ? "btn-endturn-pulse" : "")" @onclick="@(() => PerformInvestment("Pass", null, null))">Pass (No Investment)</button>
+                                         <button class="btn btn-secondary @(!hasValidOption ? "btn-endturn-pulse" : "")" @onclick="@(() => PerformInvestment("Pass", null, null))">@L["Investor_Pass"]</button>
 
-                                         <h6 class="mt-2 text-white border-bottom pb-1">Available Bonds</h6>
+                                         <h6 class="mt-2 text-white border-bottom pb-1">@L["Investor_AvailableBonds"]</h6>
                                          <div style="max-height: 200px; overflow-y: auto;">
                                 @foreach (var bond in game.AvailableBonds.OrderBy(b => b.Nation).ThenBy(b => b.Cost))
                                 {
@@ -248,8 +248,8 @@ else
                                                          <button class="btn btn-sm btn-outline-primary w-100 text-start @(canAffordFull ? "btn-investor-pulse-green" : "")" 
                                                                  disabled="@(!canAffordFull)"
                                         @onclick="@(() => PerformInvestment("Buy", bond.Id, null))">
-                                                             <span class="fw-bold">@bond.Nation</span> @bond.Interest M Int. 
-                                                             <span class="float-end badge @(canAffordFull ? "bg-success" : "bg-danger")">@bond.Cost M</span>
+                                                             <span class="fw-bold">@Names.Nation(bond.Nation)</span> @L["Investor_BondInterest", bond.Interest] 
+                                                             <span class="float-end badge @(canAffordFull ? "bg-success" : "bg-danger")">@L["Investor_BondCost", bond.Cost]</span>
                                                          </button>
                                         @foreach (var owned in ownedBonds)
                                         {
@@ -260,7 +260,7 @@ else
                                                                          <button class="btn btn-sm btn-outline-info w-100 mt-1 text-end small @(canAffordUpgrade ? "btn-investor-pulse-green" : "")"
                                                                                  disabled="@(!canAffordUpgrade)"
                                                 @onclick="@(() => PerformInvestment("Buy", bond.Id, owned.Id))">
-                                                                             <small>Upgrade from @owned.Cost M (Pay @diff M)</small>
+                                                                             <small>@L["Investor_Upgrade", owned.Cost, diff]</small>
                                                                          </button>
                                             }
                                         }
@@ -271,8 +271,8 @@ else
                     }
                     else
                     {
-                                    <p class="text-warning">Waiting for Investor Action...</p>
-                                    <small>Current Actor: @game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId)?.UserName</small>
+                                    <p class="text-warning">@L["Investor_WaitingAction"]</p>
+                                    <small>@L["Investor_CurrentActor", game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId)?.UserName ?? ""]</small>
                     }
                         </div>
             }
@@ -294,8 +294,8 @@ else
                     </div>
 
                     <div class="mt-1 text-center">
-                        <span class="text-muted small text-uppercase">Current Turn</span>
-                        <h3 class="fw-bold text-white mb-1">@game.CurrentTurnNation</h3>
+                        <span class="text-muted small text-uppercase">@L["CurrentTurn"]</span>
+                        <h3 class="fw-bold text-white mb-1">@Names.Nation(game.CurrentTurnNation)</h3>
                     </div>
 
                 @if (IsMyTurn())
@@ -308,13 +308,13 @@ else
                         @if (CanBuildFactory() && !alreadyBuilt && turnMoved)
                         {
                                         <div class="card bg-dark border-secondary">
-                                            <div class="card-header text-center">Build Factory</div>
+                                            <div class="card-header text-center">@L["BuildFactory_Title"]</div>
                                             <div class="card-body p-2">
-                                                <p class="small text-muted mb-2">Select a home territory to build a factory (Cost: 5M).</p>
+                                                <p class="small text-muted mb-2">@L["BuildFactory_Prompt"]</p>
                                     @foreach (var t in GetValidFactoryTerritories())
                                     {
                                                         <button class="btn btn-sm btn-outline-info w-100 mb-1" @onclick="@(() => BuildFactory(t.Id))">
-                                            @t.Name
+                                            @Names.Territory(t.Id)
                                                         </button>
                                     }
                                             </div>
@@ -328,9 +328,9 @@ else
                                                                        // Import has its own flag. 
                         {
                                          <div class="card bg-dark border-secondary mb-2">
-                                            <div class="card-header text-center py-1">Import Units</div>
+                                            <div class="card-header text-center py-1">@L["Import_Title"]</div>
                                             <div class="card-body p-2">
-                                                <p class="small text-muted mb-2">Cost: 1M per unit. Max 3.</p>
+                                                <p class="small text-muted mb-2">@L["Import_Prompt"]</p>
 
                                     @foreach (var unit in pendingImports)
                                     {
@@ -340,8 +340,8 @@ else
                                                                         value="@unit.UnitType" 
                                                 @onchange="@(e => OnImportUnitTypeChanged(unit, e.Value))"
                                                                         style="height: 28px;">
-                                                                    <option value="@UnitType.Army">Army</option>
-                                                                    <option value="@UnitType.Fleet">Fleet</option>
+                                                                    <option value="@UnitType.Army">@Names.UnitType(UnitType.Army)</option>
+                                                                    <option value="@UnitType.Fleet">@Names.UnitType(UnitType.Fleet)</option>
                                                                 </select>
                                                                 <button class="btn btn-outline-danger btn-sm py-0" type="button" @onclick="() => RemoveImportUnit(unit)" style="height: 28px;">✕</button>
                                                             </div>
@@ -349,7 +349,7 @@ else
                                                             <select class="form-select form-select-sm bg-dark text-white border-secondary" @bind="unit.TerritoryId">
                                                 @foreach (var t in GetValidImportTerritories(unit.UnitType))
                                                 {
-                                                                        <option value="@t.Id">@t.Name</option>
+                                                                        <option value="@t.Id">@Names.Territory(t.Id)</option>
                                                 }
                                                             </select>
                                                         </div>
@@ -357,11 +357,11 @@ else
 
                                     @if (pendingImports.Count < 3)
                                     {
-                                                        <button class="btn btn-sm btn-outline-success w-100 mb-2" @onclick="AddImportUnit">+ Add Unit</button>
+                                                        <button class="btn btn-sm btn-outline-success w-100 mb-2" @onclick="AddImportUnit">@L["Import_AddUnit"]</button>
                                     }
 
                                                 <button class="btn btn-sm btn-primary w-100 fw-bold" @onclick="ExecuteImport" disabled="@(isSubmitting || pendingImports.Count == 0)">
-                                                    Confirm Import (@(pendingImports.Count)M)
+                                                    @L["Import_Confirm", pendingImports.Count]
                                                 </button>
                                             </div>
                                         </div>
@@ -372,14 +372,14 @@ else
                         @if (CanProduce() && turnMoved)
                         {
                                          <button class="btn btn-primary w-100 fw-bold mb-2" @onclick="ExecuteProduction" disabled="@isSubmitting">
-                                             Execute Production
+                                             @L["ExecuteProduction"]
                                          </button>
                         }
 
                         @if (CanTax() && turnMoved)
                         {
                                          <button class="btn btn-warning w-100 fw-bold mb-2" @onclick="CollectTaxation" disabled="@isSubmitting">
-                                             Execute Taxation
+                                             @L["ExecuteTaxation"]
                                          </button>
                         }
                         else
@@ -401,10 +401,10 @@ else
                             }
 
                                         <button class="btn btn-warning fw-bold @(noActionsLeft ? "btn-endturn-pulse" : "")" @onclick="EndTurn" disabled="@(!turnMoved || isSubmitting || game.IsInvestorTurn)">
-                                            End Turn
+                                            @L["EndTurn"]
                                 @if (game.IsInvestorTurn)
                                 {
-                                    <span>(Waiting for Investor)</span>
+                                    <span>@L["EndTurn_WaitingInvestor"]</span>
                                 }
                                         </button>
                         }
@@ -419,16 +419,16 @@ else
                         <div class="panel mt-3 pb-1">
                             <details open>
                                 <summary class="h4 m-0 text-white" style="cursor: pointer; user-select: none;">
-                                    Nations
+                                    @L["Nations_Title"]
                                 </summary>
                                 <div class="mt-3">
                                     <ul class="list-group list-group-flush bg-transparent small">
                         @foreach (var ns in game.NationStates.OrderBy(n => ((int)n.Nation - (int)(_displayedTurnNation ?? game.CurrentTurnNation) + 6) % 6))
                         {
                                         <li class="list-group-item bg-transparent text-white @(ns.Nation == game.CurrentTurnNation ? "active-player-highlight" : "px-0")">
-                                            <b>@ns.Nation</b><br/>
+                                            <b>@Names.Nation(ns.Nation)</b><br/>
                                             <span class="text-info">
-                                                Treasury: <span class="position-relative">$@(ns.Treasury)M
+                                                @L["Nations_Treasury"] <span class="position-relative">$@(ns.Treasury)M
                                                 @if (_nationTreasuryEffects.TryGetValue(ns.Nation, out var tEffect) && (DateTime.Now - tEffect.Timestamp).TotalSeconds < 5.5)
                                                 {
                                                     <span @key="tEffect.TriggerId" class="floating-cash @(tEffect.Delta > 0 ? "positive" : "negative")">
@@ -438,7 +438,7 @@ else
                                                 </span>
                                             </span> | 
                                             <span class="text-warning">
-                                                Power: <span class="position-relative">@ns.Power
+                                                @L["Nations_Power"] <span class="position-relative">@ns.Power
                                                 @if (_nationPowerEffects.TryGetValue(ns.Nation, out var pEffect) && (DateTime.Now - pEffect.Timestamp).TotalSeconds < 5.5)
                                                 {
                                                     <span @key="pEffect.TriggerId" class="floating-cash @(pEffect.Delta > 0 ? "positive" : "negative")">
@@ -450,24 +450,24 @@ else
                                             @{
                                                 var taxInfo = GetTaxPreview(ns);
                                             }
-                                            <span class="text-success small">Tax now: Power +@taxInfo.PowerGain, Treasury @(taxInfo.TreasuryGain >= 0 ? "+" : "")@taxInfo.TreasuryGain M, Bonus +@taxInfo.Bonus M</span><br/>
-                                            <span class="text-muted">Ctrl: @(ns.ControllerName ?? "None")</span>
+                                            <span class="text-success small">@L["Nations_TaxPreview", taxInfo.PowerGain, (taxInfo.TreasuryGain >= 0 ? "+" : "") + taxInfo.TreasuryGain, taxInfo.Bonus]</span><br/>
+                                            <span class="text-muted">@L["Nations_Controller", ns.ControllerName ?? Shared["Common_None"].Value]</span>
                                 @{
                                     var flagNames = game.Territories
                                         .Where(t => t.Controller == ns.Nation)
-                                        .Select(t => Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == t.TerritoryId)?.Name ?? t.TerritoryId)
+                                        .Select(t => Names.Territory(t.TerritoryId))
                                         .OrderBy(n => n)
                                         .ToList();
 
                                     var armyNames = game.Units
                                         .Where(u => u.Nation == ns.Nation && u.UnitType == UnitType.Army)
-                                        .Select(u => Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == u.TerritoryId)?.Name ?? u.TerritoryId)
+                                        .Select(u => Names.Territory(u.TerritoryId))
                                         .OrderBy(n => n)
                                         .ToList();
 
                                     var fleetNames = game.Units
                                         .Where(u => u.Nation == ns.Nation && u.UnitType == UnitType.Fleet)
-                                        .Select(u => Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == u.TerritoryId)?.Name ?? u.TerritoryId)
+                                        .Select(u => Names.Territory(u.TerritoryId))
                                         .OrderBy(n => n)
                                         .ToList();
 
@@ -475,20 +475,20 @@ else
                                     var fleetsMax = Imperial2030.Shared.Constants.NationData.GetMaxFleets(ns.Nation);
                                 }
                                             <div class="small text-white-50 mt-1 d-flex justify-content-between">
-                                                <span title="@string.Join(", ", flagNames)" style="cursor: help"><i class="oi oi-flag"></i> Flags: @flagNames.Count</span> 
-                                                <span title="@string.Join(", ", armyNames)" style="cursor: help"><i class="oi oi-people"></i> Armies: @armyNames.Count/@armiesMax</span> 
-                                                <span title="@string.Join(", ", fleetNames)" style="cursor: help"><i class="oi oi-boat"></i> Fleets: @fleetNames.Count/@fleetsMax</span>
+                                                <span title="@string.Join(", ", flagNames)" style="cursor: help"><i class="oi oi-flag"></i> @L["Nations_Flags", flagNames.Count]</span> 
+                                                <span title="@string.Join(", ", armyNames)" style="cursor: help"><i class="oi oi-people"></i> @L["Nations_Armies", armyNames.Count, armiesMax]</span> 
+                                                <span title="@string.Join(", ", fleetNames)" style="cursor: help"><i class="oi oi-boat"></i> @L["Nations_Fleets", fleetNames.Count, fleetsMax]</span>
                                             </div>
                                 @{
                                     var builtFactories = Imperial2030.Shared.Constants.TerritoryData.AllTerritories
                                         .Where(t => t.Nation == ns.Nation && game.Territories.Any(ts => ts.TerritoryId == t.Id && ts.HasFactory))
-                                        .Select(t => t.Name)
+                                        .Select(t => Names.Territory(t.Id))
                                         .ToList();
                                 }
                                 @if (builtFactories.Any())
                                 {
                                                     <div class="mt-1 text-white-50">
-                                                        <i class="oi oi-home small"></i> Factories: @string.Join(", ", builtFactories)
+                                                        <i class="oi oi-home small"></i> @L["Nations_Factories", string.Join(", ", builtFactories)]
                                                     </div>
                                 }
                                         </li>
@@ -504,25 +504,25 @@ else
                 {
                              <div class="input-group">
                                  <select class="form-select bg-dark text-white border-secondary" @bind="selectedBotType">
-                                     <option value="">Random Selection</option>
+                                     <option value="">@L["Host_RandomBot"]</option>
                                      @foreach (var botType in availableBotTypes)
                                      {
-                                         <option value="@botType">@botType Bot</option>
+                                         <option value="@botType">@L["Host_BotOption", Names.BotType(botType)]</option>
                                      }
                                  </select>
                                  <button class="btn btn-outline-info" @onclick="AddBot" disabled="@(game.Players.Count >= game.MaxPlayers)">
-                                     🤖 Add Bot
+                                     @L["Host_AddBot"]
                                  </button>
                              </div>
-                             <button class="btn btn-success" @onclick="StartGame" disabled="@(game.Players.Count < 2)">Start Game</button>
+                             <button class="btn btn-success" @onclick="StartGame" disabled="@(game.Players.Count < 2)">@L["Host_StartGame"]</button>
                 }
                 @if (game.Status == GameStatus.Lobby)
                 {
-                             <button class="btn btn-danger" @onclick="ExitGame" disabled="@isSubmitting">Leave Game</button>
+                             <button class="btn btn-danger" @onclick="ExitGame" disabled="@isSubmitting">@L["LeaveGame"]</button>
                 }
                 else
                 {
-                             <button class="btn btn-secondary" @onclick="@(() => Navigation.NavigateTo("/"))">Return to Lobby</button>
+                             <button class="btn btn-secondary" @onclick="@(() => Navigation.NavigateTo("/"))">@L["ReturnToLobby"]</button>
                 }
                 </div>
             </div>
@@ -531,16 +531,16 @@ else
         @if (game.Status == GameStatus.Finished && !isReplayMode)
         {
             <div class="d-flex justify-content-center gap-2 my-2">
-                <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" style="background-color: #2c3e50; border-radius: 8px; padding: 0.5rem 1rem;" @onclick="StartReplayViewing"><i class="bi bi-film me-1"></i>Start Replay</button>
-                <a class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" style="background-color: #2c3e50; border-radius: 8px; padding: 0.5rem 1rem;" href="@($"api/games/{GameId}/export")" download><i class="bi bi-download me-1"></i>Export</a>
+                <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" style="background-color: #2c3e50; border-radius: 8px; padding: 0.5rem 1rem;" @onclick="StartReplayViewing"><i class="bi bi-film me-1"></i>@L["Replay_Start"]</button>
+                <a class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" style="background-color: #2c3e50; border-radius: 8px; padding: 0.5rem 1rem;" href="@($"api/games/{GameId}/export")" download><i class="bi bi-download me-1"></i>@L["Replay_Export"]</a>
             </div>
         }
         else if (isReplayMode)
         {
             <div class="d-flex justify-content-center gap-2 my-2 mx-auto" style="background-color: #2c3e50; border-radius: 8px; padding: 0.5rem 1rem; width: fit-content;">
-                <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" @onclick="TogglePauseReplay" disabled="@(replayState?.IsComplete == true)"><i class="bi @(replayState?.IsPaused == true ? "bi-play-fill" : "bi-pause-fill")"></i> @(replayState?.IsPaused == true ? "Resume" : "Pause")</button>
-                <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" @onclick="ResetReplayViewing"><i class="bi bi-arrow-counterclockwise"></i> Reset</button>
-                <button class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center" @onclick="ExitReplayViewing"><i class="bi bi-x-lg"></i> Exit Replay</button>
+                <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" @onclick="TogglePauseReplay" disabled="@(replayState?.IsComplete == true)"><i class="bi @(replayState?.IsPaused == true ? "bi-play-fill" : "bi-pause-fill")"></i> @(replayState?.IsPaused == true ? L["Replay_Resume"] : L["Replay_Pause"])</button>
+                <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" @onclick="ResetReplayViewing"><i class="bi bi-arrow-counterclockwise"></i> @L["Replay_Reset"]</button>
+                <button class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center" @onclick="ExitReplayViewing"><i class="bi bi-x-lg"></i> @L["Replay_Exit"]</button>
             </div>
         }
             <div class="main-board">
@@ -549,15 +549,15 @@ else
             <div class="turn-alert-wrapper">
                 <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(155, 89, 182, 0.95) 0%, rgba(108, 52, 131, 0.95) 100%); --alert-color: rgba(155, 89, 182, 0.95);">
                     <div class="alert-content">
-                        <h3><i class="bi bi-film me-2"></i>REPLAY</h3>
+                        <h3><i class="bi bi-film me-2"></i>@L["Replay_Banner"]</h3>
                         <small>
                             @if (replayState != null)
                             {
-                                @:Action @(replayState.CurrentActionIndex + 1) / @replayState.TotalActions @(replayState.IsPaused ? "(Paused)" : replayState.IsComplete ? "(Finished)" : "")
+                                @L["Replay_Progress", replayState.CurrentActionIndex + 1, replayState.TotalActions, replayState.IsPaused ? L["Replay_Paused"].Value : replayState.IsComplete ? L["Replay_Complete"].Value : ""]
                             }
                             else
                             {
-                                @:Starting…
+                                @L["Replay_Starting"]
                             }
                         </small>
                     </div>
@@ -569,8 +569,8 @@ else
             <div class="turn-alert-wrapper">
                 <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(243, 156, 18, 0.95) 0%, rgba(211, 84, 0, 0.95) 100%); --alert-color: rgba(243, 156, 18, 0.95);">
                     <div class="alert-content">
-                        <h3><i class="bi bi-pause-circle-fill me-2"></i>GAME PAUSED</h3>
-                        <small>Bots are paused. Click Resume to continue.</small>
+                        <h3><i class="bi bi-pause-circle-fill me-2"></i>@L["Alert_GamePaused"]</h3>
+                        <small>@L["Alert_GamePausedSub"]</small>
                     </div>
                 </div>
             </div>
@@ -580,8 +580,8 @@ else
             <div class="turn-alert-wrapper">
                 <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(231, 76, 60, 0.95) 0%, rgba(192, 57, 43, 0.95) 100%); --alert-color: rgba(231, 76, 60, 0.95);">
                     <div class="alert-content">
-                        <h3><i class="bi bi-bell-fill me-2"></i>IT IS YOUR MOVE!</h3>
-                        <small>You control @game.CurrentTurnNation</small>
+                        <h3><i class="bi bi-bell-fill me-2"></i>@L["Alert_YourMove"]</h3>
+                        <small>@L["Alert_YouControl", Names.Nation(game.CurrentTurnNation)]</small>
                     </div>
                 </div>
             </div>
@@ -591,8 +591,8 @@ else
             <div class="turn-alert-wrapper">
                 <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(230, 126, 34, 0.95) 0%, rgba(211, 84, 0, 0.95) 100%); --alert-color: rgba(230, 126, 34, 0.95);">
                     <div class="alert-content">
-                        <h3><i class="bi bi-person-fill-exclamation me-2"></i>INVESTOR PHASE</h3>
-                        <small>It is your turn to act</small>
+                        <h3><i class="bi bi-person-fill-exclamation me-2"></i>@L["Alert_InvestorPhase"]</h3>
+                        <small>@L["Alert_YourTurnToAct"]</small>
                     </div>
                 </div>
             </div>
@@ -602,8 +602,8 @@ else
             <div class="turn-alert-wrapper">
                 <div class="turn-alert-overlay" style="background: linear-gradient(135deg, rgba(52, 152, 219, 0.95) 0%, rgba(41, 128, 185, 0.95) 100%); --alert-color: rgba(52, 152, 219, 0.95);">
                     <div class="alert-content">
-                        <h3><i class="bi bi-eye-fill me-2"></i>OBSERVER MODE</h3>
-                        <small>You are watching this game</small>
+                        <h3><i class="bi bi-eye-fill me-2"></i>@L["Alert_ObserverMode"]</h3>
+                        <small>@L["Alert_Watching"]</small>
                     </div>
                 </div>
             </div>
@@ -633,19 +633,19 @@ else
                              {
                                  <div class="game-over-overlay">
                                     <div class="game-over-card" style="position: relative;">
-                                        <button type="button" class="btn-close btn-close-white" style="position: absolute; top: 1rem; right: 1rem; z-index: 100; cursor: pointer;" @onclick="() => showGameOverPopup = false" aria-label="Close"></button>
-                                        <h1 class="text-gradient mb-2">GAME OVER</h1>
-                                        <h5 class="text-white-50 mb-4">Ended by @GetWinningNation() reaching @GameConstants.MaxPowerPoints Power</h5>
+                                        <button type="button" class="btn-close btn-close-white" style="position: absolute; top: 1rem; right: 1rem; z-index: 100; cursor: pointer;" @onclick="() => showGameOverPopup = false" aria-label="@Shared["Common_Close"]"></button>
+                                        <h1 class="text-gradient mb-2">@L["GameOver_Title"]</h1>
+                                        <h5 class="text-white-50 mb-4">@L["GameOver_EndedBy", GetWinningNation(), GameConstants.MaxPowerPoints]</h5>
 
                                     <div class="leaderboard-container">
                                         <table class="table table-dark table-borderless table-sm score-table">
                                             <thead>
                                                 <tr class="text-white-50 border-bottom border-secondary">
-                                                    <th>Rank</th>
-                                                    <th>Player</th>
-                                                    <th class="text-end">Cash</th>
-                                                    <th class="text-end">Bond Value</th>
-                                                    <th class="text-end">Total VP</th>
+                                                    <th>@L["GameOver_Rank"]</th>
+                                                    <th>@L["GameOver_Player"]</th>
+                                                    <th class="text-end">@L["GameOver_Cash"]</th>
+                                                    <th class="text-end">@L["GameOver_BondValue"]</th>
+                                                    <th class="text-end">@L["GameOver_TotalVp"]</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -665,7 +665,7 @@ else
                                                             </td>
                                                             <td class="fw-bold">@item.Player.UserName</td>
                                                             <td class="text-end text-success">@item.Player.Cash M</td>
-                                                            <td class="text-end text-info">@(item.Score - item.Player.Cash) VP</td>
+                                                            <td class="text-end text-info">@L["Players_Vp", item.Score - item.Player.Cash]</td>
                                                             <td class="text-end fw-bolder fs-5">@item.Score</td>
                                                         </tr>
                                             rank++;
@@ -675,9 +675,9 @@ else
                                     </div>
 
                                     <div class="mt-4 d-flex gap-2 justify-content-center align-items-stretch">
-                                        <button class="btn btn-outline-light btn-lg px-4 shadow-lg d-flex align-items-center justify-content-center" @onclick="StartReplayViewing" disabled="@isReplayMode"><i class="bi bi-film me-2"></i>Start Replay</button>
-                                        <a class="btn btn-outline-light btn-lg px-4 shadow-lg d-flex align-items-center justify-content-center" href="@($"api/games/{GameId}/export")" download><i class="bi bi-download me-2"></i>Export</a>
-                                        <button class="btn btn-primary btn-lg px-5 shadow-lg d-flex align-items-center justify-content-center" style="text-transform: none;" @onclick="@(() => Navigation.NavigateTo("/"))">Return to Lobby</button>
+                                        <button class="btn btn-outline-light btn-lg px-4 shadow-lg d-flex align-items-center justify-content-center" @onclick="StartReplayViewing" disabled="@isReplayMode"><i class="bi bi-film me-2"></i>@L["Replay_Start"]</button>
+                                        <a class="btn btn-outline-light btn-lg px-4 shadow-lg d-flex align-items-center justify-content-center" href="@($"api/games/{GameId}/export")" download><i class="bi bi-download me-2"></i>@L["Replay_Export"]</a>
+                                        <button class="btn btn-primary btn-lg px-5 shadow-lg d-flex align-items-center justify-content-center" style="text-transform: none;" @onclick="@(() => Navigation.NavigateTo("/"))">@L["ReturnToLobby"]</button>
                                     </div>
                                 </div>
                             </div>
@@ -688,8 +688,8 @@ else
             {
                          <div class="map-placeholder">
                             <h2>Imperial 2030</h2>
-                            <p>Waiting for game to start...</p>
-                            <p>Game ID: @GameId</p>
+                            <p>@L["Placeholder_WaitingToStart"]</p>
+                            <p>@L["Placeholder_GameId", GameId]</p>
                         </div>
             }
 
@@ -703,7 +703,7 @@ else
                 <!-- Player stats, bond holdings -->
                 <div class="panel">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h4 class="m-0">Assets</h4>
+                        <h4 class="m-0">@L["Assets_Title"]</h4>
                     @if (game != null)
                     {
                                 <select class="form-select form-select-sm w-auto bg-dark text-white border-secondary py-0 pe-4" 
@@ -725,7 +725,7 @@ else
                 {
                             <!-- Governments -->
                             <div class="mb-3">
-                                 <h6 class="text-white border-bottom border-secondary pb-1"> Governments</h6>
+                                 <h6 class="text-white border-bottom border-secondary pb-1"> @L["Assets_Governments"]</h6>
                         @{
                             var myGovernments = game?.NationStates.Where(ns => ns.ControllerName == targetPlayer.UserName).ToList() ?? new List<Imperial2030.Shared.Models.NationStateDto>();
                         }
@@ -734,9 +734,9 @@ else
                             foreach (var gov in myGovernments)
                             {
                                                  <div class="d-flex align-items-center mb-1">
-                                                     <span class="badge bg-primary me-2">@gov.Nation</span>
+                                                     <span class="badge bg-primary me-2">@Names.Nation(gov.Nation)</span>
                                                      <small class="text-muted">
-                                                         Power: <span class="position-relative">@gov.Power
+                                                         @L["Assets_Power"] <span class="position-relative">@gov.Power
                                                              @if (_nationPowerEffects.TryGetValue(gov.Nation, out var govPEffect) && (DateTime.Now - govPEffect.Timestamp).TotalSeconds < 5.5)
                                                              {
                                                                  <span @key="govPEffect.TriggerId" class="floating-cash @(govPEffect.Delta > 0 ? "positive" : "negative")">
@@ -744,7 +744,7 @@ else
                                                                  </span>
                                                              }
                                                          </span> | 
-                                                         Treasury: <span class="position-relative">$@(gov.Treasury)M
+                                                         @L["Assets_Treasury"] <span class="position-relative">$@(gov.Treasury)M
                                                              @if (_nationTreasuryEffects.TryGetValue(gov.Nation, out var govTEffect) && (DateTime.Now - govTEffect.Timestamp).TotalSeconds < 5.5)
                                                              {
                                                                  <span @key="govTEffect.TriggerId" class="floating-cash @(govTEffect.Delta > 0 ? "positive" : "negative")">
@@ -758,16 +758,16 @@ else
                         }
                         else
                         {
-                                         <small class="text-muted">None</small>
+                                         <small class="text-muted">@Shared["Common_None"]</small>
                         }
                             </div>
 
                             <ul class="list-group list-group-flush bg-transparent">
                                 <li class="list-group-item bg-transparent text-white fs-5 px-0">
-                                    Cash: <span class="text-success fw-bold">$@(targetPlayer.Cash)M</span>
+                                    @L["Assets_Cash"] <span class="text-success fw-bold">$@(targetPlayer.Cash)M</span>
                                 </li>
                                 <li class="list-group-item bg-transparent text-white px-0">
-                                    <h6 class="text-white border-bottom border-secondary pb-1 mt-2">Bonds</h6>
+                                    <h6 class="text-white border-bottom border-secondary pb-1 mt-2">@L["Assets_Bonds"]</h6>
                             @if (targetPlayer.Bonds.Any())
                             {
                                 @foreach (var group in targetPlayer.Bonds.GroupBy(b => b.Nation).OrderBy(g => g.Key))
@@ -777,13 +777,13 @@ else
 
                                                     <div class="mb-2 border-bottom border-secondary pb-1">
                                                         <div class="d-flex justify-content-between fw-bold text-info">
-                                                            <span>@group.Key</span>
+                                                            <span>@Names.Nation(group.Key)</span>
                                                             <span>@totalInterest M <small class="text-white small">(@totalCost M)</small></span>
                                                         </div>
                                         @foreach (var bond in group.OrderByDescending(b => b.Cost))
                                         {
                                                                  <div class="d-flex justify-content-between small text-muted ps-2">
-                                                                    <span>Bond @bond.Cost</span>
+                                                                    <span>@L["Assets_Bond", bond.Cost]</span>
                                                                     <span>+@bond.Interest</span>
                                                                  </div>
                                         }
@@ -792,7 +792,7 @@ else
                             }
                             else
                             {
-                                            <small>No bonds held.</small>
+                                            <small>@L["Assets_NoBonds"]</small>
                             }
                                 </li>
                             </ul>
@@ -802,10 +802,10 @@ else
                 <!-- All Bonds Panel -->
                 <div class="panel mt-2">
                     <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-1">
-                        <h5 class="mb-0">Global Bonds</h5>
+                        <h5 class="mb-0">@L["Assets_GlobalBonds"]</h5>
                         <div class="form-check form-switch mb-0">
                             <input class="form-check-input" type="checkbox" id="showBoughtOnly" @bind="_showOnlyBoughtBonds">
-                            <label class="form-check-label small text-muted ms-1" for="showBoughtOnly">Bought only</label>
+                            <label class="form-check-label small text-muted ms-1" for="showBoughtOnly">@L["Assets_BoughtOnly"]</label>
                         </div>
                     </div>
                     @if (game != null)
@@ -831,7 +831,7 @@ else
 
                             <div class="mb-2">
                                 <h6 class="text-info mb-0">
-                                    @nation
+                                    @Names.Nation(nation)
                                     @if (!string.IsNullOrEmpty(ns.ControllerName))
                                     {
                                         var controllerInvestment = heldForNation.Where(h => h.Player.UserName == ns.ControllerName).Sum(h => h.Bond.Cost);
@@ -853,7 +853,7 @@ else
                                         {
                                             <div class="d-flex justify-content-between text-muted">
                                                 <span>@bond.Cost M (+@bond.Interest)</span>
-                                                <span>Bank</span>
+                                                <span>@Shared["Common_Bank"]</span>
                                             </div>
                                         }
                                     }
@@ -1391,7 +1391,7 @@ else
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                await JSRuntime.InvokeVoidAsync("alert", $"Failed to start replay: {error}");
+                await JSRuntime.InvokeVoidAsync("alert", L["Replay_StartFailed", error].Value);
                 return;
             }
             replaySessionId = await response.Content.ReadFromJsonAsync<Guid>();
@@ -1404,7 +1404,7 @@ else
         }
         catch (Exception ex)
         {
-            await JSRuntime.InvokeVoidAsync("alert", $"Failed to start replay: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", L["Replay_StartFailed", ex.Message].Value);
         }
     }
 
@@ -1578,12 +1578,15 @@ else
         {
             if (id == GameId)
             {
-                await ShowToast("The game has been deleted by the host.", true);
+                await ShowToast(L["Toast_GameDeleted"], true);
                 Navigation.NavigateTo("/");
             }
         });
 
-        hubConnection.On<string, bool>("ShowToast", OnShowToastAction);
+        // The server sends a resource key plus arguments rather than a finished sentence, because it
+        // has no idea which language this viewer picked — see Shared/Models/LocalizedToast.cs.
+        hubConnection.On<LocalizedToast, bool>("ShowToast", (toast, isError) =>
+            OnShowToastAction(RenderToast(toast), isError));
 
         await hubConnection.StartAsync();
         observerCount = await hubConnection.InvokeAsync<int>("JoinGameGroup", GameId.ToString(), MyPlayer == null);
@@ -1728,7 +1731,7 @@ else
         catch (Exception ex)
         {
             Console.WriteLine($"Error loading game: {ex.Message}");
-            await ShowToast($"Game not found or access denied.", true);
+            await ShowToast(L["Toast_GameNotFound"], true);
             await Task.Delay(2000);
             Navigation.NavigateTo("/");
         }
@@ -1740,7 +1743,7 @@ else
         if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync();
-            await ShowToast($"Failed to start game: {error}", true);
+            await ShowToast(L["Toast_StartGameFailed", error], true);
         }
     }
 
@@ -1757,7 +1760,7 @@ else
         if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync();
-            await ShowToast($"Failed to add bot: {error}", true);
+            await ShowToast(L["Toast_AddBotFailed", error], true);
         }
     }
 
@@ -1767,15 +1770,15 @@ else
         if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync();
-            await ShowToast($"Failed to remove bot: {error}", true);
+            await ShowToast(L["Toast_RemoveBotFailed", error], true);
         }
     }
 
     private string GetWinningNation()
     {
-        if (game == null) return "Unknown";
+        if (game == null) return Shared["Common_Unknown"];
         var winner = game.NationStates.OrderByDescending(n => n.Power).FirstOrDefault();
-        return winner?.Nation.ToString() ?? "Unknown";
+        return winner != null ? Names.Nation(winner.Nation) : Shared["Common_Unknown"].Value;
     }
 
     private string GetPlayerControlledNationsString(PlayerDto player)
@@ -1916,7 +1919,7 @@ else
             int dist = (slotIndex - current + RondelData.SlotCount) % RondelData.SlotCount;
             if (dist > RondelData.MaxMoveDistance)
             {
-                _ = ShowToast($"You cannot move more than {RondelData.MaxMoveDistance} spaces on the rondel!", true);
+                _ = ShowToast(L["Toast_RondelTooFar", RondelData.MaxMoveDistance], true);
                 return;
             }
 
@@ -1930,7 +1933,7 @@ else
 
         if (cost > 0)
         {
-            bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", $"This move will cost {cost}M. Proceed?");
+            bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", L["Confirm_MoveCost", cost].Value);
             if (!confirmed) return;
         }
 
@@ -1942,7 +1945,7 @@ else
         {
             if (ns.Treasury < 5)
             {
-                warningMessage = "You have less than 5M in your treasury. You will not be able to build a factory.";
+                warningMessage = L["Warn_NoTreasuryForFactory"];
             }
             else
             {
@@ -1950,7 +1953,7 @@ else
                 int builtFactoriesCount = game.Territories.Count(ts => homeProvinces.Any(hp => hp.Id == ts.TerritoryId) && ts.HasFactory);
                 if (builtFactoriesCount >= homeProvinces.Count())
                 {
-                    warningMessage = "All of your home provinces already have factories built. You cannot build any more.";
+                    warningMessage = L["Warn_AllFactoriesBuilt"];
                 }
             }
         }
@@ -1974,11 +1977,11 @@ else
 
             if (!myFactories.Any())
             {
-                warningMessage = "You do not have any factories. You will not produce any units.";
+                warningMessage = L["Warn_NoFactories"];
             }
             else if (!hasUnblockadedFactory)
             {
-                warningMessage = "All of your factories are blockaded by hostile armies. You cannot produce any units.";
+                warningMessage = L["Warn_FactoriesBlockaded"];
             }
         }
         // 3 & 7. Maneuver
@@ -1987,7 +1990,7 @@ else
             int myUnitsCount = game.Units.Count(u => u.Nation == nation);
             if (myUnitsCount == 0)
             {
-                warningMessage = "You have no armies or fleets on the board to maneuver.";
+                warningMessage = L["Warn_NoUnitsToManeuver"];
             }
         }
         // 4. Investor
@@ -1999,7 +2002,7 @@ else
 
             if (ns.Treasury <= totalOwedToOthers)
             {
-                warningMessage = $"This nation only has {ns.Treasury}M, but owes {totalOwedToOthers}M to other players. You will earn 0M from your {myInterestOwed}M interest.";
+                warningMessage = L["Warn_InterestShortfall", ns.Treasury, totalOwedToOthers, myInterestOwed];
             }
         }
         // 5. Import
@@ -2007,7 +2010,7 @@ else
         {
             if (ns.Treasury < 1)
             {
-                warningMessage = "You have 0M in your treasury. You will not be able to import any units.";
+                warningMessage = L["Warn_NoTreasuryForImport"];
             }
         }
 
@@ -2025,7 +2028,7 @@ else
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                await ShowToast($"Move failed: {error}", true);
+                await ShowToast(L["Toast_MoveFailed", error], true);
             }
             else
             {
@@ -2034,7 +2037,7 @@ else
         }
         catch (Exception ex)
         {
-            await ShowToast($"Error: {ex.Message}", true);
+            await ShowToast(L["Toast_Error", ex.Message], true);
         }
         finally
         {
@@ -2054,12 +2057,12 @@ else
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                await ShowToast($"Response failed: {error}", true);
+                await ShowToast(L["Toast_ResponseFailed", error], true);
             }
         }
         catch (Exception ex)
         {
-            await ShowToast($"Error: {ex.Message}", true);
+            await ShowToast(L["Toast_Error", ex.Message], true);
         }
         finally
         {
@@ -2075,7 +2078,7 @@ else
         if (game.ManeuverState != null && game.ManeuverState.Phase != ManeuverPhase.None)
         {
             gameMap?.TriggerEndPhaseHighlight();
-            await ShowToast($"Finish your maneuver phase ({game.ManeuverState.Phase}) first.", true);
+            await ShowToast(L["Toast_FinishManeuverFirst", Names.ManeuverPhase(game.ManeuverState.Phase)], true);
             return;
         }
 
@@ -2086,12 +2089,12 @@ else
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                await ShowToast($"Failed to end turn: {error}", true);
+                await ShowToast(L["Toast_EndTurnFailed", error], true);
             }
         }
         catch (Exception ex)
         {
-            await ShowToast($"Error: {ex.Message}", true);
+            await ShowToast(L["Toast_Error", ex.Message], true);
         }
         finally
         {
@@ -2108,12 +2111,12 @@ else
             var success = await ManeuverService.BattleResponseAsync(GameId, isFight);
             if (!success)
             {
-                await ShowToast("Failed to submit battle response.", true);
+                await ShowToast(L["Toast_BattleResponseFailed"], true);
             }
         }
         catch (Exception ex)
         {
-            await ShowToast($"Error: {ex.Message}", true);
+            await ShowToast(L["Toast_Error", ex.Message], true);
         }
         finally
         {
@@ -2147,7 +2150,7 @@ else
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                await ShowToast($"Failed to build factory: {error}", true);
+                await ShowToast(L["Toast_BuildFactoryFailed", error], true);
             }
             else
             {
@@ -2156,7 +2159,7 @@ else
         }
         catch (Exception ex)
         {
-            await ShowToast($"Error: {ex.Message}", true);
+            await ShowToast(L["Toast_Error", ex.Message], true);
         }
         finally
         {
@@ -2181,7 +2184,7 @@ else
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                await ShowToast($"Taxation failed: {error}", true);
+                await ShowToast(L["Toast_TaxationFailed", error], true);
             }
             else
             {
@@ -2190,7 +2193,7 @@ else
         }
         catch (Exception ex)
         {
-            await ShowToast($"Error: {ex.Message}", true);
+            await ShowToast(L["Toast_Error", ex.Message], true);
         }
         finally
         {
@@ -2224,7 +2227,7 @@ else
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                await ShowToast($"Production failed: {error}", true);
+                await ShowToast(L["Toast_ProductionFailed", error], true);
             }
             else
             {
@@ -2233,7 +2236,7 @@ else
         }
         catch (Exception ex)
         {
-            await ShowToast($"Error: {ex.Message}", true);
+            await ShowToast(L["Toast_Error", ex.Message], true);
         }
         finally
         {
@@ -2252,12 +2255,12 @@ else
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                await ShowToast($"Investment failed: {error}", true);
+                await ShowToast(L["Toast_InvestmentFailed", error], true);
             }
         }
         catch (Exception ex)
         {
-            await ShowToast($"Error: {ex.Message}", true);
+            await ShowToast(L["Toast_Error", ex.Message], true);
         }
         finally
         {
@@ -2348,7 +2351,7 @@ else
         var ns = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
         if (ns == null || ns.Treasury < pendingImports.Count)
         {
-            await ShowToast("Insufficient funds!", true);
+            await ShowToast(L["Toast_InsufficientFunds"], true);
             return;
         }
 
@@ -2360,7 +2363,7 @@ else
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                await ShowToast($"Import failed: {error}", true);
+                await ShowToast(L["Toast_ImportFailed", error], true);
             }
             else
             {
@@ -2369,7 +2372,7 @@ else
         }
         catch (Exception ex)
         {
-            await ShowToast($"Error: {ex.Message}", true);
+            await ShowToast(L["Toast_Error", ex.Message], true);
         }
         finally
         {
@@ -2396,6 +2399,24 @@ else
     private void OnShowToastAction(string message, bool isError)
     {
         _ = ShowToast(message, isError);
+    }
+
+    /// <summary>
+    /// Renders a server-pushed toast in the viewer's language: looks the resource key up locally and
+    /// substitutes its arguments, translating the ones flagged as nations. An unknown key falls back
+    /// to the key itself rather than throwing, so a server/client version skew degrades visibly but
+    /// harmlessly instead of breaking the toast pipeline.
+    /// </summary>
+    private string RenderToast(LocalizedToast toast)
+    {
+        if (toast == null || string.IsNullOrEmpty(toast.Code)) return string.Empty;
+
+        var args = toast.Args
+            .Select(a => a.IsNation ? Names.NationFromName(a.Value) : a.Value)
+            .Cast<object>()
+            .ToArray();
+
+        return L[toast.Code, args];
     }
 
     private Task ShowToast(string message, bool isError)
@@ -2443,7 +2464,7 @@ else
             else
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
-                await ShowToast($"Failed to leave game: {errorBody}", true);
+                await ShowToast(L["Toast_LeaveGameFailed", errorBody], true);
             }
         }
         finally
@@ -2527,12 +2548,12 @@ else
             else
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
-                await ShowToast($"Failed to toggle pause: {errorBody}", true);
+                await ShowToast(L["Toast_TogglePauseFailed", errorBody], true);
             }
         }
         catch (Exception ex)
         {
-            await ShowToast($"Error toggling pause: {ex.Message}", true);
+            await ShowToast(L["Toast_TogglePauseError", ex.Message], true);
         }
         finally
         {

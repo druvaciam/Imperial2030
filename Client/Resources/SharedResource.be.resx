@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="Language_Label" xml:space="preserve">
+    <value>Мова</value>
+  </data>
+
+  <!-- Common -->
+  <data name="Common_Cancel" xml:space="preserve"><value>Адмена</value></data>
+  <data name="Common_Close" xml:space="preserve"><value>Закрыць</value></data>
+  <data name="Common_Confirm" xml:space="preserve"><value>Пацвердзіць</value></data>
+  <data name="Common_Loading" xml:space="preserve"><value>Загрузка...</value></data>
+  <data name="Common_None" xml:space="preserve"><value>Няма</value></data>
+  <data name="Common_Delete" xml:space="preserve"><value>Выдаліць</value></data>
+  <data name="Common_Bank" xml:space="preserve"><value>Банк</value></data>
+  <data name="Common_Unknown" xml:space="preserve"><value>Невядома</value></data>
+
+  <!-- App chrome: nav, layout top bar, and the two single-string pages (App, Logout).
+       These live here rather than in their own .resx pairs because each component owns only one or
+       two strings; anything page-sized gets its own file. -->
+  <data name="Nav_Lobby" xml:space="preserve"><value>Лобі</value></data>
+  <data name="Nav_Menu" xml:space="preserve"><value>Меню навігацыі</value></data>
+  <data name="Layout_GuestBadge" xml:space="preserve"><value>Госць (толькі прагляд)</value></data>
+  <data name="Layout_Login" xml:space="preserve"><value>Увайсці</value></data>
+  <data name="Layout_Register" xml:space="preserve"><value>Рэгістрацыя</value></data>
+  <data name="Layout_Logout" xml:space="preserve"><value>Выйсці</value></data>
+  <data name="Layout_Hello" xml:space="preserve"><value>Прывітанне, {0}!</value></data>
+  <data name="Layout_About" xml:space="preserve"><value>Даведка</value></data>
+  <data name="Logout_Message" xml:space="preserve"><value>Выхад...</value></data>
+  <data name="App_NotAuthorized" xml:space="preserve"><value>У вас няма доступу да гэтага рэсурсу.</value></data>
+  <data name="App_NotFoundTitle" xml:space="preserve"><value>Не знойдзена</value></data>
+  <data name="App_NotFoundBody" xml:space="preserve"><value>Прабачце, па гэтым адрасе нічога няма.</value></data>
+  <data name="Auth_ParseResponseFailed" xml:space="preserve"><value>Не ўдалося апрацаваць адказ сервера.</value></data>
+
+  <!-- Nations -->
+  <data name="Nation_Russia" xml:space="preserve"><value>Расея</value></data>
+  <data name="Nation_China" xml:space="preserve"><value>Кітай</value></data>
+  <data name="Nation_India" xml:space="preserve"><value>Індыя</value></data>
+  <data name="Nation_Brazil" xml:space="preserve"><value>Бразілія</value></data>
+  <data name="Nation_USA" xml:space="preserve"><value>ЗША</value></data>
+  <data name="Nation_Europe" xml:space="preserve"><value>Еўропа</value></data>
+
+  <!-- Nation abbreviations (rondel markers) -->
+  <data name="NationAbbrev_Russia" xml:space="preserve"><value>РАС</value></data>
+  <data name="NationAbbrev_China" xml:space="preserve"><value>КІТ</value></data>
+  <data name="NationAbbrev_India" xml:space="preserve"><value>ІНД</value></data>
+  <data name="NationAbbrev_Brazil" xml:space="preserve"><value>БРА</value></data>
+  <data name="NationAbbrev_USA" xml:space="preserve"><value>ЗША</value></data>
+  <data name="NationAbbrev_Europe" xml:space="preserve"><value>ЕЎР</value></data>
+
+  <!-- Rondel slots, keyed by index: Production and Maneuver each occupy two slots -->
+  <data name="Rondel_Slot_0" xml:space="preserve"><value>Падаткі</value></data>
+  <data name="Rondel_Slot_1" xml:space="preserve"><value>Фабрыка</value></data>
+  <data name="Rondel_Slot_2" xml:space="preserve"><value>Вытворчасць</value></data>
+  <data name="Rondel_Slot_3" xml:space="preserve"><value>Манеўр</value></data>
+  <data name="Rondel_Slot_4" xml:space="preserve"><value>Інвестар</value></data>
+  <data name="Rondel_Slot_5" xml:space="preserve"><value>Імпарт</value></data>
+  <data name="Rondel_Slot_6" xml:space="preserve"><value>Вытворчасць</value></data>
+  <data name="Rondel_Slot_7" xml:space="preserve"><value>Манеўр</value></data>
+
+  <!-- Units -->
+  <data name="UnitType_Army" xml:space="preserve"><value>Армія</value></data>
+  <data name="UnitType_Fleet" xml:space="preserve"><value>Флот</value></data>
+  <data name="UnitGlyph_Army" xml:space="preserve"><value>А</value></data>
+  <data name="UnitGlyph_Fleet" xml:space="preserve"><value>Ф</value></data>
+
+  <!-- Maneuver phases -->
+  <data name="ManeuverPhase_None" xml:space="preserve"><value>Няма</value></data>
+  <data name="ManeuverPhase_Fleets" xml:space="preserve"><value>Флоты</value></data>
+  <data name="ManeuverPhase_Armies" xml:space="preserve"><value>Арміі</value></data>
+  <data name="ManeuverPhaseSingular_Fleets" xml:space="preserve"><value>Флот</value></data>
+  <data name="ManeuverPhaseSingular_Armies" xml:space="preserve"><value>Армія</value></data>
+
+  <!-- Phase names as recorded in the action log's metadata by the server -->
+  <data name="PhaseName_Fleets" xml:space="preserve"><value>Флоты</value></data>
+  <data name="PhaseName_Armies" xml:space="preserve"><value>Арміі</value></data>
+  <data name="PhaseName_Turn" xml:space="preserve"><value>Ход</value></data>
+
+  <!-- Game status -->
+  <data name="GameStatus_Lobby" xml:space="preserve"><value>Лобі</value></data>
+  <data name="GameStatus_InProgress" xml:space="preserve"><value>У працэсе</value></data>
+  <data name="GameStatus_Finished" xml:space="preserve"><value>Завершана</value></data>
+
+  <!-- Bot strategy labels (the identifier itself stays English — it is the wire value) -->
+  <data name="BotType_Default" xml:space="preserve"><value>Стандартны</value></data>
+  <data name="BotType_Aggressive" xml:space="preserve"><value>Агрэсіўны</value></data>
+  <data name="BotType_Friendly" xml:space="preserve"><value>Мірны</value></data>
+  <data name="BotType_Greedy" xml:space="preserve"><value>Прагны</value></data>
+  <data name="BotType_RL" xml:space="preserve"><value>RL</value></data>
+  <data name="BotType_Random" xml:space="preserve"><value>Выпадковы</value></data>
+
+  <!-- Territories: home provinces -->
+  <data name="Territory_Moscow" xml:space="preserve"><value>Масква</value></data>
+  <data name="Territory_Vladivostok" xml:space="preserve"><value>Уладзівасток</value></data>
+  <data name="Territory_Murmansk" xml:space="preserve"><value>Мурманск</value></data>
+  <data name="Territory_Novosibirsk" xml:space="preserve"><value>Навасібірск</value></data>
+  <data name="Territory_Beijing" xml:space="preserve"><value>Пекін</value></data>
+  <data name="Territory_Shanghai" xml:space="preserve"><value>Шанхай</value></data>
+  <data name="Territory_Chongqing" xml:space="preserve"><value>Чунцын</value></data>
+  <data name="Territory_Urumqi" xml:space="preserve"><value>Урумчы</value></data>
+  <data name="Territory_NewDelhi" xml:space="preserve"><value>Нью-Дэлі</value></data>
+  <data name="Territory_Mumbai" xml:space="preserve"><value>Мумбаі</value></data>
+  <data name="Territory_Kolkata" xml:space="preserve"><value>Калькута</value></data>
+  <data name="Territory_Chennai" xml:space="preserve"><value>Чэнаі</value></data>
+  <data name="Territory_Brasilia" xml:space="preserve"><value>Бразіліа</value></data>
+  <data name="Territory_RioDeJaneiro" xml:space="preserve"><value>Рыа-дэ-Жанейра</value></data>
+  <data name="Territory_Manaus" xml:space="preserve"><value>Манаўс</value></data>
+  <data name="Territory_Fortaleza" xml:space="preserve"><value>Фарталеза</value></data>
+  <data name="Territory_NewYork" xml:space="preserve"><value>Нью-Ёрк</value></data>
+  <data name="Territory_SanFrancisco" xml:space="preserve"><value>Сан-Францыска</value></data>
+  <data name="Territory_NewOrleans" xml:space="preserve"><value>Новы Арлеан</value></data>
+  <data name="Territory_Chicago" xml:space="preserve"><value>Чыкага</value></data>
+  <data name="Territory_Berlin" xml:space="preserve"><value>Берлін</value></data>
+  <data name="Territory_London" xml:space="preserve"><value>Лондан</value></data>
+  <data name="Territory_Paris" xml:space="preserve"><value>Парыж</value></data>
+  <data name="Territory_Rome" xml:space="preserve"><value>Рым</value></data>
+
+  <!-- Territories: neutral land -->
+  <data name="Territory_Switzerland" xml:space="preserve"><value>Швейцарыя</value></data>
+  <data name="Territory_Ukraine" xml:space="preserve"><value>Украіна</value></data>
+  <data name="Territory_Korea" xml:space="preserve"><value>Карэя</value></data>
+  <data name="Territory_Mongolia" xml:space="preserve"><value>Манголія</value></data>
+  <data name="Territory_Kazakhstan" xml:space="preserve"><value>Казахстан</value></data>
+  <data name="Territory_Japan" xml:space="preserve"><value>Японія</value></data>
+  <data name="Territory_Turkey" xml:space="preserve"><value>Турцыя</value></data>
+  <data name="Territory_Guinea" xml:space="preserve"><value>Гвінея</value></data>
+  <data name="Territory_Quebec" xml:space="preserve"><value>Квебек</value></data>
+  <data name="Territory_Mexico" xml:space="preserve"><value>Мексіка</value></data>
+  <data name="Territory_Colombia" xml:space="preserve"><value>Калумбія</value></data>
+  <data name="Territory_Afghanistan" xml:space="preserve"><value>Афганістан</value></data>
+  <data name="Territory_Alaska" xml:space="preserve"><value>Аляска</value></data>
+  <data name="Territory_Canada" xml:space="preserve"><value>Канада</value></data>
+  <data name="Territory_Peru" xml:space="preserve"><value>Перу</value></data>
+  <data name="Territory_Argentina" xml:space="preserve"><value>Аргенціна</value></data>
+  <data name="Territory_Iran" xml:space="preserve"><value>Іран</value></data>
+  <data name="Territory_North-Africa" xml:space="preserve"><value>Паўночная Афрыка</value></data>
+  <data name="Territory_Nigeria" xml:space="preserve"><value>Нігерыя</value></data>
+  <data name="Territory_Congo" xml:space="preserve"><value>Конга</value></data>
+  <data name="Territory_South-Africa" xml:space="preserve"><value>Паўднёвая Афрыка</value></data>
+  <data name="Territory_East-Africa" xml:space="preserve"><value>Усходняя Афрыка</value></data>
+  <data name="Territory_NearEast" xml:space="preserve"><value>Блізкі Усход</value></data>
+  <data name="Territory_Indochina" xml:space="preserve"><value>Індакітай</value></data>
+  <data name="Territory_Indonesia" xml:space="preserve"><value>Інданезія</value></data>
+  <data name="Territory_Philippines" xml:space="preserve"><value>Філіпіны</value></data>
+  <data name="Territory_Australia" xml:space="preserve"><value>Аўстралія</value></data>
+  <data name="Territory_NewZealand" xml:space="preserve"><value>Новая Зеландыя</value></data>
+
+  <!-- Territories: sea regions -->
+  <data name="Territory_MediterraneanSea" xml:space="preserve"><value>Міжземнае мора</value></data>
+  <data name="Territory_NorthAtlantic" xml:space="preserve"><value>Паўночная Атлантыка</value></data>
+  <data name="Territory_GulfOfGuinea" xml:space="preserve"><value>Гвінейскі заліў</value></data>
+  <data name="Territory_NorthPacific" xml:space="preserve"><value>Паўночны Ціхі акіян</value></data>
+  <data name="Territory_SouthPacific" xml:space="preserve"><value>Паўднёвы Ціхі акіян</value></data>
+  <data name="Territory_SouthAtlantic" xml:space="preserve"><value>Паўднёвая Атлантыка</value></data>
+  <data name="Territory_IndianOcean" xml:space="preserve"><value>Індыйскі акіян</value></data>
+  <data name="Territory_SeaOfJapan" xml:space="preserve"><value>Японскае мора</value></data>
+  <data name="Territory_ChinaSea" xml:space="preserve"><value>Кітайскае мора</value></data>
+  <data name="Territory_CaribbeanSea" xml:space="preserve"><value>Карыбскае мора</value></data>
+  <data name="Territory_TasmanSea" xml:space="preserve"><value>Тасманава мора</value></data>
+</root>

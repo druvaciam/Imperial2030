@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <!-- Slice descriptions, keyed by rondel slot index (Production and Maneuver occupy two slots each) -->
+  <data name="Desc_Slot_0" xml:space="preserve"><value>Збіраць падаткі з фабрыкаў і сцягоў, плаціць войску і павышаць магутнасць.</value></data>
+  <data name="Desc_Slot_1" xml:space="preserve"><value>Пабудаваць фабрыку ў родным горадзе за 5M.</value></data>
+  <data name="Desc_Slot_2" xml:space="preserve"><value>Вырабляць арміі і флоты на вашых фабрыках.</value></data>
+  <data name="Desc_Slot_3" xml:space="preserve"><value>Перамяшчаць вашы флоты і арміі.</value></data>
+  <data name="Desc_Slot_4" xml:space="preserve"><value>Выплаціць адсоткі па аблігацыях і запусціць дзеянне Інвестара.</value></data>
+  <data name="Desc_Slot_5" xml:space="preserve"><value>Імпартаваць да 3 адзінак па 1M за кожную.</value></data>
+  <data name="Desc_Slot_6" xml:space="preserve"><value>Вырабляць арміі і флоты на вашых фабрыках.</value></data>
+  <data name="Desc_Slot_7" xml:space="preserve"><value>Перамяшчаць вашы флоты і арміі.</value></data>
+
+  <data name="YouSuffix" xml:space="preserve"><value> (вы)</value></data>
+  <data name="Treasury" xml:space="preserve"><value>Казна: {0}M</value></data>
+
+  <!-- Taxation preview -->
+  <data name="Tax_Revenue" xml:space="preserve"><value>Даход: {0}M</value></data>
+  <data name="Tax_SoldiersPay" xml:space="preserve"><value>Плата войску: {0}M</value></data>
+  <data name="Tax_TreasuryGain" xml:space="preserve"><value>Прырост казны нацыі: {0}M</value></data>
+  <data name="Tax_ControllerBonus" xml:space="preserve"><value>Бонус кіраўніка {0}{1}: {2}M</value></data>
+  <data name="Tax_PowerGain" xml:space="preserve"><value>Прырост магутнасці: {0}</value></data>
+
+  <!-- Investor preview -->
+  <data name="Investor_NoBonds" xml:space="preserve"><value>Няма аблігацыяў у абарачэнні. Выплат не будзе.</value></data>
+  <data name="Investor_Payouts" xml:space="preserve"><value>Выплаты:</value></data>
+  <data name="Investor_PayoutLine" xml:space="preserve"><value>- {0}{1}: {2}M</value></data>
+  <data name="Investor_TreasuryMax" xml:space="preserve"><value> (максімум казны)</value></data>
+  <data name="Investor_Insufficient" xml:space="preserve"><value>Недастаткова сродкаў у казне!
+Кіраўнік мусіць пакрыць дэфіцыт.</value></data>
+  <data name="Investor_NothingReceived" xml:space="preserve"><value> (атрымана 0M)</value></data>
+  <data name="Investor_DeficitLine" xml:space="preserve"><value>{0}{1} (кіраўнік) плаціць дэфіцыт: {2}M з уласнай кішэні</value></data>
+
+  <!-- Factory preview -->
+  <data name="Factory_CurrentFactories" xml:space="preserve"><value>Цяперашнія фабрыкі: {0} / {1}</value></data>
+  <data name="Factory_CanBuild" xml:space="preserve"><value>Можна пабудаваць: {0}</value></data>
+  <data name="Factory_No_MaxReached" xml:space="preserve"><value>Не (дасягнуты максімум фабрыкаў)</value></data>
+  <data name="Factory_No_Need5M" xml:space="preserve"><value>Не (патрэбна 5M)</value></data>
+  <data name="Factory_No_Blocked" xml:space="preserve"><value>Не (заблакавана ворагам)</value></data>
+  <data name="Answer_Yes" xml:space="preserve"><value>Так</value></data>
+
+  <!-- Import preview -->
+  <data name="Import_CanImport" xml:space="preserve"><value>Можна імпартаваць: {0}</value></data>
+  <data name="Import_No_Need1M" xml:space="preserve"><value>Не (патрэбна 1M)</value></data>
+  <data name="Import_MaxUnits" xml:space="preserve"><value>Максімум адзінак: {0}</value></data>
+
+  <!-- Production preview -->
+  <data name="Production_Armies" xml:space="preserve"><value>Арміяў да вытворчасці: {0} (максімум: {1}, заблакавана: {2})</value></data>
+  <data name="Production_Fleets" xml:space="preserve"><value>Флотаў да вытворчасці: {0} (максімум: {1}, заблакавана: {2})</value></data>
+
+  <!-- Maneuver preview -->
+  <data name="Maneuver_FleetsReady" xml:space="preserve"><value>Флотаў гатова да руху: {0}</value></data>
+  <data name="Maneuver_ArmiesReady" xml:space="preserve"><value>Арміяў гатова да руху: {0}</value></data>
+</root>

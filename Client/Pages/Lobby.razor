@@ -7,27 +7,30 @@
 @inject NavigationManager NavigationManager
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IJSRuntime JS
+@inject IStringLocalizer<Lobby> L
+@inject IStringLocalizer<SharedResource> Shared
+@inject DisplayNameLocalizer Names
 @attribute [Authorize]
 
-<PageTitle>Game Lobby</PageTitle>
+<PageTitle>@L["Title"]</PageTitle>
 
 <div class="container mt-4">
     <div class="row align-items-center mb-4">
         <div class="col">
-            <h1 class="display-4 text-white">Game Lobby</h1>
+            <h1 class="display-4 text-white">@L["Title"]</h1>
         </div>
         <div class="col-auto d-flex gap-2">
             <div class="input-group">
                 <span class="input-group-text bg-dark text-white border-secondary"><span class="oi oi-magnifying-glass"></span></span>
-                <input type="text" class="form-control" placeholder="Search Game Name" @bind="newGameName" @bind:event="oninput" />
+                <input type="text" class="form-control" placeholder="@L["SearchPlaceholder"]" @bind="newGameName" @bind:event="oninput" />
             </div>
             @if (!isGuest)
             {
                 <button class="btn btn-success text-nowrap" @onclick="ShowCreateGameModal">
-                    <span class="oi oi-plus me-1"></span>Create Game
+                    <span class="oi oi-plus me-1"></span>@L["CreateGame"]
                 </button>
                 <button class="btn btn-outline-light text-nowrap" @onclick="ShowImportGameModal">
-                    <span class="oi oi-data-transfer-upload me-1"></span>Import Game
+                    <span class="oi oi-data-transfer-upload me-1"></span>@L["ImportGame"]
                 </button>
             }
         </div>
@@ -37,16 +40,16 @@
         <div class="col">
             <div class="d-flex flex-wrap gap-2 align-items-center">
                 <input type="checkbox" class="btn-check" id="filterLobby" @bind="showLobbyGames" autocomplete="off" />
-                <label class="btn btn-outline-success btn-sm" for="filterLobby">Lobby</label>
+                <label class="btn btn-outline-success btn-sm" for="filterLobby">@L["Filter_Lobby"]</label>
 
                 <input type="checkbox" class="btn-check" id="filterInProgress" @bind="showInProgressGames" autocomplete="off" />
-                <label class="btn btn-outline-warning btn-sm" for="filterInProgress">In Progress</label>
+                <label class="btn btn-outline-warning btn-sm" for="filterInProgress">@L["Filter_InProgress"]</label>
 
                 <input type="checkbox" class="btn-check" id="filterFinished" @bind="showFinishedGames" autocomplete="off" />
-                <label class="btn btn-outline-secondary btn-sm" for="filterFinished">Finished</label>
+                <label class="btn btn-outline-secondary btn-sm" for="filterFinished">@L["Filter_Finished"]</label>
 
                 <input type="checkbox" class="btn-check" id="filterMyGames" @bind="showOnlyMyGames" autocomplete="off" />
-                <label class="btn btn-outline-info btn-sm ms-sm-2" for="filterMyGames">My Games Only</label>
+                <label class="btn btn-outline-info btn-sm ms-sm-2" for="filterMyGames">@L["Filter_MyGames"]</label>
             </div>
         </div>
     </div>
@@ -57,7 +60,7 @@
             <div class="col">
                 <div class="alert alert-info py-2 mb-0 d-flex align-items-center" role="alert">
                     <span class="oi oi-eye me-2"></span>
-                    <span>You are logged in as a <strong>Guest</strong>. You can watch games but cannot create or join them. <a href="register">Register</a> to play!</span>
+                    <span>@((MarkupString)L["GuestNotice"].Value)</span>
                 </div>
             </div>
         </div>
@@ -67,14 +70,14 @@
     {
         <div class="text-center">
             <div class="spinner-border text-light" role="status">
-                <span class="visually-hidden">Loading...</span>
+                <span class="visually-hidden">@Shared["Common_Loading"]</span>
             </div>
         </div>
     }
     else if (!games.Any())
     {
         <div class="alert alert-info text-center" role="alert">
-            No active games found. Be the first to create one!
+            @L["NoGamesFound"]
         </div>
     }
     else
@@ -90,42 +93,44 @@
                             <h5 class="card-title text-warning">@game.Name</h5>
                             @if (!string.IsNullOrEmpty(game.HostName))
                             {
-                                <h6 class="card-subtitle mb-2 text-info"><i class="bi bi-person-fill me-1"></i>Host: @game.HostName</h6>
+                                <h6 class="card-subtitle mb-2 text-info"><i class="bi bi-person-fill me-1"></i>@L["Card_Host", game.HostName]</h6>
                             }
-                            <h6 class="card-subtitle mb-2 text-muted">Created: @game.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy h:mm tt")</h6>
+                            @* "g" (short date + short time) rather than a hardcoded "MMM dd, yyyy h:mm tt":
+                               that pattern's month abbreviation and AM/PM designator are English-only. *@
+                            <h6 class="card-subtitle mb-2 text-muted">@L["Card_Created", game.CreatedAt.ToLocalTime().ToString("g")]</h6>
                             @if (game.FinishedAt.HasValue)
                             {
-                                <h6 class="card-subtitle mb-2 text-muted">Finished: @game.FinishedAt.Value.ToLocalTime().ToString("MMM dd, yyyy h:mm tt")</h6>
+                                <h6 class="card-subtitle mb-2 text-muted">@L["Card_Finished", game.FinishedAt.Value.ToLocalTime().ToString("g")]</h6>
                             }
                             @if (!string.IsNullOrEmpty(game.WinnerName))
                             {
-                                <p class="text-success fw-bold mb-1"><i class="bi bi-trophy-fill me-1"></i> Winner: @game.WinnerName</p>
+                                <p class="text-success fw-bold mb-1"><i class="bi bi-trophy-fill me-1"></i> @L["Card_Winner", game.WinnerName]</p>
                             }
                             <p class="card-text">
-                                Status: <span class="badge bg-@GetStatusColor(game.Status)">
+                                @L["Card_Status"] <span class="badge bg-@GetStatusColor(game.Status)">
                                     @if (game.Status == GameStatus.InProgress)
                                     {
-                                        @($"In Progress ({(int)(game.MaxPower < 10 ? (game.TurnCount / 110.0 * 100.0) : (game.MaxPower / 25.0 * 100.0))}%)")
+                                        @L["Card_InProgressPercent", (int)(game.MaxPower < 10 ? (game.TurnCount / 110.0 * 100.0) : (game.MaxPower / 25.0 * 100.0))]
                                     }
                                     else if (game.Status == GameStatus.Finished && game.TurnCount > 0)
                                     {
-                                        @($"Finished ({game.TurnCount} turns)")
+                                        @L["Card_FinishedTurns", game.TurnCount]
                                     }
                                     else
                                     {
-                                        @game.Status
+                                        @Names.GameStatus(game.Status)
                                     }
                                 </span>
                                 @if (game.IsPrivate)
                                 {
-                                    <span class="badge bg-secondary ms-1">Private</span>
+                                    <span class="badge bg-secondary ms-1">@L["Card_Private"]</span>
                                 }
                                 <br />
-                                Players: @game.PlayerCount / @game.MaxPlayers
+                                @L["Card_Players", game.PlayerCount, game.MaxPlayers]
                                 @if (game.IsPrivate && amIInGame && game.HostId == currentUserId && game.JoinCode != null)
                                 {
                                     <br />
-                                    <span class="text-info small">Join Code: <strong>@game.JoinCode</strong></span>
+                                    <span class="text-info small">@L["Card_JoinCode"] <strong>@game.JoinCode</strong></span>
                                 }
                             </p>
                         </div>
@@ -133,18 +138,18 @@
                             @if (amIInGame)
                             {
                                 <button class="btn btn-info btn-sm me-2" @onclick="@(() => NavigationManager.NavigateTo($"/game/{game.Id}"))">
-                                    @(game.Status == GameStatus.Finished ? "View Results" : "Resume")
+                                    @(game.Status == GameStatus.Finished ? L["Card_ViewResults"] : L["Card_Resume"])
                                 </button>
                                 @if (game.Status == GameStatus.Lobby)
                                 {
                                      <button class="btn btn-danger btn-sm" @onclick="@(() => LeaveGame(game.Id))">
-                                        Leave
+                                        @L["Card_Leave"]
                                     </button>
                                 }
                                 @if (game.Status == GameStatus.InProgress && game.HostId == currentUserId)
                                 {
                                      <button class="btn btn-danger btn-sm" @onclick="@(() => DeleteGame(game.Id))">
-                                        Delete
+                                        @Shared["Common_Delete"]
                                     </button>
                                 }
                             }
@@ -154,19 +159,19 @@
                                 {
                                     <button class="btn btn-secondary btn-sm" @onclick="@(() => InitiateJoinGame(game))"
                                         disabled="@(game.IsFull || game.Status != GameStatus.Lobby)">
-                                        @(game.Status == GameStatus.Finished ? "Finished" : game.Status == GameStatus.InProgress ? "In Progress" : game.IsFull ? "Full" : "Join Game")
+                                        @(game.Status == GameStatus.Finished ? L["Filter_Finished"] : game.Status == GameStatus.InProgress ? L["Filter_InProgress"] : game.IsFull ? L["Card_Full"] : L["Card_JoinGame"])
                                     </button>
                                 }
                                 @if ((game.Status == GameStatus.InProgress || game.Status == GameStatus.Finished) && !game.IsPrivate)
                                 {
                                     <button class="btn btn-outline-info btn-sm ms-2" @onclick="@(() => NavigationManager.NavigateTo($"/game/{game.Id}"))">
-                                        Watch
+                                        @L["Card_Watch"]
                                     </button>
                                 }
                                 @if (game.IsAllBots && !isGuest)
                                 {
                                     <button class="btn btn-danger btn-sm ms-2" @onclick="@(() => DeleteGame(game.Id))">
-                                        Delete
+                                        @Shared["Common_Delete"]
                                     </button>
                                 }
                             }
@@ -184,7 +189,7 @@
         <div class="modal-dialog">
             <div class="modal-content bg-dark text-white border-secondary">
                 <div class="modal-header border-secondary">
-                    <h5 class="modal-title">Create New Game</h5>
+                    <h5 class="modal-title">@L["CreateModal_Title"]</h5>
                     <button type="button" class="btn-close btn-close-white" @onclick="CloseCreateGameModal"></button>
                 </div>
                 <div class="modal-body">
@@ -193,11 +198,11 @@
                         <div class="alert alert-danger">@createErrorMessage</div>
                     }
                     <div class="mb-3">
-                        <label class="form-label">Game Name</label>
+                        <label class="form-label">@L["CreateModal_GameName"]</label>
                         <input type="text" class="form-control" @bind="newGameRequest.Name" @bind:event="oninput" />
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Max Players (2-6)</label>
+                        <label class="form-label">@L["CreateModal_MaxPlayers"]</label>
                         <select class="form-select" @bind="newGameRequest.MaxPlayers">
                             <option value="2">2</option>
                             <option value="3">3</option>
@@ -208,16 +213,16 @@
                     </div>
                     <div class="mb-3 form-check">
                         <input type="checkbox" class="form-check-input" id="isPrivateCheck" @bind="newGameRequest.IsPrivate" />
-                        <label class="form-check-label" for="isPrivateCheck">Private Game (Requires Code)</label>
+                        <label class="form-check-label" for="isPrivateCheck">@L["CreateModal_Private"]</label>
                     </div>
                     <div class="mb-3 form-check">
                         <input type="checkbox" class="form-check-input" id="isVariantBonusCheck" @bind="newGameRequest.VariantBonusOnlyForTaxIncreases" />
-                        <label class="form-check-label" for="isVariantBonusCheck">Variant: Bonus only for tax increases</label>
+                        <label class="form-check-label" for="isVariantBonusCheck">@L["CreateModal_Variant"]</label>
                     </div>
                 </div>
                 <div class="modal-footer border-secondary">
-                    <button type="button" class="btn btn-secondary" @onclick="CloseCreateGameModal">Cancel</button>
-                    <button type="button" class="btn btn-success" @onclick="CreateGame" disabled="@string.IsNullOrWhiteSpace(newGameRequest.Name)">Create</button>
+                    <button type="button" class="btn btn-secondary" @onclick="CloseCreateGameModal">@Shared["Common_Cancel"]</button>
+                    <button type="button" class="btn btn-success" @onclick="CreateGame" disabled="@string.IsNullOrWhiteSpace(newGameRequest.Name)">@L["CreateModal_Create"]</button>
                 </div>
             </div>
         </div>
@@ -230,7 +235,7 @@
         <div class="modal-dialog">
             <div class="modal-content bg-dark text-white border-secondary">
                 <div class="modal-header border-secondary">
-                    <h5 class="modal-title">Import Game</h5>
+                    <h5 class="modal-title">@L["ImportModal_Title"]</h5>
                     <button type="button" class="btn-close btn-close-white" @onclick="CloseImportGameModal"></button>
                 </div>
                 <div class="modal-body">
@@ -238,21 +243,21 @@
                     {
                         <div class="alert alert-danger">@importErrorMessage</div>
                     }
-                    <p class="text-white-50">Choose a game export (.json) file previously downloaded from this or another Imperial 2030 server. The imported game is added as a finished, view-only game — every nation becomes a non-interactive bot, reconstructed from the file's own action log.</p>
+                    <p class="text-white-50">@L["ImportModal_Description"]</p>
                     <div class="mb-3">
-                        <label class="form-label">Export File</label>
+                        <label class="form-label">@L["ImportModal_ExportFile"]</label>
                         <InputFile class="form-control" accept=".json,application/json" OnChange="OnImportFileSelected" disabled="@isImporting" />
                     </div>
                     @if (isImporting)
                     {
                         <div class="d-flex align-items-center gap-2 text-white-50">
                             <div class="spinner-border spinner-border-sm" role="status"></div>
-                            <span>Importing — replaying the game's full history, this can take a moment…</span>
+                            <span>@L["ImportModal_Importing"]</span>
                         </div>
                     }
                 </div>
                 <div class="modal-footer border-secondary">
-                    <button type="button" class="btn btn-secondary" @onclick="CloseImportGameModal" disabled="@isImporting">Cancel</button>
+                    <button type="button" class="btn btn-secondary" @onclick="CloseImportGameModal" disabled="@isImporting">@Shared["Common_Cancel"]</button>
                 </div>
             </div>
         </div>
@@ -265,7 +270,7 @@
         <div class="modal-dialog">
             <div class="modal-content bg-dark text-white border-secondary">
                 <div class="modal-header border-secondary">
-                    <h5 class="modal-title">Join Private Game @gameToJoin.Name</h5>
+                    <h5 class="modal-title">@L["JoinModal_Title", gameToJoin.Name]</h5>
                     <button type="button" class="btn-close btn-close-white" @onclick="CloseJoinGameModal"></button>
                 </div>
                 <div class="modal-body">
@@ -274,13 +279,13 @@
                         <div class="alert alert-danger">@joinErrorMessage</div>
                     }
                     <div class="mb-3">
-                        <label class="form-label">Join Code</label>
-                        <input type="text" class="form-control" @bind="joinCodeInput" @bind:event="oninput" placeholder="Enter 6-character code" />
+                        <label class="form-label">@L["JoinModal_JoinCode"]</label>
+                        <input type="text" class="form-control" @bind="joinCodeInput" @bind:event="oninput" placeholder="@L["JoinModal_CodePlaceholder"]" />
                     </div>
                 </div>
                 <div class="modal-footer border-secondary">
-                    <button type="button" class="btn btn-secondary" @onclick="CloseJoinGameModal">Cancel</button>
-                    <button type="button" class="btn btn-primary" @onclick="ConfirmJoinGame" disabled="@string.IsNullOrWhiteSpace(joinCodeInput)">Join</button>
+                    <button type="button" class="btn btn-secondary" @onclick="CloseJoinGameModal">@Shared["Common_Cancel"]</button>
+                    <button type="button" class="btn btn-primary" @onclick="ConfirmJoinGame" disabled="@string.IsNullOrWhiteSpace(joinCodeInput)">@L["JoinModal_Join"]</button>
                 </div>
             </div>
         </div>
@@ -450,12 +455,12 @@
                 }
                 else
                 {
-                    createErrorMessage = "Failed to create game. Please check your inputs.";
+                    createErrorMessage = L["CreateFailed"];
                 }
             }
             catch
             {
-                createErrorMessage = "Failed to create game. Please check your inputs.";
+                createErrorMessage = L["CreateFailed"];
             }
         }
     }
@@ -504,12 +509,12 @@
                 // ImportGame returns its diagnostics as a plain BadRequest(string), not a structured
                 // model-validation error object, so this is read as raw text rather than parsed as JSON.
                 var body = await response.Content.ReadAsStringAsync();
-                importErrorMessage = string.IsNullOrWhiteSpace(body) ? "Failed to import game." : body;
+                importErrorMessage = string.IsNullOrWhiteSpace(body) ? L["ImportFailed"] : body;
             }
         }
         catch (Exception ex)
         {
-            importErrorMessage = $"Failed to read the selected file: {ex.Message}";
+            importErrorMessage = L["ImportReadFailed", ex.Message];
         }
         finally
         {
@@ -587,7 +592,7 @@
 
     private async Task DeleteGame(Guid gameId)
     {
-        bool confirmed = await JS.InvokeAsync<bool>("confirm", "Are you sure you want to delete this game?");
+        bool confirmed = await JS.InvokeAsync<bool>("confirm", L["DeleteConfirm"].Value);
         if (!confirmed) return;
 
         var response = await Http.DeleteAsync($"api/games/{gameId}");

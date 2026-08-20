@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="Header" xml:space="preserve"><value>&gt; ЖУРНАЛ ДЗЕЯННЯЎ</value></data>
+  <data name="NoHistory" xml:space="preserve"><value>// Гісторыя пустая</value></data>
+
+  <!-- Investment -->
+  <data name="PassedOnInvestment" xml:space="preserve"><value>адмовіўся ад інвестыцыяў</value></data>
+  <data name="UpgradedBond" xml:space="preserve"><value>палепшыў аблігацыю {0} з {1}M да {2}M</value></data>
+  <data name="BoughtBond" xml:space="preserve"><value>купіў аблігацыю {0} на {1}M</value></data>
+  <data name="TookControlOfNation" xml:space="preserve"><value> і ўзяў кантроль над {0}</value></data>
+  <data name="TookControlOfNationFrom" xml:space="preserve"><value> і адабраў кантроль над {0} у {1}</value></data>
+  <data name="SwissBankKicked" xml:space="preserve"><value>Сістэма: {0} адпраўлены ў Швейцарыю (Швейцарскі банк)!</value></data>
+
+  <!-- Taxation -->
+  <data name="CollectedTaxes" xml:space="preserve"><value>сабраў падаткі: {0}M (плата войску: {1}M, прырост казны: {2}M, бонус: {3}M, магутнасць: {4})</value></data>
+
+  <!-- Import / production: {1} is a comma-joined list of UnitInTerritory entries -->
+  <data name="ImportedUnits" xml:space="preserve"><value>імпартаваў адзінак: {0} ({1})</value></data>
+  <data name="ProducedUnits" xml:space="preserve"><value>вырабіў адзінак: {0} ({1})</value></data>
+  <data name="UnitInTerritory" xml:space="preserve"><value>{0} у {1}</value></data>
+
+  <!-- Turn and phase -->
+  <data name="EndedTurn" xml:space="preserve"><value>завяршыў свой ход</value></data>
+  <data name="AutoSkippedPhase" xml:space="preserve"><value>аўтаматычна прапусціў фазу манеўру: {0}</value></data>
+  <data name="AutoEndedPhase" xml:space="preserve"><value>аўтаматычна завяршыў фазу манеўру: {0}</value></data>
+  <data name="EndedPhase" xml:space="preserve"><value>завяршыў фазу манеўру: {0}</value></data>
+
+  <!-- Rondel -->
+  <data name="RondelMoved" xml:space="preserve"><value>перайшоў на {0} з {1} (кошт: {2}M)</value></data>
+  <data name="RondelStart" xml:space="preserve"><value>Пачатак</value></data>
+
+  <!-- Unit movement -->
+  <data name="UnitStayed" xml:space="preserve"><value>{0} застаўся ў {1}</value></data>
+  <data name="UnitMovedAwaitingResponse" xml:space="preserve"><value>{0} рушыў {1} у {2} з {3}, чакаецца адказ ад {4}</value></data>
+  <data name="UnitMoved" xml:space="preserve"><value>{0} рушыў у {1} з {2} (варожа: {3})</value></data>
+  <data name="Hostilely" xml:space="preserve"><value>варожа</value></data>
+  <data name="Peacefully" xml:space="preserve"><value>мірна</value></data>
+
+  <!-- Battles -->
+  <data name="BattleResponseFight" xml:space="preserve"><value>{0} {1} выбраў БІТВУ супраць {2} {3} у {4}. Абодва знішчаны</value></data>
+  <data name="BattleAttack" xml:space="preserve"><value>{0} атакаваў {1} {2} у {3}. Абодва знішчаны</value></data>
+  <data name="BattleResponsePeace" xml:space="preserve"><value>{0} пагадзіўся на МІР з {1} у {2}</value></data>
+  <data name="AllPartiesPeace" xml:space="preserve"><value>Усе бакі пагадзіліся на МІР у {0}.</value></data>
+
+  <!-- Territory and factories -->
+  <data name="TookControlOfTerritory" xml:space="preserve"><value>узяў кантроль над {0}</value></data>
+  <data name="TookControlOfTerritoryFrom" xml:space="preserve"><value>адабраў кантроль над {0} у {1}</value></data>
+  <data name="BuiltFactory" xml:space="preserve"><value>пабудаваў фабрыку ў {0}</value></data>
+  <data name="DestroyedFactory" xml:space="preserve"><value>знішчыў фабрыку {0} у {1}</value></data>
+
+  <!-- Hostility toggle -->
+  <data name="HostilityToggled" xml:space="preserve"><value>{0} у {1} стаў {2}</value></data>
+  <data name="Hostile" xml:space="preserve"><value>варожым</value></data>
+  <data name="Friendly" xml:space="preserve"><value>мірным</value></data>
+
+  <!-- Swiss Bank -->
+  <data name="SwissBankForceStop" xml:space="preserve"><value>прымусіў {0} спыніцца на Інвестары</value></data>
+  <data name="SwissBankPass" xml:space="preserve"><value>не стаў прымушаць {0} спыняцца</value></data>
+
+  <!-- Lobby lifecycle -->
+  <data name="JoinedGame" xml:space="preserve"><value>далучыўся да гульні</value></data>
+  <data name="LeftGame" xml:space="preserve"><value>пакінуў гульню</value></data>
+  <data name="StartedGame" xml:space="preserve"><value>пачаў гульню</value></data>
+  <data name="PausedGame" xml:space="preserve"><value>прыпыніў гульню</value></data>
+  <data name="ResumedGame" xml:space="preserve"><value>працягнуў гульню</value></data>
+
+  <!-- Investor interest -->
+  <data name="ReceivedInvestorBonus" xml:space="preserve"><value>атрымаў бонус Інвестара {0}M</value></data>
+  <data name="InterestPaid" xml:space="preserve"><value>выплаціў {0}M адсоткаў гульцу {1}</value></data>
+  <data name="InterestPartial" xml:space="preserve"><value>выплаціў гульцу {1} толькі {0}M адсоткаў (не хапіла сродкаў на поўныя {2}M)</value></data>
+  <data name="UnableToPayTreasuryEmpty" xml:space="preserve"><value>не змог выплаціць адсоткі гульцу {0} (казна пустая)</value></data>
+  <data name="UnableToPay" xml:space="preserve"><value>не змог выплаціць {0}M адсоткаў гульцу {1} (не хапае сродкаў)</value></data>
+  <data name="PersonallyContributed" xml:space="preserve"><value>асабіста ўнёс {0}M, каб пакрыць дэфіцыт адсоткаў</value></data>
+</root>

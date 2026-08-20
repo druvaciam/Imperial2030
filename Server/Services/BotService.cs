@@ -1196,15 +1196,14 @@ public class BotService
                 }
             }
 
-            string toastMsg = $"{botName} bought {bondToBuy.Nation} {bondToBuy.Cost}M bond";
-            if (newControllerName != null && newControllerName != oldControllerName)
-            {
-                toastMsg += $" and took control of {bondToBuy.Nation}";
-                if (oldControllerName != null)
-                {
-                    toastMsg += $" from {oldControllerName}";
-                }
-            }
+            // Bots never trade in a bond (tradeInCost: null), so this is always the "bought" variant.
+            var investmentToast = Helpers.ToastBuilder.BuildInvestmentToast(
+                botName,
+                bondToBuy.Nation,
+                bondToBuy.Cost,
+                tradeInCost: null,
+                tookControl: newControllerName != null && newControllerName != oldControllerName,
+                previousControllerName: oldControllerName);
 
             GameLogger.LogInvestmentBuy(
                 ctx,
@@ -1216,7 +1215,7 @@ public class BotService
                 oldControllerName,
                 isSwissBankKicked,
                 null);
-            await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", toastMsg, false);
+            await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", investmentToast, false);
         }
         else
         {
@@ -1359,7 +1358,7 @@ public class BotService
 
                 await SaveChangesAsync(ctx);
                 await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
-                await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", $"{botName} forced {nationState.Nation} to stop on Investor.", false);
+                await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", ToastBuilder.BuildSwissBankToast(botName, nationState.Nation, isForceStop: true), false);
                 return;
             }
             else
@@ -1372,7 +1371,7 @@ public class BotService
                 game.PendingSwissBankResponders = responders.ToList();
                 if (ctx != null) ctx.Entry(game).Property(g => g.PendingSwissBankResponders).IsModified = true;
 
-                await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", $"{botName} passed on forcing {nationState.Nation} to stop.", false);
+                await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("ShowToast", ToastBuilder.BuildSwissBankToast(botName, nationState.Nation, isForceStop: false), false);
 
                 if (!responders.Any())
                 {

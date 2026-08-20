@@ -2,8 +2,9 @@
 @using Imperial2030.Client.Services
 @inject AuthService AuthService
 @inject NavigationManager Navigation
+@inject IStringLocalizer<SharedResource> Shared
 
-<p>Logging out...</p>
+<p>@Shared["Logout_Message"]</p>
 
 @code {
     protected override async Task OnInitializedAsync()

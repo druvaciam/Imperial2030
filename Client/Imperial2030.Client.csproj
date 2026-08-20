@@ -4,6 +4,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Blazor WASM otherwise ships only the ICU shard matching the browser's own locale (EFIGS /
+         CJK / no_CJK), which leaves Belarusian date/number formatting unavailable for the
+         English-locale browsers most of our users have. Resource *lookup* works either way; this
+         flag is what makes `be` dates and numbers actually format as Belarusian. -->
+    <BlazorWebAssemblyLoadAllGlobalizationData>true</BlazorWebAssemblyLoadAllGlobalizationData>
   </PropertyGroup>
 
   <ItemGroup>
@@ -11,6 +16,7 @@
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.0" PrivateAssets="all" />
     <PackageReference Include="Microsoft.AspNetCore.Components.Authorization" Version="10.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Localization" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>

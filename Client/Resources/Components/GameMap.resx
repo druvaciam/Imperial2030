@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <data name="UnitSelectedBanner" xml:space="preserve"><value>Unit Selected. Click destination to move, or click here to deselect.</value></data>
+  <data name="TurnMarker" xml:space="preserve"><value>TURN</value></data>
+
+  <!-- Convoy modal -->
+  <data name="Convoy_Title" xml:space="preserve"><value>Select Convoy Path</value></data>
+  <data name="Convoy_Prompt" xml:space="preserve"><value>Multiple convoy routes available. Choose one:</value></data>
+  <data name="Convoy_Route" xml:space="preserve"><value>Route {0}: via {1}</value></data>
+
+  <!-- Stance (foreign territory) modal -->
+  <data name="Stance_Title" xml:space="preserve"><value>Foreign Territory / Units Detected</value></data>
+  <data name="Stance_Body" xml:space="preserve"><value>You are moving into a region with foreign units or a foreign home territory.</value></data>
+  <data name="Stance_Prompt" xml:space="preserve"><value>Choose your stance:</value></data>
+  <data name="Stance_Peaceful" xml:space="preserve"><value>Peaceful / Coexist</value></data>
+  <data name="Stance_Attack" xml:space="preserve"><value>Attack {0}</value></data>
+  <data name="Stance_EnterHostilely" xml:space="preserve"><value>Enter Hostilely</value></data>
+
+  <!-- Stationary battle modal -->
+  <data name="Stationary_Title" xml:space="preserve"><value>Stationary Battle</value></data>
+  <data name="Stationary_Prompt" xml:space="preserve"><value>Select an enemy to attack:</value></data>
+
+  <!-- Destroy factory modal -->
+  <data name="Destroy_Title" xml:space="preserve"><value>Destroy Factory?</value></data>
+  <data name="Destroy_Occupied" xml:space="preserve"><value>You have occupied a foreign factory in {0}.</value></data>
+  <data name="Destroy_Question" xml:space="preserve"><value>Do you want to destroy it?</value></data>
+  <data name="Destroy_Warning" xml:space="preserve"><value>Warning: This will remove your 3 attacking armies and the factory.</value></data>
+  <data name="Destroy_Confirm" xml:space="preserve"><value>Destroy Factory</value></data>
+  <data name="Destroy_Failed" xml:space="preserve"><value>Failed to destroy factory. (Server validation failed)</value></data>
+
+  <!-- Move warning modal -->
+  <data name="MoveWarning_Title" xml:space="preserve"><value>Confirm Move</value></data>
+  <data name="MoveWarning_Question" xml:space="preserve"><value>Are you sure you want to proceed?</value></data>
+  <data name="MoveWarning_Cancel" xml:space="preserve"><value>Cancel (Deselect)</value></data>
+  <data name="MoveWarning_Confirm" xml:space="preserve"><value>Move Unit</value></data>
+  <data name="MoveWarning_HomeToHome" xml:space="preserve"><value>You are moving a unit from a home territory ({0}) to another home territory ({1}). This will consume its movement.</value></data>
+  <data name="MoveWarning_FriendlyPresent" xml:space="preserve"><value>A friendly unit is already present in {0}. Moving here will consume this unit's movement.</value></data>
+
+  <!-- Territory tooltip -->
+  <data name="Tooltip_Owner" xml:space="preserve"><value>Owner: {0}</value></data>
+  <data name="Tooltip_HomeTerritory" xml:space="preserve"><value>Home Territory: {0}</value></data>
+  <data name="Tooltip_FactoryYes" xml:space="preserve"><value>Factory: Yes</value></data>
+  <data name="Tooltip_Armies" xml:space="preserve"><value>Armies: {0}</value></data>
+  <data name="Tooltip_Fleets" xml:space="preserve"><value>Fleets: {0}</value></data>
+  <data name="Tooltip_NationCount" xml:space="preserve"><value>{0}: {1}</value></data>
+  <data name="Tooltip_ClickToSelect" xml:space="preserve"><value>Click to select {0} to move.</value></data>
+
+  <!-- Factory build from the map -->
+  <data name="Factory_NotHomeCity" xml:space="preserve"><value>Not a home city</value></data>
+  <data name="Factory_AlreadyExists" xml:space="preserve"><value>Factory already exists</value></data>
+  <data name="Factory_Need5M" xml:space="preserve"><value>Nations needs 5M to build a factory.</value></data>
+  <data name="Factory_BuildConfirm" xml:space="preserve"><value>Build factory in {0} for 5M?</value></data>
+  <data name="Factory_BuildFailed" xml:space="preserve"><value>Failed: {0}</value></data>
+
+  <!-- Errors -->
+  <data name="HostilityToggleFailed" xml:space="preserve"><value>Failed to toggle hostility: {0}</value></data>
+  <data name="AdvancePhaseFailed" xml:space="preserve"><value>Failed to advance phase.</value></data>
+  <data name="MoveFailed" xml:space="preserve"><value>Move failed: {0}</value></data>
+
+  <data name="EndPhase" xml:space="preserve"><value>End Phase</value></data>
+  <data name="BattleButton" xml:space="preserve"><value>Battle!</value></data>
+  <data name="MakeFriendly" xml:space="preserve"><value>Make Friendly</value></data>
+  <data name="MakeHostile" xml:space="preserve"><value>Make Hostile</value></data>
+</root>

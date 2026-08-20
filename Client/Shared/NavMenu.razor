@@ -1,7 +1,9 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
+﻿@inject IStringLocalizer<SharedResource> Shared
+
+<div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
         <a class="navbar-brand" href="">Imperial2030</a>
-        <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
+        <button title="@Shared["Nav_Menu"]" class="navbar-toggler" @onclick="ToggleNavMenu">
             <span class="navbar-toggler-icon"></span>
         </button>
     </div>
@@ -11,7 +13,7 @@
     <nav class="flex-column">
         <div class="nav-item px-3">
             <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="oi oi-home" aria-hidden="true"></span> Lobby
+                <span class="oi oi-home" aria-hidden="true"></span> @Shared["Nav_Lobby"]
             </NavLink>
         </div>
     </nav>
