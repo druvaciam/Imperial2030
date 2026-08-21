@@ -4,11 +4,14 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- Blazor WASM otherwise ships only the ICU shard matching the browser's own locale (EFIGS /
-         CJK / no_CJK), which leaves Belarusian date/number formatting unavailable for the
-         English-locale browsers most of our users have. Resource *lookup* works either way; this
-         flag is what makes `be` dates and numbers actually format as Belarusian. -->
-    <BlazorWebAssemblyLoadAllGlobalizationData>true</BlazorWebAssemblyLoadAllGlobalizationData>
+    <!-- Blazor WASM otherwise picks an ICU shard from the *browser's* locale, so an English-locale
+         browser gets EFIGS and has no Belarusian date/number data at all. (Resource lookup works
+         regardless; this only governs formatting.)
+         Pinning one shard explicitly instead of BlazorWebAssemblyLoadAllGlobalizationData: that
+         flag pulls the full 1.46 MB icudt.dat, while no_CJK covers every language this app offers
+         for 1.06 MB. Swap back to the full file, or to a wider shard, if a CJK language is ever
+         added - EFIGS (0.53 MB) is not an option, it has no Belarusian. -->
+    <BlazorIcuDataFileName>icudt_no_CJK.dat</BlazorIcuDataFileName>
   </PropertyGroup>
 
   <ItemGroup>

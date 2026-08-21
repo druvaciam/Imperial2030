@@ -515,19 +515,9 @@ public class TcpTrainingServer : BackgroundService
                     expectedTaxTreasuryGain = taxPreview.ExpectedTreasuryGain;
                     expectedTaxPowerGain = taxPreview.ExpectedPowerGain;
 
-                    int factoryRevenue = 0;
-                    var territoriesWithFactories = game.TerritoryStates.Where(ts => ts.HasFactory).ToList();
-                    foreach (var ts in territoriesWithFactories)
-                    {
-                        var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-                        if (territoryDef != null && territoryDef.Nation == preNs.Nation)
-                        {
-                            bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != preNs.Nation && u.IsHostile);
-                            if (!hasHostileArmy) factoryRevenue += 2;
-                        }
-                    }
-                    int flagRevenue = Math.Min(15, game.TerritoryStates.Count(ts => ts.Controller == preNs.Nation));
-                    expectedTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
+                    int unblockedFactories = Helpers.TaxationHelper.CountUnblockedFactories(game, preNs.Nation);
+                    int flagCount = game.TerritoryStates.Count(ts => ts.Controller == preNs.Nation);
+                    expectedTaxRevenue = TaxationRules.ComputeRevenue(unblockedFactories, flagCount);
                     expectedTaxCosts = game.Units.Count(u => u.Nation == preNs.Nation);
                 }
             }

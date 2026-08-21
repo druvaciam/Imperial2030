@@ -1019,7 +1019,9 @@ public class ManeuverController : ControllerBase
                         var firstNationControllerId = game.NationStates.FirstOrDefault(ns => ns.Nation == firstNation)?.ControllerId;
                         var firstNationPlayerName = game.Players.FirstOrDefault(p => p.Id == firstNationControllerId)?.GetPlayerName(_context) ?? GameConstants.SystemPlayerName;
 
-                        if (flagCount >= 15)
+                        // Same limit TaxationRules.MaxFlagsPerNation caps tax revenue at - a
+                        // nation only owns 15 flags, so it can never control more than 15 regions.
+                        if (flagCount >= TaxationRules.MaxFlagsPerNation)
                         {
                             if (oldController != null)
                             {

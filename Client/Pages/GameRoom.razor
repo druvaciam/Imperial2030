@@ -2588,28 +2588,12 @@ else
         var curGame = targetGame ?? game;
         if (curGame == null) return (0, 0, 0);
         var nation = nationState.Nation;
-        int factoryRevenue = 0;
-        var territoriesWithFactories = curGame.Territories.Where(ts => ts.HasFactory).ToList();
-        
-        foreach (var ts in territoriesWithFactories)
-        {
-            var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (territoryDef != null && territoryDef.Nation == nation) 
-            {
-                bool hasHostileArmy = curGame.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-                if (!hasHostileArmy)
-                {
-                    factoryRevenue += 2;
-                }
-            }
-        }
-
-        int flagRevenue = curGame.Territories.Count(ts => ts.Controller == nation);
-        flagRevenue = Math.Min(15, flagRevenue);
-        int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
+        int unblockedFactories = TaxationRules.CountUnblockedFactories(curGame, nation);
+        int flagCount = curGame.Territories.Count(ts => ts.Controller == nation);
+        int totalTaxRevenue = TaxationRules.ComputeRevenue(unblockedFactories, flagCount);
 
         int unitCount = curGame.Units.Count(u => u.Nation == nation);
-        int soldiersPay = unitCount * 1;
+        int soldiersPay = TaxationRules.ComputeSoldiersPay(unitCount);
         
         int simulatedTreasury = nationState.Treasury + totalTaxRevenue;
         int actualPay = Math.Min(simulatedTreasury, soldiersPay);

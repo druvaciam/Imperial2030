@@ -14,10 +14,13 @@
 
     <main>
 <div class="top-row px-4 auth">
-            <div class="me-4 d-flex gap-3 align-items-center">
+            @* top-bar-info is the flexible half: it holds an arbitrarily long game name, so it is the
+               one allowed to shrink and clip. Without this it kept its natural width and pushed the
+               auth links off the right edge instead. *@
+            <div class="me-4 d-flex gap-3 align-items-center top-bar-info">
                 <SectionOutlet SectionName="top-bar-info" />
             </div>
-            <select class="form-select form-select-sm w-auto bg-dark text-white border-secondary me-3 py-0"
+            <select class="form-select form-select-sm w-auto bg-dark text-white border-secondary me-3 py-0 language-select"
                     title="@Shared["Language_Label"]"
                     aria-label="@Shared["Language_Label"]"
                     value="@LanguageService.CurrentCulture.Name"
@@ -31,13 +34,13 @@
                 <Authorized>
                     @if (context.User.IsInRole("Guest"))
                     {
-                        <span class="me-3 text-muted d-none d-sm-inline"><span class="oi oi-eye me-1"></span>@Shared["Layout_GuestBadge"]</span>
+                        <span class="me-3 text-muted d-none d-lg-inline"><span class="oi oi-eye me-1"></span>@Shared["Layout_GuestBadge"]</span>
                         <a href="register" class="me-2">@Shared["Layout_Register"]</a>
                         <a href="logout">@Shared["Layout_Logout"]</a>
                     }
                     else
                     {
-                        <span class="me-3 d-none d-sm-inline">@Shared["Layout_Hello", context.User.Identity?.Name ?? ""]</span>
+                        <span class="me-3 d-none d-lg-inline">@Shared["Layout_Hello", context.User.Identity?.Name ?? ""]</span>
                         <a href="logout">@Shared["Layout_Logout"]</a>
                     }
                 </Authorized>

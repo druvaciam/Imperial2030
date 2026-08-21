@@ -238,18 +238,11 @@ public abstract class BotStrategyBase : IBotStrategy
 
     protected int EstimateTaxRevenue(Game game, Nation nation)
     {
-        int rev = 0;
-        foreach (var ts in game.TerritoryStates.Where(t => t.HasFactory))
-        {
-            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (def?.Nation == nation)
-            {
-                bool blocked = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-                if (!blocked) rev += 2;
-            }
-        }
-        rev += game.TerritoryStates.Count(ts => ts.Controller == nation);
-        return Math.Min(23, rev);
+        // Shares the rules with the real Taxation step rather than re-deriving them; this copy
+        // also used to skip the 15-flag cap, so bots could over-estimate a nation's revenue.
+        int unblockedFactories = Helpers.TaxationHelper.CountUnblockedFactories(game, nation);
+        int flagCount = game.TerritoryStates.Count(ts => ts.Controller == nation);
+        return TaxationRules.ComputeRevenue(unblockedFactories, flagCount);
     }
 
     protected bool HasExpandableTargets(Game game, Nation nation, Player controller)

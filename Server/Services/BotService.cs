@@ -1034,7 +1034,9 @@ public class BotService
                         var oldController = tState.Controller;
                         int flagCount = game.TerritoryStates.Count(ts => ts.Controller == firstNation);
 
-                        if (flagCount >= 15)
+                        // Same 15-flag-per-nation limit ManeuverController enforces and
+                        // TaxationRules caps flag revenue at.
+                        if (flagCount >= TaxationRules.MaxFlagsPerNation)
                         {
                             if (oldController != null)
                             {
