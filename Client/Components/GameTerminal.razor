@@ -422,10 +422,13 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Auto-scroll on any update
+        // Follow the newest entry, but only while the reader has not scrolled up to read back - see
+        // scrollToBottomIfPinned in index.html. Unconditional scrolling made the log unreadable
+        // during a replay, which pushes an update every step and pinned the view to the bottom even
+        // while paused.
         try
         {
-            await JSRuntime.InvokeVoidAsync("scrollToBottom", terminalBodyRef);
+            await JSRuntime.InvokeVoidAsync("scrollToBottomIfPinned", terminalBodyRef);
         }
         catch (Exception) { /* Ignored if element invalid */ }
     }

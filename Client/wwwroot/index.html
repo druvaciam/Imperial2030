@@ -82,6 +82,35 @@
                 element.scrollTop = element.scrollHeight;
             }
         };
+
+        // Follow new content only while the reader is already at the bottom. Scrolling up to read
+        // back unpins the element and it stays put - otherwise the next update (a replay step, a
+        // bot's turn) yanks the view away mid-sentence, which made scrolling back impossible.
+        // Re-pins by itself as soon as the reader returns to the bottom.
+        const AUTO_SCROLL_PIN_THRESHOLD_PX = 40;
+
+        const isPinnedToBottom = (element) =>
+            element.scrollHeight - element.scrollTop - element.clientHeight <= AUTO_SCROLL_PIN_THRESHOLD_PX;
+
+        window.scrollToBottomIfPinned = (element) => {
+            if (!element) return;
+
+            if (!element.dataset.autoScrollBound) {
+                element.dataset.autoScrollBound = "1";
+                // Recorded on every scroll, user-driven or programmatic. A programmatic scroll ends at
+                // the bottom and so re-pins, which is what we want.
+                element.dataset.pinned = "1";
+                element.addEventListener("scroll", () => {
+                    element.dataset.pinned = isPinnedToBottom(element) ? "1" : "0";
+                }, { passive: true });
+            }
+
+            // The render that triggered this already appended content, so the recorded flag - taken
+            // before it - is the honest answer to "was the reader following along?".
+            if (element.dataset.pinned !== "0") {
+                element.scrollTop = element.scrollHeight;
+            }
+        };
     </script>
 </body>
 

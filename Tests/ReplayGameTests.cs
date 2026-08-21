@@ -1079,6 +1079,509 @@ namespace Imperial2030.Tests
             await importGamesController.StopReplay(replaySessionId, replaySessionManager);
         }
 
+        /// <summary>
+        /// Builds a game whose log contains a flag placement that was DERIVED from a fleet move, and the
+        /// replay-side scaffolding to re-run it. Shared by the two flag-placement replay tests below.
+        /// Russia's fleet leaves Vladivostok for the neutral Sea of Japan, which makes the real MoveFleet
+        /// endpoint place Russia's flag there via UpdateTerritoryControl and log that as a side effect.
+        /// </summary>
+        private async Task<(ApplicationDbContext ReplayContext, Guid GameId, GameReplayService Service,
+                           GamesController GamesController, ManeuverController ManeuverController,
+                           GameActionDto MoveAction, GameActionDto FlagAction)>
+            ArrangeDerivedFlagPlacementReplay(bool preSeedFleetOnReplayBoard)
+        {
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            var mockClientProxy = new Mock<IClientProxy>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(mockClientProxy.Object);
+            mockClients.Setup(c => c.All).Returns(mockClientProxy.Object);
+
+            string dbName = Guid.NewGuid().ToString();
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var sp = new Mock<IServiceProvider>();
+                sp.Setup(x => x.GetService(typeof(ApplicationDbContext))).Returns(GetDbContext(dbName));
+                sp.Setup(x => x.GetService(typeof(INotificationService))).Returns(new Mock<INotificationService>().Object);
+                scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
+                return scope.Object;
+            });
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object,
+                [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()],
+                new Mock<ILogger<BotService>>().Object);
+            botService.SkipDelays = true;
+
+            var gameId = Guid.NewGuid();
+            var russiaPlayerId = Guid.NewGuid();
+            var chinaPlayerId = Guid.NewGuid();
+            const string russiaUserId = "russia-user";
+            const string chinaUserId = "china-user";
+            var forcedDistribution = new Dictionary<Nation, Guid>
+            {
+                { Nation.Russia, russiaPlayerId },
+                { Nation.China, chinaPlayerId },
+            };
+
+            // --- Phase 1: play it for real, so the logged actions are the ones a real game produces ---
+            var context = GetDbContext(dbName);
+            context.Games.Add(new Game { Id = gameId, Name = "FlagPlacementReplay_Original", Status = GameStatus.Lobby });
+            context.Players.AddRange(
+                new Player { Id = russiaPlayerId, GameId = gameId, UserId = russiaUserId, BotName = russiaUserId, IsHost = true },
+                new Player { Id = chinaPlayerId, GameId = gameId, UserId = chinaUserId, BotName = chinaUserId });
+            await context.SaveChangesAsync();
+
+            await GameSetupHelper.InitializeGameAsync(context, gameId, forcedDistribution);
+            context.ChangeTracker.Clear();
+
+            var game = await context.Games.FirstAsync(g => g.Id == gameId);
+            game.Status = GameStatus.InProgress;
+            game.CurrentTurnNation = Nation.Russia;
+            game.CurrentManeuverPhase = ManeuverPhase.Fleets;
+
+            var fleetId = Guid.NewGuid();
+            context.Units.Add(new Unit { Id = fleetId, GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Fleet, TerritoryId = "Vladivostok", HasMoved = false });
+            await context.SaveChangesAsync();
+
+            var maneuverController = new ManeuverController(context, mockHub.Object, botService);
+            SetControllerUser(maneuverController, russiaUserId);
+            var moveResult = await maneuverController.MoveFleet(gameId, new MoveUnitRequest { UnitId = fleetId, DestinationId = "SeaOfJapan" });
+            if (moveResult is BadRequestObjectResult bad) throw new Exception($"Original MoveFleet failed: {bad.Value}");
+
+            var originalActions = await context.GameActions.Where(a => a.GameId == gameId).OrderBy(a => a.OrderIndex).ToListAsync();
+
+            // The premise of both tests: moving in placed the flag AND logged it, without anything
+            // asking for it. If this ever stops being true these tests are guarding nothing.
+            var flagActions = originalActions.Where(a => a.ActionType == "FlagPlacement").ToList();
+            Assert.Single(flagActions);
+            Assert.Equal(Nation.Russia, (await context.TerritoryStates.FirstAsync(ts => ts.GameId == gameId && ts.TerritoryId == "SeaOfJapan")).Controller);
+
+            static GameActionDto ToDto(GameAction a) => new GameActionDto
+            {
+                Id = a.Id,
+                OrderIndex = a.OrderIndex,
+                Timestamp = a.Timestamp,
+                PlayerName = a.PlayerName,
+                Nation = a.Nation,
+                ActionType = a.ActionType,
+                Message = a.Message,
+                Metadata = a.Metadata
+            };
+
+            // --- Phase 2: fresh DB, same starting position, ready to replay ---
+            var replayContext = GetDbContext(Guid.NewGuid().ToString());
+            replayContext.Games.Add(new Game { Id = gameId, Name = "FlagPlacementReplay_Target", Status = GameStatus.Lobby });
+            replayContext.Players.AddRange(
+                new Player { Id = russiaPlayerId, GameId = gameId, UserId = russiaUserId, BotName = russiaUserId, IsHost = true },
+                new Player { Id = chinaPlayerId, GameId = gameId, UserId = chinaUserId, BotName = chinaUserId });
+            await replayContext.SaveChangesAsync();
+
+            await GameSetupHelper.InitializeGameAsync(replayContext, gameId, forcedDistribution);
+            replayContext.ChangeTracker.Clear();
+
+            var replayGame = await replayContext.Games.FirstAsync(g => g.Id == gameId);
+            replayGame.Status = GameStatus.InProgress;
+            replayGame.CurrentTurnNation = Nation.Russia;
+            replayGame.CurrentManeuverPhase = ManeuverPhase.Fleets;
+            if (preSeedFleetOnReplayBoard)
+            {
+                replayContext.Units.Add(new Unit { Id = fleetId, GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Fleet, TerritoryId = "Vladivostok", HasMoved = false });
+            }
+            await replayContext.SaveChangesAsync();
+
+            var userStore = new Mock<IUserStore<ApplicationUser>>();
+            var userManager = new Mock<UserManager<ApplicationUser>>(userStore.Object, null, null, null, null, null, null, null, null);
+            var gamesController = new GamesController(replayContext, userManager.Object, mockHub.Object,
+                new Mock<PresenceTracker>().Object, botService, new Mock<INotificationService>().Object);
+
+            return (replayContext, gameId, new GameReplayService(new XunitLogger<GameReplayService>(_output)),
+                    gamesController, new ManeuverController(replayContext, mockHub.Object, botService),
+                    ToDto(originalActions.First(a => a.ActionType == "MoveFleet")), ToDto(flagActions[0]));
+        }
+
+        /// <summary>
+        /// Flag placement is a DERIVED log entry: UpdateTerritoryControl runs inside the real Maneuver
+        /// endpoints and both moves the flag and logs it as a side effect of the move. Replaying the
+        /// move therefore already reproduces the entry, and the replay dispatcher's own "FlagPlacement"
+        /// case must not log it a second time.
+        ///
+        /// The regression this guards was visible to players: watching a replay showed the same
+        /// "took control of the North Pacific" line twice, one replay step apart.
+        /// </summary>
+        [Fact]
+        public async Task ReplayDerivedFlagPlacement_IsNotLoggedTwice()
+        {
+            var (replayContext, gameId, service, gamesController, maneuverController, moveAction, flagAction) =
+                await ArrangeDerivedFlagPlacementReplay(preSeedFleetOnReplayBoard: true);
+
+            // Both in one call, in their original order - exactly how a replay feeds them through.
+            var result = await service.ReplayActionsAsync(replayContext, gameId, gamesController, maneuverController,
+                new List<GameActionDto> { moveAction, flagAction }, suppressBroadcasts: true);
+            Assert.True(result.Success, $"Replay failed at action {result.FailedActionOrderIndex} ({result.FailedActionType}): {result.ErrorMessage}");
+
+            var replayedFlagActions = await replayContext.GameActions
+                .Where(a => a.GameId == gameId && a.ActionType == "FlagPlacement")
+                .ToListAsync();
+
+            Assert.Single(replayedFlagActions);
+
+            // Skipping the duplicate must not have skipped the effect: the flag is still on the board.
+            var seaOfJapan = await replayContext.TerritoryStates.FirstAsync(ts => ts.GameId == gameId && ts.TerritoryId == "SeaOfJapan");
+            Assert.Equal(Nation.Russia, seaOfJapan.Controller);
+        }
+
+        /// <summary>
+        /// The other half of the guard above: the dispatcher skips the flag placement only because the
+        /// replayed move already applied it. A flag placement that nothing else accounted for must still
+        /// be applied and logged, or the replayed board would silently drift from the original.
+        ///
+        /// Staged by replaying the FlagPlacement action ALONE, with no preceding move to derive it.
+        /// </summary>
+        [Fact]
+        public async Task ReplayUnaccountedFlagPlacement_IsStillAppliedAndLogged()
+        {
+            var (replayContext, gameId, service, gamesController, maneuverController, _, flagAction) =
+                await ArrangeDerivedFlagPlacementReplay(preSeedFleetOnReplayBoard: false);
+
+            var before = await replayContext.TerritoryStates.FirstAsync(ts => ts.GameId == gameId && ts.TerritoryId == "SeaOfJapan");
+            Assert.Null(before.Controller);
+
+            var result = await service.ReplayActionsAsync(replayContext, gameId, gamesController, maneuverController,
+                new List<GameActionDto> { flagAction }, suppressBroadcasts: true);
+            Assert.True(result.Success, $"Replay failed at action {result.FailedActionOrderIndex} ({result.FailedActionType}): {result.ErrorMessage}");
+
+            var seaOfJapan = await replayContext.TerritoryStates.FirstAsync(ts => ts.GameId == gameId && ts.TerritoryId == "SeaOfJapan");
+            Assert.Equal(Nation.Russia, seaOfJapan.Controller);
+
+            Assert.Single(await replayContext.GameActions
+                .Where(a => a.GameId == gameId && a.ActionType == "FlagPlacement")
+                .ToListAsync());
+        }
+
+        /// <summary>
+        /// "Start Replay" on a game played right here, never exported or imported.
+        ///
+        /// TestImportFromExportedJson also drives StartReplay, but only against an IMPORTED game - and
+        /// ImportGame rebuilds the roster itself, normalising every seat, so it cannot see a problem in
+        /// the roster a real game logs for itself. Replaying a game directly reconstructs players from
+        /// StartGame's own GameSetupMetadata snapshot and then resolves each action's actor by matching
+        /// the logged PlayerName against it, which is a completely separate path and was untested.
+        ///
+        /// Concretely what this catches: a replay that stalls partway through with
+        /// "Action Investment returned Forbid. Expected Player: X, Actual ActingPlayer: &lt;guid&gt;" because
+        /// the roster snapshot and the action log disagree about who a player is. The replay reports
+        /// itself complete-with-error rather than throwing, so nothing short of asserting on
+        /// ReplayStateDto notices - the game itself still looks perfectly fine in the database.
+        /// </summary>
+        [Fact]
+        public async Task StartReplayOnADirectlyPlayedGameRunsToCompletion()
+        {
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(new Mock<IClientProxy>().Object);
+            mockClients.Setup(c => c.All).Returns(new Mock<IClientProxy>().Object);
+
+            var mockNotification = new Mock<INotificationService>();
+            var mockPresence = new Mock<PresenceTracker>();
+            var store = new Mock<IUserStore<ApplicationUser>>();
+            var mockUserManager = new Mock<UserManager<ApplicationUser>>(store.Object, null, null, null, null, null, null, null, null);
+            mockUserManager.Setup(m => m.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
+                .ReturnsAsync(IdentityResult.Success)
+                .Callback<ApplicationUser, string>((u, _) => u.Id = Guid.NewGuid().ToString());
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object,
+                [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()],
+                new Mock<ILogger<BotService>>().Object);
+            botService.SkipDelays = true;
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var sp = new Mock<IServiceProvider>();
+                sp.Setup(x => x.GetService(typeof(ApplicationDbContext))).Returns(GetDbContext(dbName));
+                sp.Setup(x => x.GetService(typeof(INotificationService))).Returns(mockNotification.Object);
+                sp.Setup(x => x.GetService(typeof(IHubContext<Imperial2030.Server.Hubs.GameHub>))).Returns(mockHub.Object);
+                sp.Setup(x => x.GetService(typeof(PresenceTracker))).Returns(mockPresence.Object);
+                sp.Setup(x => x.GetService(typeof(BotService))).Returns(botService);
+                sp.Setup(x => x.GetService(typeof(UserManager<ApplicationUser>))).Returns(mockUserManager.Object);
+                scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
+                return scope.Object;
+            });
+
+            var gamesController = new GamesController(context, mockUserManager.Object, mockHub.Object,
+                mockPresence.Object, botService, mockNotification.Object);
+            const string userId = "host-user-id";
+            SetControllerUser(gamesController, userId);
+
+            const int totalPlayerCount = 3;
+            var createRes = await gamesController.CreateGame(new CreateGameRequest
+            {
+                Name = "DirectReplayTestGame",
+                MaxPlayers = totalPlayerCount,
+                IsPrivate = false,
+                VariantBonusOnlyForTaxIncreases = false
+            });
+            var gameId = Assert.IsType<GameDto>(Assert.IsType<CreatedAtActionResult>(createRes.Result).Value).Id;
+
+            for (int i = 0; i < totalPlayerCount - 1; i++)
+            {
+                context.Players.Add(new Player { GameId = gameId, UserId = $"bot-{i}", BotName = $"Bot {i}", IsHost = false, IsBot = true, BotType = "Default" });
+            }
+            var host = context.Players.First(p => p.UserId == userId);
+            host.IsBot = true;
+            host.BotType = "Default";
+            host.BotName = "Bot Host";
+            await context.SaveChangesAsync();
+
+            // Everything above happens BEFORE StartGame, which is what snapshots the roster. A seat whose
+            // name or bot status changes after this point would still play fine and still finish - and
+            // only its replay would break, which is exactly the failure being guarded.
+            await gamesController.StartGame(gameId);
+            botService.TriggerBotTurn(gameId);
+
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            for (int ticks = 0; ticks < 5000 && clock.Elapsed < TimeSpan.FromMinutes(5); ticks++)
+            {
+                using var scope = mockScopeFactory.Object.CreateScope();
+                var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                var g = ctx.Games.AsNoTracking().FirstOrDefault(x => x.Id == gameId);
+                if (g == null || g.Status == GameStatus.Finished) break;
+                if (ticks % 30 == 0) botService.TriggerBotTurn(gameId);
+                await Task.Delay(10);
+            }
+
+            context.ChangeTracker.Clear();
+            var finished = await context.Games.AsNoTracking().FirstAsync(g => g.Id == gameId);
+            Assert.Equal(GameStatus.Finished, finished.Status);
+
+            // Every name the log uses must be resolvable from the roster StartGame recorded - the direct
+            // cause of the Forbid, and worth asserting separately so a failure says which name is missing
+            // rather than just "replay stopped".
+            var snapshot = await context.GameActions.AsNoTracking().FirstAsync(a => a.GameId == gameId && a.ActionType == "StartGame");
+            var loggedNames = await context.GameActions.AsNoTracking()
+                .Where(a => a.GameId == gameId)
+                .Select(a => a.PlayerName)
+                .Distinct()
+                .ToListAsync();
+            foreach (var name in loggedNames.Where(n => !string.IsNullOrEmpty(n) && n != GameConstants.SystemPlayerName))
+            {
+                Assert.True(snapshot.Metadata.Contains(name),
+                    $"Action log names '{name}', but StartGame's roster snapshot does not contain it - replay cannot resolve who acted.");
+            }
+
+            var replayManager = new ReplaySessionManager(mockScopeFactory.Object,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<ReplaySessionManager>.Instance) { PacingMs = 0 };
+            var startRes = await gamesController.StartReplay(gameId, replayManager);
+            if (startRes is BadRequestObjectResult startBad) Assert.Fail($"StartReplay failed: {startBad.Value}");
+            var sessionId = Assert.IsType<Guid>(Assert.IsType<OkObjectResult>(startRes).Value);
+
+            ReplayStateDto? state = null;
+            var replayWait = System.Diagnostics.Stopwatch.StartNew();
+            while (replayWait.Elapsed < TimeSpan.FromMinutes(2))
+            {
+                state = (gamesController.GetReplayState(sessionId, replayManager).Result as OkObjectResult)?.Value as ReplayStateDto;
+                if (state?.IsComplete == true) break;
+                await Task.Delay(20);
+            }
+
+            Assert.NotNull(state);
+            Assert.True(state!.IsComplete, "Replay of a directly-played game did not complete within the bounded wait.");
+            // IsComplete alone is not enough: a replay that stops early still reports itself complete and
+            // parks the error here. This is the assertion that actually catches the stall.
+            Assert.Null(state.ErrorMessage);
+            Assert.NotNull(state.Game);
+            Assert.Equal(GameStatus.Finished, state.Game!.Status);
+            Assert.Equal(finished.WinnerName, state.Game.WinnerName);
+
+            await gamesController.StopReplay(sessionId, replayManager);
+        }
+
+        /// <summary>
+        /// A move's log entry must carry the route the unit actually took. Nothing downstream can work it
+        /// out afterwards: several routes join the same pair of endpoints, and the carrying fleets are
+        /// flagged HasConvoyed the moment the move completes. Replay and the map both read this, and the
+        /// bug this guards was a replay drawing an army through the Caribbean Sea on a move between two
+        /// adjacent land territories, because the route was being guessed rather than read.
+        /// </summary>
+        [Fact]
+        public async Task UnitMoveLogsTheRouteItTravelled()
+        {
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(new Mock<IClientProxy>().Object);
+            mockClients.Setup(c => c.All).Returns(new Mock<IClientProxy>().Object);
+
+            string dbName = Guid.NewGuid().ToString();
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var sp = new Mock<IServiceProvider>();
+                sp.Setup(x => x.GetService(typeof(ApplicationDbContext))).Returns(GetDbContext(dbName));
+                sp.Setup(x => x.GetService(typeof(INotificationService))).Returns(new Mock<INotificationService>().Object);
+                scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
+                return scope.Object;
+            });
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object,
+                [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()],
+                new Mock<ILogger<BotService>>().Object);
+            botService.SkipDelays = true;
+
+            var gameId = Guid.NewGuid();
+            var russiaPlayerId = Guid.NewGuid();
+            var chinaPlayerId = Guid.NewGuid();
+            const string russiaUserId = "russia-user";
+
+            var context = GetDbContext(dbName);
+            context.Games.Add(new Game { Id = gameId, Name = "RouteViaTest", Status = GameStatus.Lobby });
+            context.Players.AddRange(
+                new Player { Id = russiaPlayerId, GameId = gameId, UserId = russiaUserId, BotName = russiaUserId, IsHost = true },
+                new Player { Id = chinaPlayerId, GameId = gameId, UserId = "china-user", BotName = "china-user" });
+            await context.SaveChangesAsync();
+
+            await GameSetupHelper.InitializeGameAsync(context, gameId,
+                new Dictionary<Nation, Guid> { { Nation.Russia, russiaPlayerId }, { Nation.China, chinaPlayerId } });
+            context.ChangeTracker.Clear();
+
+            var game = await context.Games.FirstAsync(g => g.Id == gameId);
+            game.Status = GameStatus.InProgress;
+            game.CurrentTurnNation = Nation.Russia;
+            game.CurrentManeuverPhase = ManeuverPhase.Armies;
+
+            // Moscow -> Vladivostok is a rail move across Russia's own home provinces, not a single step:
+            // the two are not adjacent, so it has to pass through Novosibirsk.
+            var armyId = Guid.NewGuid();
+            context.Units.Add(new Unit { Id = armyId, GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = "Moscow", HasMoved = false });
+            await context.SaveChangesAsync();
+
+            var maneuverController = new ManeuverController(context, mockHub.Object, botService);
+            SetControllerUser(maneuverController, russiaUserId);
+
+            Assert.DoesNotContain("Vladivostok", MapConnectivity.GetNeighbors("Moscow", isFleet: false));
+            var railResult = await maneuverController.MoveArmy(gameId, new MoveUnitRequest { UnitId = armyId, DestinationId = "Vladivostok", IsHostile = false });
+            if (railResult is BadRequestObjectResult railBad) throw new Exception($"Rail MoveArmy failed: {railBad.Value}");
+
+            var railMeta = JsonSerializer.Deserialize<ActionMetadata>(
+                (await context.GameActions.Where(a => a.GameId == gameId && a.ActionType == "MoveArmy").OrderBy(a => a.OrderIndex).LastAsync()).Metadata,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            Assert.NotNull(railMeta!.RouteVia);
+            Assert.Equal(new[] { "Novosibirsk" }, railMeta.RouteVia!);
+
+            // A plain step to an adjacent territory has nothing in between, and must say so rather than
+            // inventing waypoints - the Colombia -> Manaus case that started this.
+            var adjacentArmyId = Guid.NewGuid();
+            context.Units.Add(new Unit { Id = adjacentArmyId, GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = "Moscow", HasMoved = false });
+            // The move above was the only army left to move, so the phase advanced off Armies. Put it
+            // back rather than staging a second game - the phase is incidental to what is being tested.
+            var gameForSecondMove = await context.Games.FirstAsync(g => g.Id == gameId);
+            gameForSecondMove.CurrentTurnNation = Nation.Russia;
+            gameForSecondMove.CurrentManeuverPhase = ManeuverPhase.Armies;
+            await context.SaveChangesAsync();
+
+            Assert.Contains("Ukraine", MapConnectivity.GetNeighbors("Moscow", isFleet: false));
+            var stepResult = await maneuverController.MoveArmy(gameId, new MoveUnitRequest { UnitId = adjacentArmyId, DestinationId = "Ukraine", IsHostile = false });
+            if (stepResult is BadRequestObjectResult stepBad) throw new Exception($"Adjacent MoveArmy failed: {stepBad.Value}");
+
+            var stepMeta = JsonSerializer.Deserialize<ActionMetadata>(
+                (await context.GameActions.Where(a => a.GameId == gameId && a.ActionType == "MoveArmy").OrderBy(a => a.OrderIndex).LastAsync()).Metadata,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            Assert.True(stepMeta!.RouteVia == null || stepMeta.RouteVia.Count == 0,
+                $"An adjacent move must log no waypoints, got: {string.Join(", ", stepMeta.RouteVia ?? new List<string>())}");
+        }
+
+        /// <summary>
+        /// When a destination can be reached BOTH overland and by sea, the army goes overland. A convoy is
+        /// a last resort, for destinations nothing simpler reaches (Imperial-2030-Rules.pdf, "Maneuver").
+        ///
+        /// Beijing -> Indochina is the case that exposed this on the map: Indochina is not adjacent to
+        /// Beijing, but it is one rail hop past Chongqing, AND it borders the China Sea. With a Chinese
+        /// fleet sitting in that sea, the move was drawn as a voyage through it. The log was right - the
+        /// route recorded was ["Chongqing"] - so the assertion here is on the same authoritative field the
+        /// map should have been reading instead of reconstructing a route of its own.
+        /// </summary>
+        [Fact]
+        public async Task MoveReachableByBothRailAndConvoyLogsTheRailRoute()
+        {
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(new Mock<IClientProxy>().Object);
+            mockClients.Setup(c => c.All).Returns(new Mock<IClientProxy>().Object);
+
+            string dbName = Guid.NewGuid().ToString();
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(s => s.CreateScope()).Returns(() =>
+            {
+                var scope = new Mock<IServiceScope>();
+                var sp = new Mock<IServiceProvider>();
+                sp.Setup(x => x.GetService(typeof(ApplicationDbContext))).Returns(GetDbContext(dbName));
+                sp.Setup(x => x.GetService(typeof(INotificationService))).Returns(new Mock<INotificationService>().Object);
+                scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
+                return scope.Object;
+            });
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object,
+                [new Imperial2030.Server.Services.Bots.Strategies.DefaultBotStrategy()],
+                new Mock<ILogger<BotService>>().Object);
+            botService.SkipDelays = true;
+
+            var gameId = Guid.NewGuid();
+            var chinaPlayerId = Guid.NewGuid();
+            var indiaPlayerId = Guid.NewGuid();
+            const string chinaUserId = "china-user";
+
+            var context = GetDbContext(dbName);
+            context.Games.Add(new Game { Id = gameId, Name = "RailBeatsConvoy", Status = GameStatus.Lobby });
+            context.Players.AddRange(
+                new Player { Id = chinaPlayerId, GameId = gameId, UserId = chinaUserId, BotName = chinaUserId, IsHost = true },
+                new Player { Id = indiaPlayerId, GameId = gameId, UserId = "india-user", BotName = "india-user" });
+            await context.SaveChangesAsync();
+
+            await GameSetupHelper.InitializeGameAsync(context, gameId,
+                new Dictionary<Nation, Guid> { { Nation.China, chinaPlayerId }, { Nation.India, indiaPlayerId } });
+            context.ChangeTracker.Clear();
+
+            var game = await context.Games.FirstAsync(g => g.Id == gameId);
+            game.Status = GameStatus.InProgress;
+            game.CurrentTurnNation = Nation.China;
+            game.CurrentManeuverPhase = ManeuverPhase.Armies;
+
+            // Both routes must genuinely exist, or this test proves nothing.
+            Assert.DoesNotContain("Indochina", MapConnectivity.GetNeighbors("Beijing", isFleet: false));
+            Assert.Contains("Indochina", MapConnectivity.GetNeighbors("Chongqing", isFleet: false));
+            Assert.Contains("ChinaSea", MapConnectivity.GetNeighbors("Beijing", isFleet: true));
+            // Disembarking is checked land-side: GetNeighbors filters by the mover's own type, so a
+            // fleet's neighbour list never contains Indochina even though an army it carries lands there.
+            Assert.Contains("Indochina", MapConnectivity.GetNeighbors("ChinaSea", isFleet: false));
+
+            var armyId = Guid.NewGuid();
+            context.Units.Add(new Unit { Id = armyId, GameId = gameId, Nation = Nation.China, UnitType = UnitType.Army, TerritoryId = "Beijing", HasMoved = false });
+            // The fleet that made the sea route available - and that the map latched onto.
+            context.Units.Add(new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.China, UnitType = UnitType.Fleet, TerritoryId = "ChinaSea", HasMoved = true });
+            await context.SaveChangesAsync();
+
+            var maneuverController = new ManeuverController(context, mockHub.Object, botService);
+            SetControllerUser(maneuverController, chinaUserId);
+            var result = await maneuverController.MoveArmy(gameId, new MoveUnitRequest { UnitId = armyId, DestinationId = "Indochina", IsHostile = false });
+            if (result is BadRequestObjectResult bad) throw new Exception($"MoveArmy failed: {bad.Value}");
+
+            var meta = JsonSerializer.Deserialize<ActionMetadata>(
+                (await context.GameActions.Where(a => a.GameId == gameId && a.ActionType == "MoveArmy").OrderBy(a => a.OrderIndex).LastAsync()).Metadata,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            Assert.Equal(new[] { "Chongqing" }, meta!.RouteVia!);
+
+            // The fleet must be untouched: it carried nothing, so it can still carry someone this turn.
+            Assert.DoesNotContain(context.Units.Where(u => u.GameId == gameId && u.UnitType == UnitType.Fleet), f => f.HasConvoyed);
+        }
+
         // Diagnostic-only adapter so GameReplayService's LogDebug output (including its [DIAG] traces) shows
         // up in xUnit's test output instead of going nowhere via the default NullLogger.
         private class XunitLogger<T> : ILogger<T>

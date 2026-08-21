@@ -19,5 +19,15 @@ namespace Imperial2030.Shared.Models
         public string? DefendersStr { get; set; }
         public bool? IsResponse { get; set; }
         public string? RespondingNationStr { get; set; }
+        // Every territory the unit passed THROUGH, in travel order, excluding origin and destination:
+        // rail hops, the territory a convoyed army boarded at, and the sea regions it was carried
+        // across. Null or empty for a plain step to an adjacent territory, which has nothing in between.
+        //
+        // Recorded because the route is NOT derivable from origin and destination after the fact:
+        // several routes can connect the same pair, and the carrying fleets are flagged HasConvoyed the
+        // moment the move completes, which erases the evidence of which ones did the carrying. Nullable
+        // and additive, so action logs written before this field existed still deserialize - they simply
+        // carry no route, and consumers fall back to drawing the move direct.
+        public List<string>? RouteVia { get; set; }
     }
 }

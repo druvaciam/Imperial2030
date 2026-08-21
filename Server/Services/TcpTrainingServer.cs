@@ -39,9 +39,52 @@ public class TcpTrainingServer : BackgroundService
         public int? PendingImportRemaining { get; set; } // Non-null while stepping through an Import decision sequence
         public int ImportUnitsPlacedThisSequence { get; set; } = 0; // Tracks whether the current Import sequence placed anything, for the wasted-import-with-money penalty
 
+        // Where each unit moved FROM on its previous maneuver, so a move straight back to it can be
+        // recognised as a reversal. Keyed by unit id and kept for the whole game: the two halves of an
+        // oscillation land in different maneuver turns, so per-turn state cannot see it.
+        public Dictionary<Guid, string> PreviousMoveOrigin { get; set; } = new();
+
         public int TotalSessionSteps { get; set; } = 0;
         public int LastTurnCount { get; set; } = -1;
         public int ConsecutiveSameTurnSteps { get; set; } = 0;
+    }
+
+    /// <summary>
+    /// Penalty for shuffling a unit back to the territory it just came from without gaining anything.
+    /// Sized above the small flag/positioning rewards so an agent cannot farm them by oscillating, but
+    /// well below the wasted-Rondel-turn penalties: the move is pointless, not actively damaging.
+    /// </summary>
+    private const float PointlessReversalPenalty = 4.0f;
+
+    /// <summary>
+    /// Whether this move walks a unit straight back to the territory it left on its previous maneuver
+    /// without gaining anything - the Kazakhstan -&gt; Chongqing -&gt; Kazakhstan pattern, two full turns
+    /// spent to end up exactly where it started.
+    ///
+    /// Nothing else in the reward function objects to it: moving costs no money, so the wasted-Rondel
+    /// penalties never fire, and the flag and hostile-clearing rewards simply pay nothing - leaving a
+    /// zero-signal action the agent has no reason to avoid.
+    ///
+    /// Deliberately narrow, so purposeful returns stay unpenalized:
+    ///   - staying put is not a reversal at all;
+    ///   - a hostile move is an attack, whichever direction it goes;
+    ///   - returning to a territory this nation does NOT already hold can win a flag, which is a real
+    ///     gain even though the unit has been there before.
+    /// </summary>
+    /// <param name="previousMoveOrigin">Unit id -&gt; where it moved FROM last maneuver (TrainingSession.PreviousMoveOrigin).</param>
+    public static bool IsPointlessReversal(
+        Game game, Unit unit, string origin, string target, bool isHostileMove,
+        IReadOnlyDictionary<Guid, string> previousMoveOrigin)
+    {
+        if (target == origin) return false;
+        if (isHostileMove) return false;
+        if (!previousMoveOrigin.TryGetValue(unit.Id, out var previousOrigin) || previousOrigin != target) return false;
+
+        // Home provinces are never flagged, so returning to one can never win a flag either.
+        var targetDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
+        if (targetDef?.Nation == unit.Nation) return true;
+
+        return game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == target)?.Controller == unit.Nation;
     }
 
     public class TcpRequest
@@ -725,6 +768,18 @@ public class TcpTrainingServer : BackgroundService
                                 }
                             }
                         }
+
+                        // Penalize walking a unit straight back where it came from when the round trip
+                        // achieves nothing - see IsPointlessReversal.
+                        string moveOrigin = session.ManeuverSelectedTerritoryId!;
+                        if (IsPointlessReversal(game, unit, moveOrigin, target, isHostileMove, session.PreviousMoveOrigin))
+                        {
+                            _logger.LogWarning($"[RL PENALTY] {unit.Nation} moved {unitType} back to '{target}', the territory it left last maneuver, gaining nothing. Penalty: -{PointlessReversalPenalty}");
+                            explicitBonusReward -= PointlessReversalPenalty;
+                        }
+                        // Staying put is not a move and must not overwrite the history: origin == target
+                        // there, which would make the next stay look like a reversal.
+                        if (target != moveOrigin) session.PreviousMoveOrigin[unit.Id] = moveOrigin;
 
                         unit.TerritoryId = target;
                         unit.IsHostile = isHostileMove;
