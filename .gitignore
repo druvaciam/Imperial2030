@@ -97,6 +97,7 @@ python_rl/*.onnx
 python_rl/*.onnx.data
 python_rl/__pycache__/**
 python_rl/tb_logs/
+python_rl/*_worst_game*.json
 
 # Azure Functions
 local.settings.json
@@ -104,3 +105,9 @@ Imperial-2030-Rules.pdf
 
 # Claude Code local dev-server launch config (per-developer, used by the in-app browser preview)
 .claude/launch.json
+
+# Vue replay viewer prototype - experimental, not part of the shipped app
+VueReplayViewer/
+
+# Test-captured repro artifacts (e.g. ReplayGameTests.TestImportFromExportedJson's divergence dump)
+Tests/TestArtifacts/

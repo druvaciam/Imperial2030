@@ -21,6 +21,8 @@ using Imperial2030.Server.Services;
 using Xunit.Abstractions;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using System.IO;
+using System.Runtime.CompilerServices;
 
 namespace Imperial2030.Tests
 {
@@ -31,6 +33,15 @@ namespace Imperial2030.Tests
         public ReplayGameTests(ITestOutputHelper output)
         {
             _output = output;
+        }
+
+        // Resolved from this source file's own path (repo-root-relative), same trick as
+        // BotGameTests.GetWorstGameExportPath, so it works regardless of the test runner's working
+        // directory (normally Tests/bin/<config>/net10.0).
+        private static string GetImportReplayReproPath([CallerFilePath] string sourceFilePath = "")
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(sourceFilePath)!, ".."));
+            return Path.Combine(repoRoot, "Tests", "TestArtifacts", "ImportReplayDivergence_repro.json");
         }
 
         private ApplicationDbContext GetDbContext(string dbName)
@@ -991,11 +1002,27 @@ namespace Imperial2030.Tests
             // resolves it as an ordinary move and records IsHostileMove=true with DefendersStr null. The
             // move's actual decision — FromTerritoryId/ToTerritoryId — is still compared strictly, as is
             // every field of every other action type.
+            //
+            // SourceIsHostile is also excluded, for a different reason: it's a disambiguation hint for
+            // GameReplayService (which of several units at the same origin territory to operate on), not an
+            // observable game decision - units are fungible game pieces (no per-unit identity in the rules),
+            // so when 2+ armies of the same nation/type end up stacked at the same territory with the same
+            // hostile state (e.g. several hostile conquests of an undefended territory in one turn), which
+            // specific one a later "stay"/move log entry refers to is arbitrary and doesn't change the real
+            // board. Confirmed via a captured repro (Tests/TestArtifacts/ImportReplayDivergence_repro.json):
+            // three separate hostile China armies ended up stacked at NewDelhi after its original defenders
+            // were destroyed 1:1 (Imperial-2030-Rules.pdf: "the active nation may destroy armies in land
+            // regions 1:1"), and replay's exact-match fallback chain (GameReplayService.cs's
+            // armyUnitBySourceHostility) can run out of same-state candidates before all of them are
+            // consumed, without any real state divergence resulting. The real observable state
+            // (FromTerritoryId/ToTerritoryId/IsHostileMove here, plus the strict NationState/Bond/Unit-count
+            // assertions elsewhere in this test) still catches an actual corruption.
             static string NormalizeMeta(string? metadata)
             {
                 var normalized = (metadata ?? string.Empty).Replace("\"IsHostileMove\":null", "\"IsHostileMove\":false");
                 normalized = System.Text.RegularExpressions.Regex.Replace(normalized, "\"DefendersStr\":(null|\"[^\"]*\")", "\"DefendersStr\":<gap>");
                 normalized = System.Text.RegularExpressions.Regex.Replace(normalized, "\"IsHostileMove\":(true|false)", "\"IsHostileMove\":<gap>");
+                normalized = System.Text.RegularExpressions.Regex.Replace(normalized, "\"SourceIsHostile\":(null|true|false)", "\"SourceIsHostile\":<gap>");
                 return normalized;
             }
             int sharedCount = Math.Min(originalActionLog.Count, importedActionLog.Count);
@@ -1030,6 +1057,16 @@ namespace Imperial2030.Tests
                         _output.WriteLine($"        imp  meta: {importedActionLog[i].Metadata}");
                     }
                 }
+
+                // This test generates a fresh random bot game every run, so a divergence that only shows up
+                // rarely can't be reproduced by just rerunning the test - the exact game that triggered it is
+                // gone once the run ends. Capture it here (before the Assert below throws) so the next
+                // failure hands over a concrete repro instead of another one-off log. Re-import this file
+                // (GamesController.ImportGame, or the UI's Import modal) to replay the exact diverging game.
+                var reproPath = GetImportReplayReproPath();
+                Directory.CreateDirectory(Path.GetDirectoryName(reproPath)!);
+                File.WriteAllText(reproPath, exportJson);
+                _output.WriteLine($"[REPRO CAPTURED] Wrote the diverging game's export to {reproPath}");
             }
 
             Assert.Equal(originalActionLog.Count, importedActionLog.Count);

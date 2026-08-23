@@ -19,6 +19,9 @@ using Xunit;
 using Imperial2030.Server.Services;
 using Xunit.Abstractions;
 using Microsoft.Extensions.Logging;
+using System.IO;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 
 namespace Imperial2030.Tests
 {
@@ -41,6 +44,16 @@ namespace Imperial2030.Tests
                 .UseInMemoryDatabase(databaseName: dbName)
                 .Options;
             return new ApplicationDbContext(options);
+        }
+
+        // Resolved from this source file's own path (repo-root-relative) rather than the test
+        // runner's working directory, which is normally Tests/bin/<config>/net10.0 and gives no
+        // stable way back to the repo. Written into python_rl/ alongside the other RL bot
+        // evaluation artifacts (best_reward.txt etc.) so it's next to what produced the model.
+        private static string GetWorstGameExportPath(string testBotType, [CallerFilePath] string sourceFilePath = "")
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(sourceFilePath)!, ".."));
+            return Path.Combine(repoRoot, "python_rl", $"{testBotType}_worst_game.json");
         }
 
         [Theory]
@@ -565,6 +578,12 @@ namespace Imperial2030.Tests
             int totalGames = 50;
             int gamesPlayed = 0;
             var hardTimeout = System.Diagnostics.Stopwatch.StartNew();
+
+            // Tracks the lost game where testBotType finished furthest behind the winner (by
+            // CalculateScore), so it can be exported for replay in the UI afterwards - the biggest
+            // score gap is the game most likely to show a real strategic mistake.
+            int worstLossMargin = int.MinValue;
+            string? worstLossExportJson = null;
             for (int g = 0; g < totalGames; g++)
             {
                 if (hardTimeout.Elapsed >= HardTestTimeout)
@@ -636,7 +655,7 @@ namespace Imperial2030.Tests
                 players[0].BotName = $"{testBotType} Bot";
                 players[0].BotType = testBotType;
 
-                var randomOpponents = new[] { "Random", "Default" };//, "Greedy", "Aggressive", "Friendly" };
+                var randomOpponents = new[] { "Random", "Default", "Greedy", "Aggressive", "Friendly" };
                 var rng = new Random(g); // Use g for seed or just new Random()
                 for (int i = 1; i < 6; i++)
                 {
@@ -674,14 +693,64 @@ namespace Imperial2030.Tests
                 var metricCtx = metricScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                 int turns = metricCtx.GameActions.Count(a => a.GameId == gameId);
 
-                var finalGame = context.Games.AsNoTracking().Include(g => g.Players).ThenInclude(p => p.Bonds).Include(g => g.NationStates).FirstOrDefault(g => g.Id == gameId);
+                var finalGame = context.Games.AsNoTracking()
+                    .Include(g => g.Players).ThenInclude(p => p.Bonds)
+                    .Include(g => g.NationStates)
+                    .Include(g => g.Bonds)
+                    .Include(g => g.Actions)
+                    .AsSplitQuery()
+                    .FirstOrDefault(g => g.Id == gameId);
                 if (finalGame != null && finalGame.Status == GameStatus.Finished)
                 {
                     var rankedPlayers = finalGame.GetRankedPlayers();
                     var winner = rankedPlayers.First();
                     if (winner.BotType == testBotType) rlWins++;
                     _output.WriteLine($"Game {g} finished in {turns} turns. Winner: {winner.BotName}");
+
+                    var rlPlayer = finalGame.Players.FirstOrDefault(p => p.BotType == testBotType);
+                    if (rlPlayer != null && rlPlayer.Id != winner.Id)
+                    {
+                        int rlScore = finalGame.CalculateScore(rlPlayer.Id);
+                        int winnerScore = finalGame.CalculateScore(winner.Id);
+                        int lossMargin = winnerScore - rlScore;
+                        if (lossMargin > worstLossMargin)
+                        {
+                            worstLossMargin = lossMargin;
+                            var export = new GameExportDto
+                            {
+                                FormatVersion = 1,
+                                OriginalGameId = finalGame.Id,
+                                OriginalGameName = $"{testBotType} worst loss (score {rlScore} vs {winner.BotName} {winnerScore})",
+                                ExportedAt = DateTime.UtcNow,
+                                Actions = finalGame.Actions.OrderBy(a => a.OrderIndex).ThenBy(a => a.Timestamp).Select(a => new GameActionDto
+                                {
+                                    Id = a.Id,
+                                    OrderIndex = a.OrderIndex,
+                                    Timestamp = a.Timestamp,
+                                    PlayerName = a.PlayerName,
+                                    Nation = a.Nation,
+                                    ActionType = a.ActionType,
+                                    Message = a.Message,
+                                    Metadata = a.Metadata ?? string.Empty
+                                }).ToList()
+                            };
+                            worstLossExportJson = JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
+                            _output.WriteLine($"Game {g}: new worst {testBotType} loss so far, margin {lossMargin} ({rlScore} vs {winner.BotName}'s {winnerScore}).");
+                        }
+                    }
                 }
+            }
+
+            if (worstLossExportJson != null)
+            {
+                var exportPath = GetWorstGameExportPath(testBotType);
+                Directory.CreateDirectory(Path.GetDirectoryName(exportPath)!);
+                File.WriteAllText(exportPath, worstLossExportJson);
+                _output.WriteLine($"Wrote worst {testBotType} loss (margin {worstLossMargin}) to {exportPath}");
+            }
+            else
+            {
+                _output.WriteLine($"{testBotType} did not lose any of the {gamesPlayed} games played; no worst-loss export written.");
             }
 
             _output.WriteLine($"Total Actions Queried to Python Server: {Imperial2030.Server.Services.Bots.Strategies.RLBotStrategy.TotalActionCount}");
@@ -878,20 +947,20 @@ namespace Imperial2030.Tests
 
             for (int i = 0; i < 15; i++)
             {
-                context.TerritoryStates.Add(new TerritoryState 
-                { 
-                    TerritoryId = $"T{i}", 
-                    GameId = gameId, 
-                    Controller = Nation.Russia 
+                context.TerritoryStates.Add(new TerritoryState
+                {
+                    TerritoryId = $"T{i}",
+                    GameId = gameId,
+                    Controller = Nation.Russia
                 });
             }
 
             var targetTerritoryId = "Colombia";
-            context.TerritoryStates.Add(new TerritoryState 
-            { 
-                TerritoryId = targetTerritoryId, 
-                GameId = gameId, 
-                Controller = Nation.Europe 
+            context.TerritoryStates.Add(new TerritoryState
+            {
+                TerritoryId = targetTerritoryId,
+                GameId = gameId,
+                Controller = Nation.Europe
             });
 
             var army1 = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = targetTerritoryId };
@@ -906,9 +975,9 @@ namespace Imperial2030.Tests
                 .FirstAsync(g => g.Id == gameId);
 
             var botService = new Imperial2030.Server.Services.BotService(
-                new Mock<IServiceScopeFactory>().Object, 
-                new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>().Object, 
-                new List<Imperial2030.Server.Services.Bots.IBotStrategy>(), 
+                new Mock<IServiceScopeFactory>().Object,
+                new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>().Object,
+                new List<Imperial2030.Server.Services.Bots.IBotStrategy>(),
                 new Mock<ILogger<Imperial2030.Server.Services.BotService>>().Object);
 
             var methodInfo = typeof(Imperial2030.Server.Services.BotService).GetMethod("BotUpdateTerritoryControl", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
