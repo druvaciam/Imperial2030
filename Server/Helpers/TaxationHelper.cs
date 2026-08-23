@@ -11,28 +11,12 @@ public static class TaxationHelper
     public static (int ExpectedBonus, int ExpectedTreasuryGain, int ExpectedPowerGain, int TotalTaxRevenue, int SoldiersPay) PreviewTaxation(Game game, NationState nationState)
     {
         var nation = nationState.Nation;
-        int factoryRevenue = 0;
-        var territoriesWithFactories = game.TerritoryStates.Where(ts => ts.HasFactory).ToList();
-        
-        foreach (var ts in territoriesWithFactories)
-        {
-            var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (territoryDef != null && territoryDef.Nation == nation) 
-            {
-                bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-                if (!hasHostileArmy)
-                {
-                    factoryRevenue += 2;
-                }
-            }
-        }
-
-        int flagRevenue = game.TerritoryStates.Count(ts => ts.Controller == nation);
-        flagRevenue = Math.Min(15, flagRevenue);
-        int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
+        int unblockedFactories = CountUnblockedFactories(game, nation);
+        int flagCount = game.TerritoryStates.Count(ts => ts.Controller == nation);
+        int totalTaxRevenue = TaxationRules.ComputeRevenue(unblockedFactories, flagCount);
 
         int unitCount = game.Units.Count(u => u.Nation == nation);
-        int soldiersPay = unitCount * 1;
+        int soldiersPay = TaxationRules.ComputeSoldiersPay(unitCount);
         
         // Simulation of treasury changes
         int simulatedTreasury = nationState.Treasury + totalTaxRevenue;
@@ -64,30 +48,14 @@ public static class TaxationHelper
     public static (int TotalTaxRevenue, int SoldiersPay, int Bonus, int PowerGain) ApplyTaxation(Game game, NationState nationState, Player controller)
     {
         var nation = nationState.Nation;
-        int factoryRevenue = 0;
-        var territoriesWithFactories = game.TerritoryStates.Where(ts => ts.HasFactory).ToList();
-        
-        foreach (var ts in territoriesWithFactories)
-        {
-            var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (territoryDef != null && territoryDef.Nation == nation) 
-            {
-                bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-                if (!hasHostileArmy)
-                {
-                    factoryRevenue += 2;
-                }
-            }
-        }
-
-        int flagRevenue = game.TerritoryStates.Count(ts => ts.Controller == nation);
-        flagRevenue = Math.Min(15, flagRevenue);
-        int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
+        int unblockedFactories = CountUnblockedFactories(game, nation);
+        int flagCount = game.TerritoryStates.Count(ts => ts.Controller == nation);
+        int totalTaxRevenue = TaxationRules.ComputeRevenue(unblockedFactories, flagCount);
 
         nationState.Treasury += totalTaxRevenue;
 
         int unitCount = game.Units.Count(u => u.Nation == nation);
-        int soldiersPay = unitCount * 1;
+        int soldiersPay = TaxationRules.ComputeSoldiersPay(unitCount);
         int actualPay = Math.Min(nationState.Treasury, soldiersPay);
         nationState.Treasury -= actualPay;
 
@@ -119,5 +87,24 @@ public static class TaxationHelper
         nationState.TaxRevenue = totalTaxRevenue;
 
         return (totalTaxRevenue, actualPay, actualBonus, powerGain);
+    }
+
+    /// <summary>
+    /// Factories of <paramref name="nation"/> that can actually be taxed: built in one of its own
+    /// home provinces, with no hostile army standing there.
+    /// </summary>
+    public static int CountUnblockedFactories(Game game, Nation nation)
+    {
+        int count = 0;
+        foreach (var ts in game.TerritoryStates.Where(t => t.HasFactory))
+        {
+            var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
+            if (territoryDef == null || territoryDef.Nation != nation) continue;
+
+            bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId
+                && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
+            if (!hasHostileArmy) count++;
+        }
+        return count;
     }
 }

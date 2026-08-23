@@ -19,6 +19,46 @@ main {
     height: 3.5rem;
     display: flex;
     align-items: center;
+    /* Everything on this row stays on one line; the game-info block below absorbs the squeeze. */
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+/* Every item on this row holds one line and refuses to shrink... */
+.top-row.auth > * {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* ...except the game-info block, which is the one element allowed to absorb the squeeze.
+   min-width:0 is required for a flex child to shrink below its content width at all, otherwise
+   a long game name forces the row wider than the viewport and shoves the auth links out of sight.
+   The selector must stay at least as specific as the `> *` rule above, or it loses the cascade
+   and the block silently stops shrinking. */
+.top-row.auth > .top-bar-info {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* Clip the game name rather than wrapping it onto extra lines inside a fixed-height row. */
+.top-bar-info ::deep span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Belarusian labels are longer than the English ones; cap the control so a future longer
+   language name cannot widen the row. */
+.language-select {
+    max-width: 8.5rem;
+    flex: 0 0 auto;
+}
+
+/* The auth links are the last thing that should be sacrificed - never let them shrink. */
+.top-row.auth ::deep a {
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 .top-row ::deep a,

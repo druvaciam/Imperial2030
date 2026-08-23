@@ -840,13 +840,28 @@ public class BotService
                 army.HasMoved = true;
                 army.IsHostile = isHostileMove;
 
-                if (convoyPaths.TryGetValue(best, out var usedFleets))
+                // Everything the army passed through on the way, for the log - see GameLogger.LogUnitMove's
+                // routeVia parameter for why it has to be recorded here rather than derived afterwards.
+                // Captured before the fleets are flagged below, which is what erases the convoy evidence.
+                // How the army got there, decided by the same helper MoveArmy uses so the bot cannot play
+                // by different rules than a human. convoyPaths holds an entry for EVERY destination a
+                // convoy could reach, adjacent and rail-connected ones included, so keying off it alone
+                // sent armies by sea when they could have walked - New Orleans -> Mexico "via the North
+                // Pacific". That was not just a wrong log line: the carrying fleets were marked
+                // HasConvoyed, spending carriers that could have moved another army this turn.
+                var moveMode = ManeuverHelper.DetermineArmyMoveMode(game, originalTerritoryId, best, nation);
+                List<Unit>? usedFleets = null;
+
+                if (moveMode == ManeuverHelper.ArmyMoveMode.Convoy && convoyPaths.TryGetValue(best, out var convoyFleets))
                 {
+                    usedFleets = convoyFleets;
                     foreach (var f in usedFleets)
                     {
                         f.HasConvoyed = true;
                     }
                 }
+
+                List<string>? routeVia = ManeuverHelper.BuildMoveRoute(game, originalTerritoryId, best, nation, moveMode, usedFleets);
 
                 if (hasEnemy)
                 {
@@ -874,7 +889,7 @@ public class BotService
 
                             if (enemyUnit != null)
                             {
-                                GameLogger.LogUnitMove(ctx, game, army.UnitType, sourceWasHostile, originalTerritoryId, best, true, nation, controller.BotName ?? "Bot");
+                                GameLogger.LogUnitMove(ctx, game, army.UnitType, sourceWasHostile, originalTerritoryId, best, true, nation, controller.BotName ?? "Bot", routeVia);
                                 RemoveUnit(ctx, game, army);
                                 RemoveUnit(ctx, game, enemyUnit);
                                 GameLogger.LogBattleDestruction(ctx, game, army.UnitType, targetNation, enemyUnit.UnitType, best, nation, controller.BotName ?? "Bot");
@@ -889,7 +904,7 @@ public class BotService
                             game.PendingBattleAggressorNation = nation;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
+                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot", routeVia);
                             // Update territory control before pausing
                             await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
 
@@ -899,7 +914,7 @@ public class BotService
                     }
                 }
 
-                GameLogger.LogUnitMove(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot");
+                GameLogger.LogUnitMove(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot", routeVia);
                 await BotUnitActionDelay(ctx, game);
             }
         }
@@ -1034,7 +1049,9 @@ public class BotService
                         var oldController = tState.Controller;
                         int flagCount = game.TerritoryStates.Count(ts => ts.Controller == firstNation);
 
-                        if (flagCount >= 15)
+                        // Same 15-flag-per-nation limit ManeuverController enforces and
+                        // TaxationRules caps flag revenue at.
+                        if (flagCount >= TaxationRules.MaxFlagsPerNation)
                         {
                             if (oldController != null)
                             {

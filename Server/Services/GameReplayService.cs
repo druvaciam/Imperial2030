@@ -127,6 +127,42 @@ public class GameReplayService
 
     private record UnitLedgerEntry(Nation Nation, UnitType UnitType, string Line);
 
+    /// <summary>
+    /// Turns the route recorded on a move's log entry (ActionMetadata.RouteVia) into the fleet ids on the
+    /// replay board that sit in those sea regions, so the move can be replayed along the SAME route it
+    /// originally took.
+    ///
+    /// Without this the replay calls MoveArmy with no fleets named and the endpoint auto-selects its own
+    /// convoy - a legal route, but frequently not the one the original game used, which then gets written
+    /// into the replayed game's log as a different journey. That is what made a replay draw an army
+    /// crossing seas it never went near.
+    ///
+    /// Returns null when the route names no sea regions (a rail-only move, which needs no fleets) or when
+    /// a region on it has no free fleet on the replay board. Null means "no instruction", leaving the
+    /// endpoint to choose as before - the same behaviour as an action logged before RouteVia existed.
+    /// </summary>
+    private static List<Guid>? ResolveLoggedConvoyFleets(
+        ApplicationDbContext context, Guid replayGameId, Nation nation, List<string>? routeVia)
+    {
+        if (routeVia == null || routeVia.Count == 0) return null;
+
+        var seaLegs = routeVia
+            .Where(id => TerritoryData.AllTerritories.Any(t => t.Id == id && t.Type == TerritoryType.Sea))
+            .ToList();
+        if (seaLegs.Count == 0) return null;
+
+        var fleetIds = new List<Guid>();
+        foreach (var seaId in seaLegs)
+        {
+            var fleet = context.Units.FirstOrDefault(u =>
+                u.GameId == replayGameId && u.Nation == nation && u.UnitType == UnitType.Fleet
+                && u.TerritoryId == seaId && !u.HasConvoyed);
+            if (fleet == null) return null;
+            fleetIds.Add(fleet.Id);
+        }
+        return fleetIds;
+    }
+
     private static Dictionary<Guid, (Nation Nation, UnitType UnitType, string TerritoryId)> SnapshotUnits(
         ApplicationDbContext context, Guid replayGameId)
     {
@@ -444,7 +480,9 @@ public class GameReplayService
                                 var armyBattleTarget = FindAutoResolvedBattleTarget(actions, i, armyMeta.ToTerritoryId, action.Nation!.Value);
                                 result = await maneuverController.MoveArmy(replayGameId, new MoveUnitRequest {
                                     UnitId = armyUnit.Id, DestinationId = armyMeta.ToTerritoryId, IsHostile = armyMeta.IsHostileMove ?? false,
-                                    BattleTargetNation = armyBattleTarget?.DefenderNation, BattleTargetUnitType = armyBattleTarget?.DefenderUnitType
+                                    BattleTargetNation = armyBattleTarget?.DefenderNation, BattleTargetUnitType = armyBattleTarget?.DefenderUnitType,
+                                    // Replay the journey the army actually made, not one the endpoint picks now.
+                                    ConvoyFleetIds = ResolveLoggedConvoyFleets(context, replayGameId, action.Nation!.Value, armyMeta.RouteVia)
                                 });
                                 RecordMoveCombatDestructions(context, replayGameId, unitsBeforeArmyMove, armyMeta.ToTerritoryId, destroyedByCurrentMove);
                                 if (result is BadRequestObjectResult)
@@ -680,15 +718,28 @@ public class GameReplayService
                             if (fpMeta != null && !string.IsNullOrEmpty(fpMeta.TerritoryId))
                             {
                                 var fpTerr = context.TerritoryStates.FirstOrDefault(ts => ts.GameId == replayGameId && ts.TerritoryId == fpMeta.TerritoryId);
-                                if (fpTerr != null)
+                                // Only when the control change has not already happened. Flag placement is a
+                                // DERIVED entry: UpdateTerritoryControl runs inside the real Maneuver endpoints
+                                // and both moves the flag and logs it as a natural side effect of the preceding
+                                // MoveArmy/MoveFleet action this replay just dispatched. Re-applying it here
+                                // would be a no-op write, but the log call is not - it produced a second,
+                                // identical entry in the replay target's log a moment after the first. Same
+                                // reasoning as the "Battle" case above.
+                                //
+                                // The write and the log still run when the controller does NOT already match:
+                                // that is a change no replayed move accounted for, and dropping it would leave
+                                // the board wrong. See the "Production"/"Import" cases for why the replay
+                                // target's own log needs these entries at all.
+                                if (fpTerr != null && fpTerr.Controller != fpMeta.NewController)
                                 {
                                     fpTerr.Controller = fpMeta.NewController;
-                                    context.SaveChanges();
-                                    // See the matching comment on the "Production"/"Import" cases: without
-                                    // this, a later replay of the replay target's own action log has no
-                                    // record that this territory's control changed hands.
                                     var fpGame = context.Games.First(g => g.Id == replayGameId);
                                     GameLogger.LogTerritoryControlChange(context, fpGame, fpMeta.TerritoryId, fpMeta.OldController, fpMeta.NewController, action.PlayerName);
+                                    // Saved after the log entry is added, not before: GameLogger only tracks
+                                    // the new row, so a SaveChanges that runs first persists the control
+                                    // change and leaves the entry to be picked up by whatever action happens
+                                    // to save next - or dropped entirely when this is the last one.
+                                    context.SaveChanges();
                                 }
                             }
                             result = new OkResult();

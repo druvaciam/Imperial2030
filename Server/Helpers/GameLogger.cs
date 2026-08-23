@@ -33,11 +33,8 @@ public static class GameLogger
             Nation = nation,
             Metadata = metadata != null ? System.Text.Json.JsonSerializer.Serialize(metadata) : string.Empty
         };
-        game.Actions.Add(action);
-        if (context != null)
-        {
-            context.GameActions.Add(action);
-        }
+        game.Actions?.Add(action);
+        context?.GameActions.Add(action);
     }
 
     public static void LogRondelMove(ApplicationDbContext? context, Game game, int targetSlot, int? currentSlot, int cost, Nation nation, string playerName)
@@ -45,10 +42,16 @@ public static class GameLogger
         LogAction(context, game, "Move", nation, playerName, new RondelMoveMetadata { TargetSlot = targetSlot, CurrentSlot = currentSlot, Cost = cost });
     }
 
-    public static void LogUnitMove(ApplicationDbContext? context, Game game, UnitType unitType, bool sourceIsHostile, string originId, string targetId, bool isHostileMove, Nation nation, string playerName)
+    /// <param name="routeVia">
+    /// Every territory the unit passed through, in travel order, excluding origin and destination -
+    /// rail hops and convoy sea regions alike. Null or empty for a plain step to an adjacent territory.
+    /// Only the caller performing the move knows this; it cannot be worked out from the log afterwards,
+    /// so anything replaying or drawing the move has to read it from here rather than guess.
+    /// </param>
+    public static void LogUnitMove(ApplicationDbContext? context, Game game, UnitType unitType, bool sourceIsHostile, string originId, string targetId, bool isHostileMove, Nation nation, string playerName, List<string>? routeVia = null)
     {
         string actionType = unitType == UnitType.Fleet ? "MoveFleet" : "MoveArmy";
-        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove, SourceIsHostile = sourceIsHostile });
+        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove, SourceIsHostile = sourceIsHostile, RouteVia = routeVia });
     }
 
     public static void LogUnitStay(ApplicationDbContext? context, Game game, UnitType unitType, bool sourceIsHostile, string territoryId, Nation nation, string playerName)
@@ -56,10 +59,11 @@ public static class GameLogger
         string actionType = unitType == UnitType.Fleet ? "MoveFleet" : "MoveArmy";
         LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = territoryId, ToTerritoryId = territoryId, SourceIsHostile = sourceIsHostile });
     }
-    public static void LogUnitMoveAwaitingResponse(ApplicationDbContext? context, Game game, UnitType unitType, bool sourceIsHostile, string originId, string targetId, bool isHostileMove, string defendersStr, Nation nation, string playerName)
+    /// <param name="routeVia">See LogUnitMove - same reason, for a move that opens a battle negotiation.</param>
+    public static void LogUnitMoveAwaitingResponse(ApplicationDbContext? context, Game game, UnitType unitType, bool sourceIsHostile, string originId, string targetId, bool isHostileMove, string defendersStr, Nation nation, string playerName, List<string>? routeVia = null)
     {
         string actionType = unitType == UnitType.Fleet ? "MoveFleet" : "MoveArmy";
-        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove, DefendersStr = defendersStr, SourceIsHostile = sourceIsHostile });
+        LogAction(context, game, actionType, nation, playerName, new ActionMetadata { FromTerritoryId = originId, ToTerritoryId = targetId, IsHostileMove = isHostileMove, DefendersStr = defendersStr, SourceIsHostile = sourceIsHostile, RouteVia = routeVia });
     }
 
     public static void LogBattleDestruction(ApplicationDbContext? context, Game game, UnitType attackerType, Nation targetNation, UnitType defenderType, string territoryId, Nation nation, string playerName)

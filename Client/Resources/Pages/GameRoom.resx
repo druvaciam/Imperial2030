@@ -197,4 +197,10 @@
   <data name="Toast_GameResumed" xml:space="preserve"><value>Game Resumed.</value></data>
   <data name="Toast_BattleFight" xml:space="preserve"><value>{0} chose FIGHT against {1}!</value></data>
   <data name="Toast_BattlePeace" xml:space="preserve"><value>{0} agreed to PEACE.</value></data>
+
+  <!-- Replay playback speed -->
+  <data name="Replay_Speed" xml:space="preserve"><value>Playback speed (delay between actions)</value></data>
+  <data name="Replay_Slower" xml:space="preserve"><value>Slower</value></data>
+  <data name="Replay_Faster" xml:space="preserve"><value>Faster</value></data>
+  <data name="Replay_SpeedValue" xml:space="preserve"><value>{0}s</value></data>
 </root>

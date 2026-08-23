@@ -1,4 +1,5 @@
 @using Imperial2030.Shared.Models
+@using Imperial2030.Shared.Constants
 @using System.Globalization
 @using System.Linq
 @inject IStringLocalizer<Rondel> L
@@ -143,21 +144,14 @@
 
         if (index == Imperial2030.Shared.Constants.RondelData.TaxationSlot) // Taxation Calculation
         {
-            int factoryRevenue = 0;
-            var territoriesWithFactories = Game.Territories.Where(ts => ts.HasFactory).ToList();
-            foreach (var ts in territoriesWithFactories)
-            {
-                var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-                if (territoryDef != null && territoryDef.Nation == CurrentTurnNation)
-                {
-                    bool hasHostileArmy = Game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != CurrentTurnNation && u.IsHostile);
-                    if (!hasHostileArmy) factoryRevenue += 2;
-                }
-            }
-            int flagRevenue = Game.Territories.Count(ts => ts.Controller == CurrentTurnNation);
-            int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
+            // Was re-deriving this inline and, uniquely among the call sites, omitted the 15-flag
+            // cap — it applied only the 23M total cap. Unreachable in practice (the board enforces
+            // 15 flags per nation) but it would have drifted the moment that limit changed.
+            int unblockedFactories = TaxationRules.CountUnblockedFactories(Game, CurrentTurnNation);
+            int flagCount = Game.Territories.Count(ts => ts.Controller == CurrentTurnNation);
+            int totalTaxRevenue = TaxationRules.ComputeRevenue(unblockedFactories, flagCount);
             int unitCount = Game.Units.Count(u => u.Nation == CurrentTurnNation);
-            int soldiersPay = unitCount * 1;
+            int soldiersPay = TaxationRules.ComputeSoldiersPay(unitCount);
             
             int bonus = 0;
             if (Game.VariantBonusOnlyForTaxIncreases)

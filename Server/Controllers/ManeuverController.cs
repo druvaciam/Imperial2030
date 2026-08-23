@@ -406,25 +406,40 @@ public class ManeuverController : ControllerBase
         if (currentT.Type != TerritoryType.Land || destT.Type != TerritoryType.Land)
             return BadRequest("Armies can only move on land.");
 
-        // Adjacency Check
-        bool isAdjacent = neighbors.Contains(request.DestinationId);
+        // Everything the army passes through on the way, for the log. Stays null for a plain step to an
+        // adjacent territory, which has nothing in between.
+        List<string>? routeVia = null;
 
-        if (!isAdjacent)
+        // Naming fleets is an explicit instruction to go by sea, so it overrides the mode the rules
+        // would otherwise pick. Rail and convoy can both reach the same pair of territories, and
+        // silently railing an army whose carrier fleets the caller chose is wrong twice over: the
+        // player asked for a convoy, and a replay feeding a logged convoy back in would reproduce it as
+        // a rail move and record a different journey than the one that happened.
+        bool convoyRequested = request.ConvoyFleetIds != null && request.ConvoyFleetIds.Any();
+
+        // Adjacent step, else rail, else convoy - see ManeuverHelper.DetermineArmyMoveMode. The bot's
+        // maneuver asks the same helper, so the two cannot drift apart again.
+        var moveMode = convoyRequested
+            ? Imperial2030.Server.Helpers.ManeuverHelper.ArmyMoveMode.Convoy
+            : Imperial2030.Server.Helpers.ManeuverHelper.DetermineArmyMoveMode(game, unit.TerritoryId, request.DestinationId, nation);
+
+        if (moveMode != Imperial2030.Server.Helpers.ManeuverHelper.ArmyMoveMode.AdjacentStep)
         {
             // Check Rail Logic
-            if (Imperial2030.Server.Helpers.ManeuverHelper.CanMoveByRail(game, unit.TerritoryId, request.DestinationId, nation))
+            if (moveMode == Imperial2030.Server.Helpers.ManeuverHelper.ArmyMoveMode.Rail)
             {
                 // Move valid by Rail - No extra cost/side effects for now
+                routeVia = Imperial2030.Server.Helpers.ManeuverHelper.BuildMoveRoute(game, unit.TerritoryId, request.DestinationId, nation, moveMode, null);
             }
             else
             {
                 // Check Convoy Logic
                 List<Unit>? usedFleets = null;
 
-                if (request.ConvoyFleetIds != null && request.ConvoyFleetIds.Any())
+                if (convoyRequested)
                 {
                     // Validate specific fleets provided by client
-                    usedFleets = Imperial2030.Server.Helpers.ManeuverHelper.ValidateSpecificConvoyFleets(game, unit.TerritoryId, request.DestinationId, nation, request.ConvoyFleetIds);
+                    usedFleets = Imperial2030.Server.Helpers.ManeuverHelper.ValidateSpecificConvoyFleets(game, unit.TerritoryId, request.DestinationId, nation, request.ConvoyFleetIds!);
                     if (usedFleets == null)
                     {
                         return BadRequest("Invalid convoy path with specified fleets.");
@@ -438,6 +453,11 @@ public class ManeuverController : ControllerBase
 
                 if (usedFleets != null)
                 {
+                    // Recorded for the log before the fleets are flagged below: once HasConvoyed is set
+                    // the route can no longer be reconstructed from the board, and origin+destination
+                    // alone never identified it (several sea routes can connect the same pair).
+                    routeVia = Imperial2030.Server.Helpers.ManeuverHelper.BuildMoveRoute(game, unit.TerritoryId, request.DestinationId, nation, moveMode, usedFleets);
+
                     // Mark fleets as used
                     foreach (var fleet in usedFleets)
                     {
@@ -535,7 +555,7 @@ public class ManeuverController : ControllerBase
 
             if (enemyUnit != null)
             {
-                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, controller.GetPlayerName(_context));
+                GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, controller.GetPlayerName(_context), routeVia);
                 // Destroy Both
                 _context.Units.Remove(unit);
                 _context.Units.Remove(enemyUnit);
@@ -567,7 +587,7 @@ public class ManeuverController : ControllerBase
 
                     if (enemyUnit != null)
                     {
-                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, controller.GetPlayerName(_context));
+                        GameLogger.LogUnitMove(_context, game, unit.UnitType, sourceWasHostile, sourceTerritory, request.DestinationId, true, nation, controller.GetPlayerName(_context), routeVia);
                         // Destroy Both
                         _context.Units.Remove(unit);
                         _context.Units.Remove(enemyUnit);
@@ -585,7 +605,7 @@ public class ManeuverController : ControllerBase
                     game.PendingBattleDefenders = foreignDefenders.ToList();
 
                     string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
-                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignDefenders), nation, controller.GetPlayerName(_context));
+                    GameLogger.LogUnitMoveAwaitingResponse(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, string.Join(", ", foreignDefenders), nation, controller.GetPlayerName(_context), routeVia);
                 }
             }
         }
@@ -594,7 +614,7 @@ public class ManeuverController : ControllerBase
         {
             if (!moveAlreadyLogged)
             {
-                GameLogger.LogUnitMove(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, nation, controller.GetPlayerName(_context));
+                GameLogger.LogUnitMove(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, nation, controller.GetPlayerName(_context), routeVia);
             }
             await UpdateTerritoryControl(game);
             await TryAutoAdvanceManeuver(game, nation);
@@ -1019,7 +1039,9 @@ public class ManeuverController : ControllerBase
                         var firstNationControllerId = game.NationStates.FirstOrDefault(ns => ns.Nation == firstNation)?.ControllerId;
                         var firstNationPlayerName = game.Players.FirstOrDefault(p => p.Id == firstNationControllerId)?.GetPlayerName(_context) ?? GameConstants.SystemPlayerName;
 
-                        if (flagCount >= 15)
+                        // Same limit TaxationRules.MaxFlagsPerNation caps tax revenue at - a
+                        // nation only owns 15 flags, so it can never control more than 15 regions.
+                        if (flagCount >= TaxationRules.MaxFlagsPerNation)
                         {
                             if (oldController != null)
                             {

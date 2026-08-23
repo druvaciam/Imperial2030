@@ -22,6 +22,14 @@ public class ReplaySession
     public required ApplicationDbContext Context { get; set; }
     public required List<GameActionDto> Actions { get; init; }
     public int CurrentActionIndex { get; set; } = -1;
+
+    /// <summary>
+    /// Delay between visibly-applied actions, per session rather than per manager: each viewer sets
+    /// their own playback speed and must not change anyone else's. Seeded from the manager's
+    /// <see cref="ReplaySessionManager.PacingMs"/> when the session starts.
+    /// </summary>
+    public int PacingMs { get; set; } = Imperial2030.Shared.Constants.ReplaySpeed.DefaultPacingMs;
+
     public bool IsPaused { get; set; }
     public bool IsComplete { get; set; }
     public string? ErrorMessage { get; set; }
@@ -46,9 +54,17 @@ public class ReplaySession
 /// </summary>
 public class ReplaySessionManager : IDisposable
 {
-    // Time between visibly-applied steps during playback. Settable (not const) so tests can fast-forward it,
-    // mirroring BotService.SkipDelays.
-    public int PacingMs { get; set; } = 5_000;
+    // Starting pace for newly created sessions. Settable (not const) so tests can fast-forward it,
+    // mirroring BotService.SkipDelays. A viewer's own speed choice then lives on ReplaySession.PacingMs;
+    // this stays the default every session begins at.
+    public int PacingMs { get; set; } = Shared.Constants.ReplaySpeed.DefaultPacingMs;
+
+    // The per-step delay is served in slices this long rather than one Task.Delay(PacingMs), so changing
+    // speed mid-beat takes effect within a slice instead of after the current (up to 10s) wait finishes.
+    private const int PacingSliceMs = 100;
+
+    // How often the loop re-checks a paused session for resumption.
+    private const int PauseCheckMs = 200;
 
     // How long a session may go untouched before it's evicted. StopAsync (the viewer clicking "Exit Replay",
     // or GameRoom.razor's DisposeAsync on navigating away) is only ever best-effort: a closed laptop, a
@@ -146,7 +162,8 @@ public class ReplaySessionManager : IDisposable
             SourceGameId = sourceGame.Id,
             ReplayGameId = replayGameId,
             Context = replayContext,
-            Actions = orderedActions
+            Actions = orderedActions,
+            PacingMs = PacingMs
         };
         _sessions[replaySessionId] = session;
 
@@ -165,6 +182,20 @@ public class ReplaySessionManager : IDisposable
         if (_sessions.TryGetValue(replaySessionId, out var session)) session.IsPaused = false;
     }
 
+    /// <summary>
+    /// Sets a session's playback speed, returning the value actually applied after normalization, or
+    /// null when no such session exists. Takes effect on the beat currently being waited out, not just
+    /// the next one — see PacingSliceMs.
+    /// </summary>
+    public int? SetSpeed(Guid replaySessionId, int pacingMs)
+    {
+        if (!_sessions.TryGetValue(replaySessionId, out var session)) return null;
+
+        session.PacingMs = Shared.Constants.ReplaySpeed.Normalize(pacingMs);
+        session.LastAccessedUtc = DateTime.UtcNow;
+        return session.PacingMs;
+    }
+
     public async Task<bool> ResetAsync(Guid replaySessionId)
     {
         if (!_sessions.TryGetValue(replaySessionId, out var session)) return false;
@@ -180,6 +211,8 @@ public class ReplaySessionManager : IDisposable
         session.Context = CreateInMemoryContext(Guid.NewGuid());
         await SeedGameAsync(session.Context, session.ReplayGameId, "Replay", setupMeta);
 
+        // session.PacingMs is deliberately left alone: Reset restarts the playback, not the viewer's
+        // chosen speed.
         session.CurrentActionIndex = -1;
         session.IsPaused = false;
         session.IsComplete = false;
@@ -265,11 +298,7 @@ public class ReplaySessionManager : IDisposable
                     if (wasSkipped) return;
 
                     await CaptureSnapshotAsync(session, replayGamesController);
-                    await Task.Delay(PacingMs, token);
-                    while (session.IsPaused)
-                    {
-                        await Task.Delay(200, token);
-                    }
+                    await WaitForNextStepAsync(session, token);
                 });
 
             session.IsComplete = true;
@@ -291,6 +320,34 @@ public class ReplaySessionManager : IDisposable
         {
             session.ErrorMessage = ex.Message;
             _logger.LogError(ex, "[ReplaySession {Id}] Replay loop failed", session.Id);
+        }
+    }
+
+    /// <summary>
+    /// Waits out one playback beat, then holds while the session is paused.
+    ///
+    /// The wait is served in <see cref="PacingSliceMs"/> slices re-reading session.PacingMs each time,
+    /// rather than a single Task.Delay: a viewer who drops from 10s to 0.5s should see playback speed up
+    /// right away instead of sitting through the remainder of a delay that was scheduled at the old
+    /// value. Lowering the speed below what has already elapsed simply ends the wait immediately.
+    ///
+    /// A PacingMs of 0 (what the tests set) skips the loop entirely, preserving the old fast-forward
+    /// behaviour exactly.
+    /// </summary>
+    private static async Task WaitForNextStepAsync(ReplaySession session, CancellationToken token)
+    {
+        int waited = 0;
+        while (waited < session.PacingMs)
+        {
+            token.ThrowIfCancellationRequested();
+            var slice = Math.Min(PacingSliceMs, session.PacingMs - waited);
+            await Task.Delay(slice, token);
+            waited += slice;
+        }
+
+        while (session.IsPaused)
+        {
+            await Task.Delay(PauseCheckMs, token);
         }
     }
 

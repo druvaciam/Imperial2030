@@ -76,7 +76,15 @@ public class DisplayNameLocalizer
     /// </summary>
     public string RondelSlot(int slotIndex) => Lookup($"Rondel_Slot_{slotIndex}", RondelData.GetSlotName(slotIndex));
 
+    /// <summary>Standalone unit label, capitalised — dropdown options, unit lists, phrase starts.</summary>
     public string UnitType(UnitType unitType) => Lookup($"UnitType_{unitType}", unitType.ToString());
+
+    /// <summary>
+    /// Lowercase unit noun for mid-sentence use. Separate from <see cref="UnitType"/> because that
+    /// one doubles as a standalone label: reusing it inside a sentence wrongly capitalises the noun.
+    /// </summary>
+    public string UnitTypeLower(UnitType unitType) =>
+        Lookup($"UnitTypeLower_{unitType}", unitType.ToString().ToLowerInvariant());
 
     /// <summary>Single-letter unit marker drawn on the map ("A"/"F").</summary>
     public string UnitGlyph(UnitType unitType) => Lookup($"UnitGlyph_{unitType}",

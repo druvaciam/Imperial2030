@@ -39,9 +39,52 @@ public class TcpTrainingServer : BackgroundService
         public int? PendingImportRemaining { get; set; } // Non-null while stepping through an Import decision sequence
         public int ImportUnitsPlacedThisSequence { get; set; } = 0; // Tracks whether the current Import sequence placed anything, for the wasted-import-with-money penalty
 
+        // Where each unit moved FROM on its previous maneuver, so a move straight back to it can be
+        // recognised as a reversal. Keyed by unit id and kept for the whole game: the two halves of an
+        // oscillation land in different maneuver turns, so per-turn state cannot see it.
+        public Dictionary<Guid, string> PreviousMoveOrigin { get; set; } = new();
+
         public int TotalSessionSteps { get; set; } = 0;
         public int LastTurnCount { get; set; } = -1;
         public int ConsecutiveSameTurnSteps { get; set; } = 0;
+    }
+
+    /// <summary>
+    /// Penalty for shuffling a unit back to the territory it just came from without gaining anything.
+    /// Sized above the small flag/positioning rewards so an agent cannot farm them by oscillating, but
+    /// well below the wasted-Rondel-turn penalties: the move is pointless, not actively damaging.
+    /// </summary>
+    private const float PointlessReversalPenalty = 4.0f;
+
+    /// <summary>
+    /// Whether this move walks a unit straight back to the territory it left on its previous maneuver
+    /// without gaining anything - the Kazakhstan -&gt; Chongqing -&gt; Kazakhstan pattern, two full turns
+    /// spent to end up exactly where it started.
+    ///
+    /// Nothing else in the reward function objects to it: moving costs no money, so the wasted-Rondel
+    /// penalties never fire, and the flag and hostile-clearing rewards simply pay nothing - leaving a
+    /// zero-signal action the agent has no reason to avoid.
+    ///
+    /// Deliberately narrow, so purposeful returns stay unpenalized:
+    ///   - staying put is not a reversal at all;
+    ///   - a hostile move is an attack, whichever direction it goes;
+    ///   - returning to a territory this nation does NOT already hold can win a flag, which is a real
+    ///     gain even though the unit has been there before.
+    /// </summary>
+    /// <param name="previousMoveOrigin">Unit id -&gt; where it moved FROM last maneuver (TrainingSession.PreviousMoveOrigin).</param>
+    public static bool IsPointlessReversal(
+        Game game, Unit unit, string origin, string target, bool isHostileMove,
+        IReadOnlyDictionary<Guid, string> previousMoveOrigin)
+    {
+        if (target == origin) return false;
+        if (isHostileMove) return false;
+        if (!previousMoveOrigin.TryGetValue(unit.Id, out var previousOrigin) || previousOrigin != target) return false;
+
+        // Home provinces are never flagged, so returning to one can never win a flag either.
+        var targetDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
+        if (targetDef?.Nation == unit.Nation) return true;
+
+        return game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == target)?.Controller == unit.Nation;
     }
 
     public class TcpRequest
@@ -515,19 +558,9 @@ public class TcpTrainingServer : BackgroundService
                     expectedTaxTreasuryGain = taxPreview.ExpectedTreasuryGain;
                     expectedTaxPowerGain = taxPreview.ExpectedPowerGain;
 
-                    int factoryRevenue = 0;
-                    var territoriesWithFactories = game.TerritoryStates.Where(ts => ts.HasFactory).ToList();
-                    foreach (var ts in territoriesWithFactories)
-                    {
-                        var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-                        if (territoryDef != null && territoryDef.Nation == preNs.Nation)
-                        {
-                            bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != preNs.Nation && u.IsHostile);
-                            if (!hasHostileArmy) factoryRevenue += 2;
-                        }
-                    }
-                    int flagRevenue = Math.Min(15, game.TerritoryStates.Count(ts => ts.Controller == preNs.Nation));
-                    expectedTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
+                    int unblockedFactories = Helpers.TaxationHelper.CountUnblockedFactories(game, preNs.Nation);
+                    int flagCount = game.TerritoryStates.Count(ts => ts.Controller == preNs.Nation);
+                    expectedTaxRevenue = TaxationRules.ComputeRevenue(unblockedFactories, flagCount);
                     expectedTaxCosts = game.Units.Count(u => u.Nation == preNs.Nation);
                 }
             }
@@ -578,8 +611,14 @@ public class TcpTrainingServer : BackgroundService
                     // cycle Taxation/Investor instead. This is deliberately unconditional (unlike the destroy/occupy
                     // rewards below, which only pay out when it visibly hurts a specific leading rival) — growth is
                     // valuable to the acting nation on its own merits, not contingent on comparing to a rival's interest.
-                    explicitBonusReward += 5.0f;
-                    _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +5");
+                    // Sized to be comparable to the "wasted Factory action" penalty below (-8 base), not dwarfed by
+                    // it — a +5/-15+ asymmetry taught the agent to just never visit the Factory slot at all, which
+                    // showed up empirically as RL-3 building zero factories in 4 of 6 worst-loss test games while
+                    // every single opponent bot built at least one in all 6 (see the RL-3 worst-loss export
+                    // investigation). The goal here is a fair expected value for attempting under uncertainty, not
+                    // eliminating the penalty for genuinely wasted attempts.
+                    explicitBonusReward += 10.0f;
+                    _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +10");
                 }
             }
 
@@ -729,12 +768,44 @@ public class TcpTrainingServer : BackgroundService
                                     bool remainingDefenders = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == session.ManeuverSelectedTerritoryId && u.Nation == unit.Nation && u.UnitType == UnitType.Army);
                                     if (!remainingDefenders)
                                     {
-                                        _logger.LogWarning($"[RL PENALTY] {unit.Nation} emptied its factory city '{session.ManeuverSelectedTerritoryId}' of army defenders by moving to '{target}'.");
-                                        explicitBonusReward -= 5.0f;
+                                        // Only a real risk if an enemy army can actually reach the now-undefended city
+                                        // this turn - via land adjacency, rail, or convoy, same as any other maneuver
+                                        // (a plain adjacency check would miss a fleet-convoyed army several sea zones
+                                        // away). Penalizing this unconditionally punished the correct move (grabbing
+                                        // a free, undefended flag with zero enemies anywhere in range) exactly as
+                                        // hard as the genuinely reckless one.
+                                        // Not filtered by IsHostile: that flag describes whether a unit is currently
+                                        // sitting hostilely where it already is, not whether it's capable of a
+                                        // hostile move next turn - a presently-peaceful enemy army can still turn
+                                        // hostile and take the now-undefended city.
+                                        var vacatedId = session.ManeuverSelectedTerritoryId;
+                                        bool enemyArmyCanReach = game.Units
+                                            .Where(u => u.Nation != unit.Nation && u.UnitType == UnitType.Army)
+                                            .Any(enemy => Imperial2030.Server.Helpers.ManeuverHelper
+                                                .GetAllReachableArmyDestinations(game, enemy.TerritoryId, enemy.Nation)
+                                                .Any(d => d.TerritoryId == vacatedId));
+
+                                        if (enemyArmyCanReach)
+                                        {
+                                            _logger.LogWarning($"[RL PENALTY] {unit.Nation} emptied its factory city '{session.ManeuverSelectedTerritoryId}' of army defenders by moving to '{target}', with an enemy army able to reach it.");
+                                            explicitBonusReward -= 5.0f;
+                                        }
                                     }
                                 }
                             }
                         }
+
+                        // Penalize walking a unit straight back where it came from when the round trip
+                        // achieves nothing - see IsPointlessReversal.
+                        string moveOrigin = session.ManeuverSelectedTerritoryId!;
+                        if (IsPointlessReversal(game, unit, moveOrigin, target, isHostileMove, session.PreviousMoveOrigin))
+                        {
+                            _logger.LogWarning($"[RL PENALTY] {unit.Nation} moved {unitType} back to '{target}', the territory it left last maneuver, gaining nothing. Penalty: -{PointlessReversalPenalty}");
+                            explicitBonusReward -= PointlessReversalPenalty;
+                        }
+                        // Staying put is not a move and must not overwrite the history: origin == target
+                        // there, which would make the next stay look like a reversal.
+                        if (target != moveOrigin) session.PreviousMoveOrigin[unit.Id] = moveOrigin;
 
                         unit.TerritoryId = target;
                         unit.IsHostile = isHostileMove;
@@ -836,39 +907,53 @@ public class TcpTrainingServer : BackgroundService
 
             if (isInvestorTurn && oldMask != null)
             {
-                var winningNations = game.NationStates.Where(n => n.Power >= 15).Select(n => n.Nation).ToList();
-                if (winningNations.Any())
+                // Graduated replacement for the old hard "Power >= 15" cliff: a nation starts contributing an
+                // investment signal once it's a credible growth bet (Power > InvestmentRampStart), ramping up
+                // to the original full-strength signal at Power >= InvestmentRampEnd (still "practically a
+                // winner"), instead of only ever firing once the nation is already almost certain to win — by
+                // which point its cheap early bonds are long since bought up by other players. See the RL-3
+                // worst-loss export investigation: the old cliff never rewarded buying a nation's $2-$12 bonds
+                // while it was still cheap, only its $25-$30 ones once Power hit 15.
+                const int InvestmentRampStart = 5;
+                const int InvestmentRampEnd = 15;
+                float BondInvestmentWeight(int power)
                 {
-                    bool passed = req.Action == 63;
-                    bool boughtWinningBond = false;
-                    bool couldBuyWinningBond = false;
+                    if (power <= InvestmentRampStart) return 0f;
+                    if (power >= InvestmentRampEnd) return 1f;
+                    return (power - InvestmentRampStart) / (float)(InvestmentRampEnd - InvestmentRampStart);
+                }
 
-                    var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
-                    for (int i = 9; i <= 62; i++)
-                    {
-                        if (oldMask[i])
-                        {
-                            int bondIdx = i - 9;
-                            int nationIdx = bondIdx / 9;
-                            var n = imperial2030Nations[nationIdx];
-                            if (winningNations.Contains(n))
-                            {
-                                couldBuyWinningBond = true;
-                                if (req.Action == i) boughtWinningBond = true;
-                            }
-                        }
-                    }
+                bool passed = req.Action == 63;
+                float bestAffordableWeight = 0f;
+                float boughtWeight = 0f;
 
-                    if (passed && couldBuyWinningBond)
+                var imperial2030Nations = new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe };
+                for (int i = 9; i <= 62; i++)
+                {
+                    if (oldMask[i])
                     {
-                        explicitBonusReward -= 50.0f;
-                        _logger.LogWarning($"[RL PENALTY] Passed on investment when a nation was close to winning (Power >= 15). Penalty: -50");
+                        int bondIdx = i - 9;
+                        int nationIdx = bondIdx / 9;
+                        var n = imperial2030Nations[nationIdx];
+                        var candidateNs = game.NationStates.First(x => x.Nation == n);
+                        float weight = BondInvestmentWeight(candidateNs.Power);
+
+                        if (weight > bestAffordableWeight) bestAffordableWeight = weight;
+                        if (req.Action == i) boughtWeight = weight;
                     }
-                    else if (boughtWinningBond)
-                    {
-                        explicitBonusReward += 20.0f;
-                        _logger.LogInformation($"[RL REWARD] Invested in a winning nation (Power >= 15). Reward: +20");
-                    }
+                }
+
+                if (passed && bestAffordableWeight > 0f)
+                {
+                    float penalty = -50.0f * bestAffordableWeight;
+                    explicitBonusReward += penalty;
+                    _logger.LogWarning($"[RL PENALTY] Passed on investment with a bond available in a growing nation (weight {bestAffordableWeight:F2}). Penalty: {penalty:F1}");
+                }
+                else if (!passed && boughtWeight > 0f)
+                {
+                    float bonus = 20.0f * boughtWeight;
+                    explicitBonusReward += bonus;
+                    _logger.LogInformation($"[RL REWARD] Invested in a growing nation (weight {boughtWeight:F2}). Reward: +{bonus:F1}");
                 }
             }
         }
@@ -1019,14 +1104,14 @@ public class TcpTrainingServer : BackgroundService
                 {
                     reward += 2.0f; // Reward if revenue > costs
                 }
-                else if (expectedTaxRevenue < expectedTaxCosts)
+                if (expectedTaxPowerGain > 5)
                 {
-                    reward -= 5.0f; // Penalty if revenue < costs
+                    reward += 5.0f; // Reward if power gain > 5
                 }
 
                 if (expectedTaxTreasuryGain <= 0 && expectedTaxPowerGain == 0)
                 {
-                    reward -= 3.0f; // Penalty for a fully wasted Taxation turn: no treasury gain, no power gain
+                    reward -= 5.0f; // Penalty for a fully wasted Taxation turn: no treasury gain, no power gain
                 }
             }
         }
@@ -1109,8 +1194,13 @@ public class TcpTrainingServer : BackgroundService
                     });
                     bool blocked = !allBuilt && allBuiltOrBlocked;
                     _logger.LogWarning($"[RL PENALTY] Wasted Factory action by {preNs.Nation}. NoMoney: {noMoney}, AllBuilt: {allBuilt}, Blocked: {blocked}, Cost: {moveCost}M");
-                    reward -= 15.0f;
-                    reward -= allBuilt ? 10.0f : 0;
+                    // Halved from -15/-10 (was up to -25 before any moveCost) so a single wasted attempt doesn't
+                    // outweigh two-plus successful builds at +10 above — the prior magnitude taught the agent to
+                    // just avoid the Factory slot outright rather than learn when it's actually worth the risk.
+                    // moveCost's own penalty is untouched: that reflects real in-game money lost on the move, not
+                    // an RL-specific shaping choice, so it stays proportional to the actual waste.
+                    reward -= 8.0f;
+                    reward -= allBuilt ? 5.0f : 0;
                     reward -= moveCost * 10.0f; // Extra penalty for wasting money on useless move
                 }
             }
@@ -1307,6 +1397,19 @@ public class TcpTrainingServer : BackgroundService
                     int usefulUnitCount = Math.Min(unitCount, sustainableUnitCapacity);
 
                     float denseFactor = (nation.Power / 5.0f);
+
+                    // Floor denseFactor at the bond's own breakeven point against what it cost (matching the
+                    // Cash * 0.9f weight above), so a freshly bought bond in a low-Power nation the agent
+                    // doesn't control registers as roughly reward-neutral instead of a large instant loss (cash
+                    // spent now, ~0 credited back because Power/5 rounds to 0 below Power 5). Without this, the
+                    // dense per-step shaping actively taught the agent that investing was bad, regardless of
+                    // whether it was actually a good trade — see the RL-3 worst-loss export investigation. Once
+                    // the nation's real Power/5 factor grows past this floor, it takes over as normal.
+                    if (bond.Interest > 0)
+                    {
+                        float purchaseBreakevenFactor = (bond.Cost * 0.9f) / bond.Interest;
+                        denseFactor = Math.Max(denseFactor, purchaseBreakevenFactor);
+                    }
 
                     if (nation.ControllerId == playerId)
                     {
@@ -1535,6 +1638,32 @@ public class TcpTrainingServer : BackgroundService
                 bool hasUnits = game.Units.Any(u => u.Nation == actingNs.Nation);
                 if (!hasUnits) isPenalized = true;
             }
+            else if (RondelData.IsProductionSlot(targetSlot))
+            {
+                // Wasted Production: no unblockaded home factory can currently produce (every eligible
+                // factory's unit type is already at cap). This branch was missing entirely - every other
+                // actionable slot in this loop previews its own "wasted move" reward penalty, but
+                // Production fell through to isPenalized=false unconditionally, so the agent had zero
+                // signal before a choice the reward function (RondelData.IsProductionSlot branch further
+                // down this file) penalizes -10 for. Same class of bug as the Investor gap above, found by
+                // the same systematic check: does every reward penalty have a matching preview flag here.
+                var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == actingNs.Nation);
+                int currentArmies = game.Units.Count(u => u.Nation == actingNs.Nation && u.UnitType == UnitType.Army);
+                int currentFleets = game.Units.Count(u => u.Nation == actingNs.Nation && u.UnitType == UnitType.Fleet);
+                int maxArmies = NationData.GetMaxArmies(actingNs.Nation);
+                int maxFleets = NationData.GetMaxFleets(actingNs.Nation);
+
+                bool canProduceAnything = homeCities.Any(city =>
+                {
+                    var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
+                    if (ts == null || !ts.HasFactory) return false;
+                    bool isBlockaded = game.Units.Any(u => u.TerritoryId == city.Id && u.Nation != actingNs.Nation && u.UnitType == UnitType.Army && u.IsHostile);
+                    if (isBlockaded) return false;
+                    return city.CityType == CityType.LightBlue ? currentFleets < maxFleets : currentArmies < maxArmies;
+                });
+
+                if (!canProduceAnything) isPenalized = true;
+            }
             else if (targetSlot == RondelData.InvestorSlot)
             {
                 // Landing on Investor pays interest on the acting nation's own bonds from its own treasury
@@ -1552,13 +1681,18 @@ public class TcpTrainingServer : BackgroundService
             }
             else if (targetSlot == RondelData.TaxationSlot)
             {
-                // Wasted Taxation: no power-track gain AND net revenue (tax revenue minus soldiers' pay,
-                // before the controller's personal bonus) is zero or negative. Mirrors the reward penalty
-                // for a fully wasted Taxation turn ("expectedTaxTreasuryGain <= 0 && expectedTaxPowerGain
-                // == 0"), reusing TaxationHelper.PreviewTaxation rather than re-deriving the tax rules here.
+                // Wasted Taxation: no power-track gain AND no treasury gain. Mirrors the reward penalty
+                // for a fully wasted Taxation turn exactly ("expectedTaxTreasuryGain <= 0 &&
+                // expectedTaxPowerGain == 0") by reading the SAME already-computed ExpectedTreasuryGain
+                // field PreviewTaxation returns, rather than re-deriving an approximation of it from
+                // TotalTaxRevenue - SoldiersPay. That approximation was wrong in one real case: when
+                // treasury is low enough that actual soldiers' pay gets capped below the raw SoldiersPay
+                // figure (TaxationHelper caps it at what's actually payable), the approximation could
+                // read "wasted" while the real ExpectedTreasuryGain (which uses the capped payment) was
+                // still positive - a false-positive flag telling the agent to avoid a Taxation visit that
+                // the reward function would not actually have penalized.
                 var taxMovePreview = Helpers.TaxationHelper.PreviewTaxation(game, actingNs);
-                bool noNetRevenue = (taxMovePreview.TotalTaxRevenue - taxMovePreview.SoldiersPay) <= 0;
-                if (taxMovePreview.ExpectedPowerGain == 0 && noNetRevenue) isPenalized = true;
+                if (taxMovePreview.ExpectedPowerGain == 0 && taxMovePreview.ExpectedTreasuryGain <= 0) isPenalized = true;
             }
 
             state[i++] = isPenalized ? 1.0f : 0.0f;

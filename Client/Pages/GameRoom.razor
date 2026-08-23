@@ -1,6 +1,7 @@
 ﻿@page "/game/{GameId:guid}"
 @using Imperial2030.Shared.Models
 @using Imperial2030.Shared.Constants
+@using System.Globalization
 @attribute [Authorize]
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.SignalR.Client
@@ -541,6 +542,25 @@ else
                 <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" @onclick="TogglePauseReplay" disabled="@(replayState?.IsComplete == true)"><i class="bi @(replayState?.IsPaused == true ? "bi-play-fill" : "bi-pause-fill")"></i> @(replayState?.IsPaused == true ? L["Replay_Resume"] : L["Replay_Pause"])</button>
                 <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center" @onclick="ResetReplayViewing"><i class="bi bi-arrow-counterclockwise"></i> @L["Replay_Reset"]</button>
                 <button class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center" @onclick="ExitReplayViewing"><i class="bi bi-x-lg"></i> @L["Replay_Exit"]</button>
+
+                <span class="replay-speed-divider" aria-hidden="true"></span>
+
+                @* Slower/Faster step through ReplaySpeed's range rather than a free-text box, so the
+                   value is always on the allowed grid. The server normalizes anyway and returns what it
+                   applied, which is what gets displayed. *@
+                <div class="replay-speed" role="group" aria-label="@L["Replay_Speed"]">
+                    <button class="btn btn-sm btn-outline-light replay-speed-step" title="@L["Replay_Slower"]" aria-label="@L["Replay_Slower"]"
+                            @onclick="() => ChangeReplaySpeed(ReplaySpeed.StepMs)"
+                            disabled="@(CurrentPacingMs >= ReplaySpeed.MaxPacingMs)">
+                        <i class="bi bi-dash-lg"></i>
+                    </button>
+                    <span class="replay-speed-value" title="@L["Replay_Speed"]">@L["Replay_SpeedValue", FormatSeconds(CurrentPacingMs)]</span>
+                    <button class="btn btn-sm btn-outline-light replay-speed-step" title="@L["Replay_Faster"]" aria-label="@L["Replay_Faster"]"
+                            @onclick="() => ChangeReplaySpeed(-ReplaySpeed.StepMs)"
+                            disabled="@(CurrentPacingMs <= ReplaySpeed.MinPacingMs)">
+                        <i class="bi bi-plus-lg"></i>
+                    </button>
+                </div>
             </div>
         }
             <div class="main-board">
@@ -929,6 +949,42 @@ else
             grid-column: 1;
             grid-row: 3;
         }
+    }
+
+    /* Replay speed stepper */
+    .replay-speed {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+
+    /* Square +/- keys, fixed size so both match exactly regardless of glyph width. */
+    .replay-speed-step {
+        width: 1.9rem;
+        height: 1.9rem;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.05rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+
+    .replay-speed-value {
+        min-width: 3.1rem; /* fixed so the toolbar doesn't shift as the value goes 0.5s -> 10s */
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+        color: #ecf0f1;
+        font-size: 0.85rem;
+    }
+
+    .replay-speed-divider {
+        width: 1px;
+        align-self: stretch;
+        margin: 0 0.15rem;
+        background-color: rgba(255, 255, 255, 0.22);
     }
 
     .panel {
@@ -1396,6 +1452,7 @@ else
             }
             replaySessionId = await response.Content.ReadFromJsonAsync<Guid>();
             _replayBaselineEstablished = false;
+            _displayedTurnNation = null;
             isReplayMode = true;
             showGameOverPopup = false;
             _replayPollCts?.Cancel();
@@ -1433,6 +1490,10 @@ else
                         ClearStateChangeAnimations();
                         _replayBaselineEstablished = true;
                     }
+                    // Keep the Nations panel's ordering following the acting nation. Without this the
+                    // panel kept whatever order LoadGame established for the finished game and never
+                    // moved for the whole replay, since LoadGame is the only other caller.
+                    UpdateDisplayedNation(state.Game.CurrentTurnNation, immediate: true);
                     game = state.Game;
                     // A replay session's Players are freshly-generated GUIDs in its own in-memory game copy
                     // — nothing like the real game's player IDs selectedPlayerId was set from before Start
@@ -1462,11 +1523,58 @@ else
         await Http.PostAsync($"api/games/replay/{replaySessionId}/{action}", null);
     }
 
+    // Speed the UI shows. Falls back to the default before the first poll returns, and to the last
+    // applied value while a change is in flight, so the number never flickers back mid-click.
+    private int? _pendingPacingMs;
+    private int CurrentPacingMs => _pendingPacingMs ?? replayState?.PacingMs ?? ReplaySpeed.DefaultPacingMs;
+
+    /// <summary>Renders a pacing value as seconds, dropping the decimal for whole seconds ("5", "0.5").</summary>
+    private static string FormatSeconds(int pacingMs) =>
+        (pacingMs / 1000.0).ToString(pacingMs % 1000 == 0 ? "0" : "0.0", CultureInfo.CurrentCulture);
+
+    /// <summary>
+    /// Steps the replay delay by <paramref name="deltaMs"/> (positive = slower). The server normalizes
+    /// onto the allowed range and reports what it applied, which is what gets shown — so clamping at
+    /// either end can never leave the UI displaying a value the session isn't actually using.
+    /// </summary>
+    private async Task ChangeReplaySpeed(int deltaMs)
+    {
+        if (replaySessionId == null) return;
+
+        var requested = ReplaySpeed.Normalize(CurrentPacingMs + deltaMs);
+        _pendingPacingMs = requested;
+
+        try
+        {
+            var response = await Http.PostAsync($"api/games/replay/{replaySessionId}/speed?pacingMs={requested}", null);
+            if (response.IsSuccessStatusCode)
+            {
+                var applied = await response.Content.ReadFromJsonAsync<ReplaySpeedResponse>();
+                if (applied != null) _pendingPacingMs = applied.PacingMs;
+            }
+            else
+            {
+                // Session gone (stopped or idle-evicted): drop back to whatever the polled state says.
+                _pendingPacingMs = null;
+            }
+        }
+        catch (Exception)
+        {
+            _pendingPacingMs = null;
+        }
+    }
+
+    private class ReplaySpeedResponse
+    {
+        public int PacingMs { get; set; }
+    }
+
     private async Task ResetReplayViewing()
     {
         if (replaySessionId == null) return;
         await Http.PostAsync($"api/games/replay/{replaySessionId}/reset", null);
         _replayBaselineEstablished = false;
+        _displayedTurnNation = null;
         _replayPollCts?.Cancel();
         _replayPollCts = new CancellationTokenSource();
         _ = PollReplayLoop(_replayPollCts.Token);
@@ -1479,7 +1587,9 @@ else
         isReplayMode = false;
         replaySessionId = null;
         replayState = null;
+        _pendingPacingMs = null;
         _replayBaselineEstablished = false;
+        _displayedTurnNation = null;
         ClearStateChangeAnimations();
         if (sessionToStop != null)
         {
@@ -2478,28 +2588,12 @@ else
         var curGame = targetGame ?? game;
         if (curGame == null) return (0, 0, 0);
         var nation = nationState.Nation;
-        int factoryRevenue = 0;
-        var territoriesWithFactories = curGame.Territories.Where(ts => ts.HasFactory).ToList();
-        
-        foreach (var ts in territoriesWithFactories)
-        {
-            var territoryDef = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (territoryDef != null && territoryDef.Nation == nation) 
-            {
-                bool hasHostileArmy = curGame.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-                if (!hasHostileArmy)
-                {
-                    factoryRevenue += 2;
-                }
-            }
-        }
-
-        int flagRevenue = curGame.Territories.Count(ts => ts.Controller == nation);
-        flagRevenue = Math.Min(15, flagRevenue);
-        int totalTaxRevenue = Math.Min(23, factoryRevenue + flagRevenue);
+        int unblockedFactories = TaxationRules.CountUnblockedFactories(curGame, nation);
+        int flagCount = curGame.Territories.Count(ts => ts.Controller == nation);
+        int totalTaxRevenue = TaxationRules.ComputeRevenue(unblockedFactories, flagCount);
 
         int unitCount = curGame.Units.Count(u => u.Nation == nation);
-        int soldiersPay = unitCount * 1;
+        int soldiersPay = TaxationRules.ComputeSoldiersPay(unitCount);
         
         int simulatedTreasury = nationState.Treasury + totalTaxRevenue;
         int actualPay = Math.Min(simulatedTreasury, soldiersPay);
@@ -2567,10 +2661,19 @@ else
         public bool IsPaused { get; set; }
     }
 
-    private void UpdateDisplayedNation(Nation newNation)
+    /// <summary>
+    /// Rotates the Nations panel so the acting nation leads the list.
+    ///
+    /// In live play the change is held back briefly (see below) so the panel does not jump the instant
+    /// a turn ends. Replay passes <paramref name="immediate"/> because it sets its own rhythm: at the
+    /// fastest pacing a whole action takes 500ms, so a 3s lag would leave the panel several turns
+    /// behind the board it is supposed to describe.
+    /// </summary>
+    private void UpdateDisplayedNation(Nation newNation, bool immediate = false)
     {
-        if (_displayedTurnNation == null)
+        if (_displayedTurnNation == null || immediate)
         {
+            _nationRotationCts?.Cancel();
             _displayedTurnNation = newNation;
             return;
         }

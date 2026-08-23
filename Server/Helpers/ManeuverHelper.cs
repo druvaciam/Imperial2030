@@ -18,8 +18,18 @@ namespace Imperial2030.Server.Helpers
     public static class ManeuverHelper
     {
         public static List<string> GetRailReachableTerritories(Game game, string startId, Nation nation, bool includeExitPoints = true, bool pureRailOnly = false)
+            => TraverseRail(game, startId, nation, includeExitPoints, pureRailOnly).Reachable.ToList();
+
+        /// <summary>
+        /// The rail traversal shared by GetRailReachableTerritories and GetRailPath. Identical rules to
+        /// what GetRailReachableTerritories has always applied; it additionally records, for each
+        /// territory it settles on, which one it was reached from, so the route can be walked back.
+        /// </summary>
+        private static (HashSet<string> Reachable, Dictionary<string, string> CameFrom) TraverseRail(
+            Game game, string startId, Nation nation, bool includeExitPoints, bool pureRailOnly)
         {
             var reachable = new HashSet<string>();
+            var cameFrom = new Dictionary<string, string>();
             var queue = new Queue<(string id, int cost)>();
             var minCosts = new Dictionary<string, int>();
 
@@ -72,18 +82,104 @@ namespace Imperial2030.Server.Helpers
                         if (!minCosts.TryGetValue(neighborId, out var oldCost) || newCost < oldCost)
                         {
                             minCosts[neighborId] = newCost;
+                            cameFrom[neighborId] = currentId;
                             queue.Enqueue((neighborId, newCost));
                         }
                     }
                 }
             }
-            return reachable.ToList();
+            return (reachable, cameFrom);
+        }
+
+        /// <summary>
+        /// The territories a rail move passes THROUGH, in travel order, excluding origin and destination.
+        /// Empty when the destination is not rail-reachable, or when it is reached in a single step and
+        /// there is nothing in between. Recorded in the action log so a replay or the map can draw the
+        /// route the army actually took instead of guessing one from origin and destination.
+        /// </summary>
+        public static List<string> GetRailPath(Game game, string startId, string endId, Nation nation)
+        {
+            var (reachable, cameFrom) = TraverseRail(game, startId, nation, includeExitPoints: true, pureRailOnly: false);
+            if (!reachable.Contains(endId)) return new List<string>();
+
+            var path = new List<string>();
+            var current = endId;
+            // Walk back to the origin, collecting only what lies strictly between the two ends.
+            while (cameFrom.TryGetValue(current, out var previous) && previous != startId)
+            {
+                path.Add(previous);
+                current = previous;
+                if (path.Count > TerritoryData.AllTerritories.Count) break;   // guard against a cycle
+            }
+            path.Reverse();
+            return path;
         }
 
         public static bool CanMoveByRail(Game game, string startId, string endId, Nation nation)
         {
             var reachable = GetRailReachableTerritories(game, startId, nation);
             return reachable.Contains(endId);
+        }
+
+        /// <summary>
+        /// How an army reaches a destination. A convoy is a last resort: it is for destinations that
+        /// cannot be reached overland (Imperial-2030-Rules.pdf, "Maneuver").
+        /// </summary>
+        public enum ArmyMoveMode { AdjacentStep, Rail, Convoy }
+
+        /// <summary>
+        /// Which of the three the army must use, in the order the rules put them: a step to a neighbouring
+        /// territory, else rail, and a convoy only when neither reaches it.
+        ///
+        /// Single-sourced deliberately. MoveArmy and the bot's maneuver each used to decide this for
+        /// themselves and drifted apart: the bot picked a convoy whenever one merely EXISTED, so it
+        /// shipped armies between adjacent territories and burned the carrier fleets doing it, while
+        /// MoveArmy correctly walked them. Anything choosing a move mode must call this.
+        /// </summary>
+        public static ArmyMoveMode DetermineArmyMoveMode(Game game, string originId, string destinationId, Nation nation)
+        {
+            if (MapConnectivity.GetNeighbors(originId, false).Contains(destinationId)) return ArmyMoveMode.AdjacentStep;
+            if (CanMoveByRail(game, originId, destinationId, nation)) return ArmyMoveMode.Rail;
+            return ArmyMoveMode.Convoy;
+        }
+
+        /// <summary>
+        /// What the move passes through, for the action log: nothing for a step to a neighbour, the rail
+        /// hops for a rail move, and the boarding point plus sea regions for a convoy. See
+        /// GameLogger.LogUnitMove's routeVia parameter for why this is recorded rather than derived later.
+        /// </summary>
+        public static List<string>? BuildMoveRoute(Game game, string originId, string destinationId, Nation nation,
+                                                   ArmyMoveMode mode, List<Unit>? convoyFleets)
+            => mode switch
+            {
+                ArmyMoveMode.Rail => GetRailPath(game, originId, destinationId, nation),
+                ArmyMoveMode.Convoy when convoyFleets != null => BuildConvoyRoute(game, originId, nation, convoyFleets),
+                _ => null
+            };
+
+        /// <summary>
+        /// The full route a convoyed army travelled, in travel order, excluding origin and destination:
+        /// any rail hops to the coast, the territory it boarded at, then every sea region it was carried
+        /// through. None of this is recoverable afterwards - the carrying fleets are flagged HasConvoyed
+        /// the moment the move completes, and several routes can join the same pair of endpoints - so it
+        /// is recorded at the time of the move.
+        /// </summary>
+        public static List<string> BuildConvoyRoute(Game game, string startId, Nation nation, List<Unit> usedFleets)
+        {
+            var seaRoute = usedFleets.Select(f => f.TerritoryId).ToList();
+            if (seaRoute.Count == 0) return new List<string>();
+
+            // Already on the coast that first fleet sits on: it boarded where it stood.
+            if (MapConnectivity.GetNeighbors(startId, true).Contains(seaRoute[0])) return seaRoute;
+
+            var embarkation = GetRailReachableTerritories(game, startId, nation, includeExitPoints: false)
+                .FirstOrDefault(t => MapConnectivity.GetNeighbors(t, true).Contains(seaRoute[0]));
+            if (embarkation == null) return seaRoute;
+
+            var route = GetRailPath(game, startId, embarkation, nation);
+            route.Add(embarkation);
+            route.AddRange(seaRoute);
+            return route;
         }
 
         public static List<Unit>? GetConvoyFleets(Game game, string startId, string destId, Nation armyNation)

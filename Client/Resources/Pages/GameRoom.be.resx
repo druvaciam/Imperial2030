@@ -197,4 +197,10 @@
   <data name="Toast_GameResumed" xml:space="preserve"><value>Гульня працягнута.</value></data>
   <data name="Toast_BattleFight" xml:space="preserve"><value>{0} выбраў БІТВУ супраць {1}!</value></data>
   <data name="Toast_BattlePeace" xml:space="preserve"><value>{0} пагадзіўся на МІР.</value></data>
+
+  <!-- Replay playback speed -->
+  <data name="Replay_Speed" xml:space="preserve"><value>Хуткасць прайгравання (затрымка паміж дзеяннямі)</value></data>
+  <data name="Replay_Slower" xml:space="preserve"><value>Павольней</value></data>
+  <data name="Replay_Faster" xml:space="preserve"><value>Хутчэй</value></data>
+  <data name="Replay_SpeedValue" xml:space="preserve"><value>{0} с</value></data>
 </root>

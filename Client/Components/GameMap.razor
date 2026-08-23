@@ -888,10 +888,19 @@
             {
                 string color = GetNationColor(move.Nation);
 
-                <!-- Dotted Path -->
-                <line x1="@Fmt(fromCoords.X)" y1="@Fmt(fromCoords.Y)" 
-                      x2="@Fmt(toCoords.X)" y2="@Fmt(toCoords.Y)" 
-                      stroke="@color" stroke-width="3" class="move-path" />
+                @* The path is a polyline, not a single A-to-B line, for two reasons:
+                     - a convoyed army rides a chain of fleets, so the route runs through every sea
+                       region it was carried across, not straight to the destination;
+                     - a move across the map's east/west seam (the world is a sphere) must leave one
+                       border and re-enter at the other, instead of slicing back across the whole map.
+                   BuildMovePolylines returns one polyline per unbroken segment - two when the move
+                   crosses the seam, one otherwise - all with the same .move-path animation and
+                   nation colour every other move uses. *@
+                @foreach (var segment in BuildMovePolylines(move))
+                {
+                    <polyline points="@segment" fill="none"
+                              stroke="@color" stroke-width="3" class="move-path" />
+                }
 
                 <!-- Ghost Unit at Origin -->
                 if (move.UnitType == Imperial2030.Shared.Models.UnitType.Army)
@@ -1076,6 +1085,10 @@
             }
         }
 
+        @* No decoration is drawn for the sphere-wrap sea connections: the map artwork already prints
+           them at both edges (the "SJ", "NP", "CS", "SP", "TS" arrow pairs). An actual crossing move
+           is drawn by BuildMovePolylines, which splits it at the border into two segments. *@
+
         <!-- Turn Order Indicator on Bottom Nation Cards -->
         @if (Game.Status == GameStatus.InProgress)
         {
@@ -1104,9 +1117,20 @@
                     <path d="M 827 682 Q 925.5 638 1024 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
                     <polygon points="1020,676 1028,682 1020,688" fill="#ffffff" />
 
-                    <!-- Loop back arrow from Europe (1024) to Russia (39) -->
-                    <path d="M 1024 682 C 1110 628, -20 628, 39 682" fill="none" stroke="#ffffff" stroke-width="2" stroke-dasharray="5,5" class="track-flow" opacity="0.3" />
-                    <polygon points="35,676 43,682 35,688" fill="#ffffff" opacity="0.5" />
+                    <!-- Turn order wraps from Europe back to Russia. Drawn as two stubs running off
+                         opposite edges rather than one long arc sweeping back across the whole row:
+                         that arc passed over all six cards and read as a connection between them.
+                         Both ends leave/enter at the same height so they scan as one line the map
+                         edge happens to cut. Both stop exactly on the border - overshooting draws into the
+                         letterboxed margin outside the map, since preserveAspectRatio clips to the
+                         element box rather than to the viewBox. -->
+                    @* Same stroke-width and no extra opacity as the five arrows above: this is the same
+                       kind of connection, just cut by the map edge, and it has to read that way. The
+                       group's own opacity="0.45" already applies to every path in here, so a per-path
+                       opacity stacks on top of it and made this leg roughly a third as strong. *@
+                    <path d="M 1024 682 C 1100 682, 1150 668, 1200 665" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <path d="M 0 665 C 12 668, 20 682, 39 682" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="5,5" class="track-flow" />
+                    <polygon points="35,676 43,682 35,688" fill="#ffffff" />
                 </g>
 
                 <!-- Active Nation Card Glowing Frame (Fitted to exact 197px card bounds) -->
@@ -1364,6 +1388,161 @@
     [Parameter]
     public HashSet<Nation> TaxBlinkNations { get; set; } = new();
 
+    /// <summary>
+    /// East/west seam pairs: the map is a sphere, so these regions are adjacent across the border
+    /// even though they sit on opposite sides of the image. Mirrors the wrap entries in
+    /// MapConnectivity (North Pacific &lt;-&gt; Sea of Japan / China Sea, South Pacific &lt;-&gt; China Sea /
+    /// Tasman Sea) - the rules define no north-south equivalent.
+    /// </summary>
+    private static readonly (string West, string East)[] SeamPairs =
+    {
+        ("NorthPacific", "SeaOfJapan"),
+        ("NorthPacific", "ChinaSea"),
+        ("SouthPacific", "ChinaSea"),
+        ("SouthPacific", "TasmanSea"),
+    };
+
+    private const double MapLeftEdge = 0.0;
+    private const double MapRightEdge = 1200.0;
+
+    private static bool CrossesSeam(string a, string b) =>
+        SeamPairs.Any(p => (p.West == a && p.East == b) || (p.East == a && p.West == b));
+
+    /// <summary>
+    /// The full route of a move as SVG polyline point strings - one string per unbroken segment.
+    ///
+    /// A convoyed army is drawn through every sea region it was carried across rather than straight
+    /// to its destination. A hop across the east/west seam is split into two segments so the line
+    /// leaves one border and resumes at the other, instead of cutting back across the whole map.
+    /// Both can occur in the same move, so seam splitting is applied per leg of the route.
+    /// </summary>
+    private List<string> BuildMovePolylines(RecentMove move)
+    {
+        var coords = Imperial2030.Client.Constants.MapCoordinates.TerritoryCenters;
+
+        // Origin, every convoy stop, destination.
+        var route = new List<string> { move.FromTerritoryId };
+        route.AddRange(move.ConvoyVia);
+        route.Add(move.ToTerritoryId);
+
+        // Bail rather than skip an unplottable region: dropping it would silently splice the route
+        // together through whatever remains and draw a leg the unit never travelled.
+        if (route.Any(id => !coords.ContainsKey(id))) return new List<string>();
+
+        // Collapse repeats - a convoy stop that equals the origin or the destination, or the same
+        // region listed twice, would otherwise contribute a zero-length leg.
+        route = route.Where((id, i) => i == 0 || id != route[i - 1]).ToList();
+
+        // Nothing to draw for a unit that ended where it started, however that route was assembled.
+        if (route.Count < 2 || route.Distinct().Count() < 2) return new List<string>();
+
+        var segments = new List<string>();
+        var current = new List<(double X, double Y)> { coords[route[0]] };
+
+        for (int i = 1; i < route.Count; i++)
+        {
+            var prev = coords[route[i - 1]];
+            var next = coords[route[i]];
+
+            if (CrossesSeam(route[i - 1], route[i]))
+            {
+                // Run out to the border the previous region faces, close the segment, and restart
+                // from the opposite border at the next region's latitude.
+                bool prevIsWest = prev.X < next.X;
+                double exitX = prevIsWest ? MapLeftEdge : MapRightEdge;
+                double entryX = prevIsWest ? MapRightEdge : MapLeftEdge;
+
+                current.Add((exitX, prev.Y));
+                segments.Add(ToPoints(current));
+                current = new List<(double X, double Y)> { (entryX, next.Y), next };
+            }
+            else
+            {
+                current.Add(next);
+            }
+        }
+
+        if (current.Count >= 2) segments.Add(ToPoints(current));
+        return segments;
+    }
+
+    private string ToPoints(List<(double X, double Y)> pts) =>
+        string.Join(" ", pts.Select(p => $"{Fmt(p.X)},{Fmt(p.Y)}"));
+
+    /// <summary>
+    /// Works out which sea regions a convoyed army crossed, for moves this client did not order
+    /// itself (another player's, or a bot's) - the unit diff those are detected from records only
+    /// origin and destination.
+    ///
+    /// Best-effort by nature: it searches the board as it stands immediately after the move, so if a
+    /// carrying fleet has already been sunk in a battle resolved by the same update it finds nothing
+    /// and the move draws direct, as it did before. Only applies to armies whose origin and
+    /// destination are not adjacent - anything else did not need a convoy.
+    /// </summary>
+    private List<string> ReconstructConvoyVia(RecentMove move)
+    {
+        if (Game == null || move.UnitType != UnitType.Army) return new List<string>();
+
+        var neighbors = Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(move.FromTerritoryId, false);
+        if (neighbors.Contains(move.ToTerritoryId)) return new List<string>();  // ordinary adjacent move
+
+        var paths = GetAllConvoyPaths(Game, move.FromTerritoryId, move.ToTerritoryId, move.Nation, includeUsedFleets: true);
+        if (paths.Count == 0) return new List<string>();
+
+        // The fleets that carried this army are flagged HasConvoyed by the move that just landed, so a
+        // route made entirely of flagged fleets is almost certainly the real one. Shortest breaks ties:
+        // the exact route is unknowable from the log, and the shortest is the least misleading guess.
+        var seaRoute = paths.OrderByDescending(fleets => fleets.Count(f => f.HasConvoyed))
+                            .ThenBy(fleets => fleets.Count)
+                            .First()
+                            .Select(f => f.TerritoryId)
+                            .ToList();
+
+        var via = new List<string>();
+
+        // An army can only board a fleet from a coastal territory it can actually reach, which is not
+        // always where it started: GetAllConvoyPaths lets it rail to the coast first, then throws that
+        // leg away and reports only the sea regions. Without it the path jumps straight from an inland
+        // origin to open sea - Moscow to the Sea of Japan, when the army in fact railed to Vladivostok
+        // and boarded there.
+        var embarkation = ResolveEmbarkationPoint(move.FromTerritoryId, seaRoute[0], move.Nation);
+        if (embarkation != null && embarkation != move.FromTerritoryId) via.Add(embarkation);
+
+        via.AddRange(seaRoute);
+        return via;
+    }
+
+    /// <summary>
+    /// Where the army boarded: the origin itself when it already touches that sea, otherwise the
+    /// rail-reachable coastal territory that does. Returns null when none qualifies, in which case the
+    /// route is drawn without an embarkation leg rather than with a guessed one.
+    /// </summary>
+    private string? ResolveEmbarkationPoint(string originId, string firstSeaId, Imperial2030.Shared.Models.Nation nation)
+    {
+        if (Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(originId, true).Contains(firstSeaId))
+        {
+            return originId;
+        }
+
+        if (!IsTerritoryRailValid(originId, nation)) return null;
+
+        var coords = Imperial2030.Client.Constants.MapCoordinates.TerritoryCenters;
+        var candidates = GetRailReachableTerritories(originId, nation, includeExitPoints: false)
+            .Where(t => Imperial2030.Shared.Constants.MapConnectivity.GetNeighbors(t, true).Contains(firstSeaId))
+            .ToList();
+
+        if (candidates.Count == 0) return null;
+        if (candidates.Count == 1 || !coords.ContainsKey(firstSeaId)) return candidates[0];
+
+        // Several coastal territories can touch the same sea. The exact one is not recoverable from the
+        // log, so take the one nearest that sea - the shortest, least misleading line to draw.
+        var sea = coords[firstSeaId];
+        return candidates
+            .Where(coords.ContainsKey)
+            .OrderBy(t => (coords[t].X - sea.X) * (coords[t].X - sea.X) + (coords[t].Y - sea.Y) * (coords[t].Y - sea.Y))
+            .FirstOrDefault() ?? candidates[0];
+    }
+
     public class RecentMove
     {
         public Guid UnitId { get; set; }
@@ -1372,6 +1551,16 @@
         public string FromTerritoryId { get; set; } = string.Empty;
         public string ToTerritoryId { get; set; } = string.Empty;
         public DateTime TimestampUtc { get; set; }
+
+        /// <summary>
+        /// Everything the unit passed through, in travel order, excluding origin and destination -
+        /// rail hops and convoy sea regions alike. Empty for a plain step to an adjacent territory.
+        ///
+        /// Comes from the move's own log entry (ActionMetadata.RouteVia), which the server records at
+        /// the time of the move. Only falls back to reconstruction for entries logged before that field
+        /// existed - see AttachConvoyRoute.
+        /// </summary>
+        public List<string> ConvoyVia { get; set; } = new();
     }
 
     public class RecentBattle
@@ -1390,7 +1579,92 @@
         public DateTime TimestampUtc { get; set; }
     }
 
+    // How far back to scan the action log when matching a detected move (or battle) to its log entry.
+    // A move stays on the map for 10s, so a slightly wider window covers everything still displayed.
+    private const int RecentActionLookbackSeconds = 11;
+
     private List<RecentMove> recentMoves = new();
+
+    // Route of the most recent convoy this client initiated, matched onto the RecentMove that the
+    // unit-diff subsequently detects (see AttachConvoyRoute).
+    private List<string> _lastConvoyVia = new();
+    private string? _lastConvoyFrom;
+    private string? _lastConvoyTo;
+
+    /// <summary>
+    /// Fills in what a freshly detected move passed through, so the map draws the whole journey instead
+    /// of a straight line to the destination. In preference order:
+    ///
+    ///   1. loggedRoute - ActionMetadata.RouteVia off the move's own log entry. Authoritative: the
+    ///      server recorded it while performing the move. Every move logged since that field was added
+    ///      takes this path, including rail moves and other players' and bots' convoys.
+    ///   2. The route this client picked itself, for a convoy it ordered, when the move was spotted by
+    ///      the unit diff rather than read from the log.
+    ///   3. Reconstruction, purely for entries logged before RouteVia existed.
+    ///
+    /// Called at detection time rather than at render time because the reconstruction in (3) reads the
+    /// HasConvoyed flags, and those are cleared again at the start of the next maneuver phase.
+    /// </summary>
+    private void AttachConvoyRoute(RecentMove move, List<string>? loggedRoute = null)
+    {
+        // Look the route up when the caller has not already got it. Moves detected from the unit diff
+        // come with no metadata, and without this they fell through to reconstruction even though the
+        // log held the answer - inventing a convoy through the China Sea for an army that had railed
+        // Beijing -> Chongqing -> Indochina, because a fleet happened to be sitting in that sea.
+        loggedRoute ??= FindLoggedRoute(move);
+
+        if (loggedRoute != null && loggedRoute.Count > 0)
+        {
+            move.ConvoyVia = new List<string>(loggedRoute);
+            return;
+        }
+
+        if (_lastConvoyVia.Count > 0
+            && move.FromTerritoryId == _lastConvoyFrom && move.ToTerritoryId == _lastConvoyTo)
+        {
+            move.ConvoyVia = new List<string>(_lastConvoyVia);
+            _lastConvoyVia = new List<string>();   // consume it - only the first matching move is ours
+            _lastConvoyFrom = _lastConvoyTo = null;
+            return;
+        }
+
+        move.ConvoyVia = ReconstructConvoyVia(move);
+    }
+
+    /// <summary>
+    /// The route recorded on this move's own log entry, or null if the log has no matching entry (or the
+    /// entry predates ActionMetadata.RouteVia). Matched on nation, origin and destination among the most
+    /// recent entries, newest first, so a territory pair traversed more than once picks up the latest.
+    /// </summary>
+    private List<string>? FindLoggedRoute(RecentMove move)
+    {
+        if (Game?.Actions == null) return null;
+
+        var cutoff = DateTime.UtcNow.AddSeconds(-RecentActionLookbackSeconds);
+        foreach (var action in Game.Actions
+                     .Where(a => (a.ActionType == "MoveArmy" || a.ActionType == "MoveFleet")
+                                 && a.Nation == move.Nation
+                                 && a.Timestamp >= cutoff
+                                 && !string.IsNullOrEmpty(a.Metadata))
+                     .OrderByDescending(a => a.Timestamp))
+        {
+            try
+            {
+                var meta = System.Text.Json.JsonSerializer.Deserialize<Imperial2030.Shared.Models.ActionMetadata>(
+                    action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (meta?.FromTerritoryId == move.FromTerritoryId && meta.ToTerritoryId == move.ToTerritoryId)
+                {
+                    return meta.RouteVia;
+                }
+            }
+            catch
+            {
+                // Malformed metadata is not worth failing a render over - fall through to the next entry.
+            }
+        }
+        return null;
+    }
+
     private List<RecentBattle> recentBattles = new();
     private List<RecentFactoryDestruction> recentFactoryDestructions = new();
     private List<Unit> previousUnits = new();
@@ -1416,6 +1690,7 @@
                             ToTerritoryId = newUnit.TerritoryId,
                             TimestampUtc = now
                         };
+                        AttachConvoyRoute(move);
                         recentMoves.Add(move);
                         
                         _ = Task.Run(async () => 
@@ -1436,7 +1711,7 @@
             // Supplement recentMoves and recentBattles from GameActions (to catch destroyed units that disappear from Game.Units)
             if (Game.Actions != null)
             {
-                var recentLimit = DateTime.UtcNow.AddSeconds(-11);
+                var recentLimit = DateTime.UtcNow.AddSeconds(-RecentActionLookbackSeconds);
                 
                 // Track battles
                 foreach (var action in Game.Actions.Where(a => a.ActionType == "Battle" && a.Timestamp >= recentLimit))
@@ -1523,6 +1798,12 @@
                                 string toTerr = meta.ToTerritoryId;
                                 string fromTerr = meta.FromTerritoryId;
                                 
+                                // A unit that ended where it started did not move, so there is no path to
+                                // draw - and drawing one is actively wrong: route reconstruction would
+                                // find the convoy fleets around it and trace a line out to sea and back.
+                                // The unit-diff site above gets this for free by only firing on a change.
+                                if (fromTerr == toTerr) continue;
+
                                 if (!recentMoves.Any(m => m.FromTerritoryId == fromTerr && m.ToTerritoryId == toTerr && m.Nation == action.Nation.Value && Math.Abs((m.TimestampUtc - action.Timestamp).TotalSeconds) < 2))
                                 {
                                     var m = new RecentMove
@@ -1534,6 +1815,7 @@
                                         ToTerritoryId = toTerr,
                                         TimestampUtc = action.Timestamp
                                     };
+                                    AttachConvoyRoute(m, meta.RouteVia);
                                     recentMoves.Add(m);
                                     
                                     _ = Task.Run(async () => {
@@ -2560,6 +2842,19 @@
                 Console.WriteLine($"[MoveUnit]   Fleet {fId} at {fl?.TerritoryId} HasConvoyed={fl?.HasConvoyed}");
             }
         }
+        // Remember the route this client actually chose, so the move animation can draw the real
+        // convoy chain instead of reconstructing a plausible one. Captured before the request,
+        // because the fleets' HasConvoyed flags change once the server applies the move.
+        _lastConvoyVia = convoyFleets == null || Game == null
+            ? new List<string>()
+            : convoyFleets
+                .Select(id => Game.Units.FirstOrDefault(u => u.Id == id)?.TerritoryId)
+                .Where(t => !string.IsNullOrEmpty(t))
+                .Select(t => t!)
+                .ToList();
+        _lastConvoyFrom = unit.TerritoryId;
+        _lastConvoyTo = destinationId;
+
         string? errorMessage = null;
         if (unit.UnitType == UnitType.Fleet)
         {
@@ -2590,12 +2885,21 @@
         }
     }
 
-    private List<List<Unit>> GetAllConvoyPaths(GameDetailDto game, string startId, string endId, Imperial2030.Shared.Models.Nation nation)
+    /// <param name="includeUsedFleets">
+    /// Normally false: a fleet that has already convoyed this turn cannot carry another army, so it is
+    /// no longer a legal option when PLANNING a move.
+    ///
+    /// Route RECONSTRUCTION needs the opposite (see ReconstructConvoyVia). It runs after the convoy has
+    /// happened, and ManeuverController marks every carrying fleet HasConvoyed = true at that point -
+    /// so the fleets it must find are precisely the ones this filter would exclude. Passing true here
+    /// searches all of the nation's fleets instead.
+    /// </param>
+    private List<List<Unit>> GetAllConvoyPaths(GameDetailDto game, string startId, string endId, Imperial2030.Shared.Models.Nation nation, bool includeUsedFleets = false)
     {
         var paths = new List<List<Unit>>();
-        
+
         var availableFleets = game.Units
-            .Where(u => u.UnitType == UnitType.Fleet && u.Nation == nation && !u.HasConvoyed)
+            .Where(u => u.UnitType == UnitType.Fleet && u.Nation == nation && (includeUsedFleets || !u.HasConvoyed))
             .GroupBy(u => u.TerritoryId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
