@@ -1154,13 +1154,8 @@ public class TcpTrainingServer : BackgroundService
         if (wasRondelTurn && req.Action >= 0 && req.Action <= 5 && preRondelPos.HasValue)
         {
             int targetSlot = (preRondelPos.Value + req.Action + 1) % RondelData.SlotCount;
-            int dist = (targetSlot - preRondelPos.Value + RondelData.SlotCount) % RondelData.SlotCount;
-            int moveCost = 0;
-            if (dist > RondelData.FreeMoveDistance && preNs != null)
-            {
-                int pf = preNs.Power / 5;
-                moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
-            }
+            int dist = RondelData.GetMoveDistance(preRondelPos.Value, targetSlot);
+            int moveCost = preNs == null ? 0 : RondelData.GetMoveCost(preRondelPos, targetSlot, preNs.Power);
 
             // Heavy penalty for paying for a long move to first Prod/Man when the second one was closer
             if (dist >= 5 && (targetSlot == RondelData.ProductionSlot1 || targetSlot == RondelData.ManeuverSlot1))
@@ -2019,16 +2014,7 @@ public class TcpTrainingServer : BackgroundService
     {
         if (ns.RondelPosition.HasValue && ns.RondelPosition.Value == targetSlot) return false;
 
-        int moveCost = 0;
-        if (ns.RondelPosition.HasValue)
-        {
-            int dist = (targetSlot - ns.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
-            if (dist > RondelData.FreeMoveDistance)
-            {
-                int pf = ns.Power / 5;
-                moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
-            }
-        }
+        int moveCost = RondelData.GetMoveCost(ns.RondelPosition, targetSlot, ns.Power);
         return rlPlayer.Cash >= moveCost;
     }
 

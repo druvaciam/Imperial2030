@@ -10,31 +10,15 @@ public static class TaxationHelper
 {
     public static (int ExpectedBonus, int ExpectedTreasuryGain, int ExpectedPowerGain, int TotalTaxRevenue, int SoldiersPay) PreviewTaxation(Game game, NationState nationState)
     {
-        var nation = nationState.Nation;
-        int unblockedFactories = CountUnblockedFactories(game, nation);
-        int flagCount = game.TerritoryStates.Count(ts => ts.Controller == nation);
-        int totalTaxRevenue = TaxationRules.ComputeRevenue(unblockedFactories, flagCount);
+        var (totalTaxRevenue, soldiersPay) = ComputeTaxNumbers(game, nationState.Nation);
 
-        int unitCount = game.Units.Count(u => u.Nation == nation);
-        int soldiersPay = TaxationRules.ComputeSoldiersPay(unitCount);
-        
         // Simulation of treasury changes
         int simulatedTreasury = nationState.Treasury + totalTaxRevenue;
         int actualPay = Math.Min(simulatedTreasury, soldiersPay);
         simulatedTreasury -= actualPay;
 
-        int bonus = 0;
-        if (game.VariantBonusOnlyForTaxIncreases)
-        {
-            int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(nationState.TaxRevenue);
-            int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
-            bonus = Math.Max(0, newTier - oldTier);
-        }
-        else
-        {
-            bonus = Imperial2030.Shared.Constants.TaxChart.GetStandardBonus(totalTaxRevenue);
-        }
-        
+        int bonus = TaxationRules.ComputeSuccessBonus(game.VariantBonusOnlyForTaxIncreases, nationState.TaxRevenue, totalTaxRevenue);
+
         int actualBonus = Math.Min(simulatedTreasury, bonus);
         simulatedTreasury -= actualBonus;
 
@@ -47,30 +31,15 @@ public static class TaxationHelper
 
     public static (int TotalTaxRevenue, int SoldiersPay, int Bonus, int PowerGain) ApplyTaxation(Game game, NationState nationState, Player controller)
     {
-        var nation = nationState.Nation;
-        int unblockedFactories = CountUnblockedFactories(game, nation);
-        int flagCount = game.TerritoryStates.Count(ts => ts.Controller == nation);
-        int totalTaxRevenue = TaxationRules.ComputeRevenue(unblockedFactories, flagCount);
+        var (totalTaxRevenue, soldiersPay) = ComputeTaxNumbers(game, nationState.Nation);
 
         nationState.Treasury += totalTaxRevenue;
 
-        int unitCount = game.Units.Count(u => u.Nation == nation);
-        int soldiersPay = TaxationRules.ComputeSoldiersPay(unitCount);
         int actualPay = Math.Min(nationState.Treasury, soldiersPay);
         nationState.Treasury -= actualPay;
 
-        int bonus = 0;
-        if (game.VariantBonusOnlyForTaxIncreases)
-        {
-            int oldTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(nationState.TaxRevenue);
-            int newTier = Imperial2030.Shared.Constants.TaxChart.GetPowerGain(totalTaxRevenue);
-            bonus = Math.Max(0, newTier - oldTier);
-        }
-        else
-        {
-            bonus = Imperial2030.Shared.Constants.TaxChart.GetStandardBonus(totalTaxRevenue);
-        }
-        
+        int bonus = TaxationRules.ComputeSuccessBonus(game.VariantBonusOnlyForTaxIncreases, nationState.TaxRevenue, totalTaxRevenue);
+
         int actualBonus = Math.Min(nationState.Treasury, bonus);
         
         if (actualBonus > 0)
@@ -87,6 +56,21 @@ public static class TaxationHelper
         nationState.TaxRevenue = totalTaxRevenue;
 
         return (totalTaxRevenue, actualPay, actualBonus, powerGain);
+    }
+
+    /// <summary>
+    /// Steps 1 and 2 of Taxation for <paramref name="nation"/> — revenue in, soldiers' pay owed — read off
+    /// the current board. Shared so the preview and the real thing cannot report different numbers: the
+    /// preview exists precisely to tell the player what applying will do.
+    /// </summary>
+    private static (int TotalTaxRevenue, int SoldiersPay) ComputeTaxNumbers(Game game, Nation nation)
+    {
+        int unblockedFactories = CountUnblockedFactories(game, nation);
+        int flagCount = game.TerritoryStates.Count(ts => ts.Controller == nation);
+        int unitCount = game.Units.Count(u => u.Nation == nation);
+
+        return (TaxationRules.ComputeRevenue(unblockedFactories, flagCount),
+                TaxationRules.ComputeSoldiersPay(unitCount));
     }
 
     /// <summary>

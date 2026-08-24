@@ -14,12 +14,15 @@ namespace Imperial2030.Server.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
-[Authorize]
+// Every action here is a game move, so the whole controller refuses guests - GamesController makes the
+// same refusal per-action because some of its endpoints are deliberately guest-readable.
+[Authorize(Policy = GameConstants.NotGuestPolicy)]
 public class ManeuverController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
     private readonly Imperial2030.Server.Services.BotService _botService;
+    private readonly ILogger<ManeuverController> _logger;
 
     /// <summary>
     /// When true, suppresses all SignalR broadcasts from this controller instance. Set by
@@ -28,11 +31,14 @@ public class ManeuverController : ControllerBase
     /// </summary>
     public bool SuppressBroadcasts { get; set; } = false;
 
-    public ManeuverController(ApplicationDbContext context, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.BotService botService)
+    // logger is optional so the many direct `new ManeuverController(...)` constructions in Tests/ keep
+    // working; DI supplies the real one in production.
+    public ManeuverController(ApplicationDbContext context, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.BotService botService, ILogger<ManeuverController>? logger = null)
     {
         _context = context;
         _hubContext = hubContext;
         _botService = botService;
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ManeuverController>.Instance;
     }
 
     [HttpPost("{gameId}/move-fleet")]
@@ -46,6 +52,7 @@ public class ManeuverController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.TerritoryStates)
             .Include(g => g.Players)
+                .ThenInclude(p => p.User)
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
@@ -305,6 +312,7 @@ public class ManeuverController : ControllerBase
             // duplicate TerritoryState row plus a spurious flag-placement log entry.
             .Include(g => g.TerritoryStates)
             .Include(g => g.Players)
+                .ThenInclude(p => p.User)
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
@@ -365,6 +373,7 @@ public class ManeuverController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.TerritoryStates)
             .Include(g => g.Players)
+                .ThenInclude(p => p.User)
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
@@ -649,6 +658,7 @@ public class ManeuverController : ControllerBase
             .Include(g => g.Units)
             .Include(g => g.NationStates)
             .Include(g => g.Players)
+                .ThenInclude(p => p.User)
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
@@ -689,6 +699,7 @@ public class ManeuverController : ControllerBase
             .Include(g => g.NationStates)
             .Include(g => g.TerritoryStates)
             .Include(g => g.Players)
+                .ThenInclude(p => p.User)
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
@@ -780,6 +791,7 @@ public class ManeuverController : ControllerBase
             var game = await _context.Games
                  .Include(g => g.NationStates)
                  .Include(g => g.Players)
+                     .ThenInclude(p => p.User)
                  .Include(g => g.Units)
                  .Include(g => g.TerritoryStates)
                  .AsSplitQuery()
@@ -833,9 +845,8 @@ public class ManeuverController : ControllerBase
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ERROR] NextPhase Failed: {ex.Message}");
-            Console.WriteLine(ex.StackTrace);
-            return StatusCode(500, ex.Message);
+            _logger.LogError(ex, "NextPhase failed for game {GameId}", gameId);
+            return StatusCode(500, ErrorResponses.Internal(HttpContext?.TraceIdentifier));
         }
     }
 
@@ -848,6 +859,7 @@ public class ManeuverController : ControllerBase
         var game = await _context.Games
             .Include(g => g.NationStates)
             .Include(g => g.Players)
+                .ThenInclude(p => p.User)
             .Include(g => g.Units)
             .Include(g => g.TerritoryStates)
             .AsSplitQuery()

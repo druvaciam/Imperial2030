@@ -446,7 +446,7 @@ else
                                                         @(pEffect.Delta > 0 ? "+" : "")@(pEffect.Delta)
                                                     </span>
                                                 }
-                                                </span> (@(ns.Power / 5)x)
+                                                </span> (@(RondelData.GetPowerFactor(ns.Power))x)
                                             </span><br/>
                                             @{
                                                 var taxInfo = GetTaxPreview(ns);
@@ -1928,7 +1928,7 @@ else
                 var nation = g.NationStates.FirstOrDefault(n => n.Nation == bond.Nation);
                 if (nation != null)
                 {
-                    int factor = nation.Power / 5;
+                    int factor = RondelData.GetPowerFactor(nation.Power);
                     score += bond.Interest * factor;
                 }
             }
@@ -2033,12 +2033,7 @@ else
                 return;
             }
 
-            if (dist > RondelData.FreeMoveDistance)
-            {
-                int powerFactor = ns.Power / 5;
-                int costPerStep = 1 + powerFactor;
-                cost = (dist - RondelData.FreeMoveDistance) * costPerStep;
-            }
+            cost = RondelData.GetMoveCost(current, slotIndex, ns.Power);
         }
 
         if (cost > 0)

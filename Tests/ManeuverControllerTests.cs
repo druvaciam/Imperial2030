@@ -1042,6 +1042,43 @@ namespace Imperial2030.Tests
         }
 
         [Fact]
+        public async Task NextPhase_WhenTheHandlerThrows_DoesNotReturnExceptionDetailToTheClient()
+        {
+            // NextPhase's catch-all used to `return StatusCode(500, ex.Message)`, handing the caller raw
+            // exception text - which for other failure modes can carry connection strings, file paths or
+            // internal structure. The client gets a generic message plus a correlation id instead; the
+            // detail belongs in the log.
+            //
+            // The trigger: a game whose CurrentTurnNation has no NationState row, so the unguarded
+            // `game.NationStates.First(n => n.Nation == nation)` throws.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+
+            var gameId = Guid.NewGuid();
+            context.Games.Add(new Game
+            {
+                Id = gameId,
+                CurrentTurnNation = Nation.Russia,
+                Status = GameStatus.InProgress,
+                CurrentManeuverPhase = ManeuverPhase.Fleets
+            });
+            await context.SaveChangesAsync();
+
+            var controller = GetController(context, "test-user-id");
+
+            // Act
+            var result = await controller.NextPhase(gameId);
+
+            // Assert
+            var objectResult = Assert.IsType<ObjectResult>(result);
+            Assert.Equal(500, objectResult.StatusCode);
+
+            var body = objectResult.Value?.ToString() ?? string.Empty;
+            Assert.DoesNotContain("Sequence contains no matching element", body, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("internal error", body, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
         public async Task MoveArmy_PeacefulIntoOwnHome_WithForeignArmy_ForcesBattle()
         {
             var dbName = Guid.NewGuid().ToString();

@@ -100,6 +100,15 @@ builder.Services.AddAppRateLimiting(builder.Configuration);
 var (jwtOptions, jwtWarning) = Imperial2030.Server.Configuration.JwtOptions.Resolve(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton(jwtOptions);
 
+// Only the Development no-key path returns a warning, and it is the path that mints a fresh signing key
+// per process — which is exactly why yesterday's browser token stops validating after a restart.
+bool usingEphemeralSigningKey = jwtWarning != null;
+
+// Backs UserExistenceCache, which keeps OnTokenValidated's "does this user still exist" check off the
+// user store on every authenticated request.
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<Imperial2030.Server.Services.UserExistenceCache>();
+
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -122,12 +131,33 @@ builder.Services.AddAuthentication(options =>
         {
             OnAuthenticationFailed = context =>
             {
-                Console.WriteLine($"Token validation failed: {context.Exception.Message}");
+                var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                    .CreateLogger("Imperial2030.Auth");
+
+                // A token that fails to validate is a property of the REQUEST, not a fault in the server:
+                // expired, stale, or simply not ours. Logged without the exception object (so no stack
+                // trace) and below Warning, matching what the JwtBearer middleware itself does — the
+                // request is already being rejected with 401, which is the actual outcome that matters.
+                if (usingEphemeralSigningKey &&
+                    context.Exception is SecurityTokenSignatureKeyNotFoundException or SecurityTokenInvalidSignatureException)
+                {
+                    logger.LogInformation(
+                        "Rejected a token signed with a different key. This process generated an ephemeral " +
+                        "Jwt:Key at startup (see the warning above), so any token issued before the last " +
+                        "restart no longer validates. Sign in again, or set a stable key to keep local " +
+                        "sessions across restarts.");
+                }
+                else
+                {
+                    logger.LogInformation("Token validation failed: {Reason}", context.Exception.Message);
+                }
                 return Task.CompletedTask;
             },
             OnChallenge = context =>
             {
-                Console.WriteLine($"Token challenge: {context.Error}, {context.ErrorDescription}");
+                context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                    .CreateLogger("Imperial2030.Auth")
+                    .LogInformation("Token challenge: {Error}, {ErrorDescription}", context.Error, context.ErrorDescription);
                 return Task.CompletedTask;
             },
             OnMessageReceived = context =>
@@ -155,12 +185,17 @@ builder.Services.AddAuthentication(options =>
                 // is still rejected below.
                 if (context.Principal?.IsInRole(GameConstants.GuestRole) == true) return;
 
-                var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<Imperial2030.Server.Models.ApplicationUser>>();
                 var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (userId != null)
                 {
-                    var user = await userManager.FindByIdAsync(userId);
-                    if (user == null)
+                    // Memoised for UserExistenceCache.DefaultTtl rather than hitting the user store on
+                    // every single authenticated request - the replay view polls every 400ms, and each
+                    // poll was paying for its own lookup. See UserExistenceCache for the trade-off.
+                    var existenceCache = context.HttpContext.RequestServices.GetRequiredService<Imperial2030.Server.Services.UserExistenceCache>();
+                    var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<Imperial2030.Server.Models.ApplicationUser>>();
+
+                    bool exists = await existenceCache.ExistsAsync(userId, async id => await userManager.FindByIdAsync(id) != null);
+                    if (!exists)
                     {
                         context.Fail("User no longer exists.");
                     }
@@ -168,7 +203,15 @@ builder.Services.AddAuthentication(options =>
             }
         };
     });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    // Refuses the Guest role outright. Guests already could not complete a maneuver (JoinGame turns them
+    // away, so they never become a Player and each handler's controller-identity check fails), but that
+    // left ManeuverController's safety resting entirely on an indirect argument.
+    options.AddPolicy(GameConstants.NotGuestPolicy, policy => policy
+        .RequireAuthenticatedUser()
+        .RequireAssertion(context => !context.User.IsInRole(GameConstants.GuestRole)));
+});
 
 var app = builder.Build();
 

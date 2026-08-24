@@ -136,7 +136,7 @@ public class Game
             var nation = this.NationStates.FirstOrDefault(n => n.Nation == bond.Nation);
             if (nation != null)
             {
-                int factor = nation.Power / 5;
+                int factor = Imperial2030.Shared.Constants.RondelData.GetPowerFactor(nation.Power);
                 score += bond.Interest * factor;
             }
         }

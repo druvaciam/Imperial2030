@@ -31,7 +31,7 @@ public class PresenceTracker
         var playerUpdates = new Dictionary<string, List<string>>(); // gameId -> list of userIds that disconnected play status
         if (_connectionUsers.TryRemove(connectionId, out var userId))
         {
-            _userConnections.AddOrUpdate(userId, 0, (_, count) => System.Math.Max(0, count - 1));
+            DecrementOrRemove(_userConnections, userId);
 
             if (_connectionObservedGames.TryRemove(connectionId, out var games))
             {
@@ -42,8 +42,9 @@ public class PresenceTracker
                 {
                     if (_gameObservers.TryGetValue(gameId, out var observers))
                     {
-                        observers.AddOrUpdate(userId, 0, (_, count) => System.Math.Max(0, count - 1));
+                        DecrementOrRemove(observers, userId);
                         observerUpdates[gameId] = observers.Count(kvp => kvp.Value > 0);
+                        DropIfEmpty(_gameObservers, gameId, observers);
                     }
                 }
             }
@@ -56,10 +57,12 @@ public class PresenceTracker
                 {
                     if (_gamePlayers.TryGetValue(gameId, out var players))
                     {
-                        players.AddOrUpdate(userId, 0, (_, count) => System.Math.Max(0, count - 1));
+                        DecrementOrRemove(players, userId);
 
                         if (!playerUpdates.ContainsKey(gameId)) playerUpdates[gameId] = new List<string>();
                         playerUpdates[gameId].Add(userId);
+
+                        DropIfEmpty(_gamePlayers, gameId, players);
                     }
                 }
             }
@@ -88,8 +91,10 @@ public class PresenceTracker
 
         if (_gameObservers.TryGetValue(gameId, out var observers))
         {
-            observers.AddOrUpdate(userId, 0, (_, count) => System.Math.Max(0, count - 1));
-            return observers.Count(kvp => kvp.Value > 0);
+            DecrementOrRemove(observers, userId);
+            int remaining = observers.Count(kvp => kvp.Value > 0);
+            DropIfEmpty(_gameObservers, gameId, observers);
+            return remaining;
         }
         return 0;
     }
@@ -122,7 +127,8 @@ public class PresenceTracker
 
         if (_gamePlayers.TryGetValue(gameId, out var players))
         {
-            players.AddOrUpdate(userId, 0, (_, count) => System.Math.Max(0, count - 1));
+            DecrementOrRemove(players, userId);
+            DropIfEmpty(_gamePlayers, gameId, players);
         }
     }
 
@@ -143,5 +149,60 @@ public class PresenceTracker
     public IEnumerable<string> GetOnlineUsers()
     {
         return _userConnections.Where(kvp => kvp.Value > 0).Select(kvp => kvp.Key);
+    }
+
+    /// <summary>
+    /// Forgets a game outright. Called when a game is deleted: nobody has disconnected, so the
+    /// per-connection cleanup paths above would never reach these entries.
+    /// </summary>
+    public void RemoveGame(string gameId)
+    {
+        _gameObservers.TryRemove(gameId, out _);
+        _gamePlayers.TryRemove(gameId, out _);
+    }
+
+    // --- Diagnostics -------------------------------------------------------------------------------
+    // The presence API filters zero-valued entries out, so a leaked entry is invisible through it. These
+    // expose the raw dictionary sizes so the pruning above is actually assertable.
+
+    public int TrackedUserCount => _userConnections.Count;
+    public int TrackedObserverGameCount => _gameObservers.Count;
+    public int TrackedActivePlayerGameCount => _gamePlayers.Count;
+
+    // --- Pruning helpers ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// Decrements a per-key connection count, removing the key once it reaches zero instead of leaving a
+    /// permanent 0 behind.
+    /// </summary>
+    private static void DecrementOrRemove(ConcurrentDictionary<string, int> counts, string key)
+    {
+        int updated = counts.AddOrUpdate(key, 0, (_, count) => System.Math.Max(0, count - 1));
+        if (updated != 0) return;
+
+        // Value-matched removal: a reconnect that raced with this will have bumped the count above zero,
+        // and this call then leaves it alone rather than dropping a live entry.
+        counts.TryRemove(new KeyValuePair<string, int>(key, 0));
+    }
+
+    /// <summary>
+    /// Drops a game's per-user dictionary once nobody is left in it.
+    /// </summary>
+    /// <remarks>
+    /// Reference-matched removal, then re-added if a concurrent Add* populated the very instance being
+    /// removed. Presence is advisory UI state, so the remaining window is a count that corrects itself on
+    /// the next join or disconnect rather than anything the game rules depend on.
+    /// </remarks>
+    private static void DropIfEmpty(ConcurrentDictionary<string, ConcurrentDictionary<string, int>> games,
+                                    string gameId,
+                                    ConcurrentDictionary<string, int> entries)
+    {
+        if (!entries.IsEmpty) return;
+
+        if (games.TryRemove(new KeyValuePair<string, ConcurrentDictionary<string, int>>(gameId, entries))
+            && !entries.IsEmpty)
+        {
+            games.TryAdd(gameId, entries);
+        }
     }
 }

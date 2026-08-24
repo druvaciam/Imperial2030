@@ -110,6 +110,61 @@ namespace Imperial2030.Tests
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         }
 
+        /// <summary>
+        /// ManeuverController carried a bare [Authorize] while every write in GamesController also refused
+        /// the Guest role. Guests could not actually reach a maneuver endpoint (JoinGame refuses them, so
+        /// they never become a Player and every handler's `controller.UserId != userId` check fails), but
+        /// the asymmetry meant the whole controller relied on that indirect argument holding forever.
+        ///
+        /// 403 rather than 401 is again the point: the token authenticated, and authorization refused it.
+        /// </summary>
+        [Fact]
+        public async Task GuestToken_IsRefusedByManeuverEndpoints()
+        {
+            var client = _factory.CreateClient();
+            var token = await GuestTokenAsync(client);
+
+            var response = await WithToken(client, token)
+                .PostAsync($"/api/maneuver/{System.Guid.NewGuid()}/next-phase", content: null);
+
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+
+        /// <summary>
+        /// The other side of the same policy: a real user must still get through to the handler. The game
+        /// id is fabricated, so 404 is the expected outcome - what matters is that it is not 403.
+        /// </summary>
+        [Fact]
+        public async Task RegisteredUserToken_IsNotRefusedByManeuverEndpoints()
+        {
+            var client = _factory.CreateClient();
+            var userName = $"manuser_{System.Guid.NewGuid():N}".Substring(0, 20);
+            const string password = "Test@12345";
+
+            var register = await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+            {
+                UserName = userName,
+                Email = $"{userName}@example.com",
+                Password = password,
+                ConfirmPassword = password
+            });
+            Assert.Equal(HttpStatusCode.OK, register.StatusCode);
+
+            var login = await client.PostAsJsonAsync("/api/auth/login", new LoginRequest
+            {
+                UserName = userName,
+                Password = password
+            });
+            var loginResult = await login.Content.ReadFromJsonAsync<LoginResult>();
+            Assert.NotNull(loginResult?.Token);
+
+            var response = await WithToken(client, loginResult!.Token!)
+                .PostAsync($"/api/maneuver/{System.Guid.NewGuid()}/next-phase", content: null);
+
+            Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
         [Fact]
         public async Task NoToken_IsRejectedWithUnauthorized()
         {

@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Imperial2030.Server.Data;
 using Imperial2030.Server.Services;
 using System.Security.Claims;
 using System.Threading.Tasks;
@@ -8,10 +11,28 @@ namespace Imperial2030.Server.Hubs;
 public class GameHub : Hub
 {
     private readonly PresenceTracker _presenceTracker;
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public GameHub(PresenceTracker presenceTracker)
+    public GameHub(PresenceTracker presenceTracker, IServiceScopeFactory scopeFactory)
     {
         _presenceTracker = presenceTracker;
+        _scopeFactory = scopeFactory;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="gameId"/> names a real game.
+    ///
+    /// PresenceTracker keys off this string, so without the check any caller could grow a process-lifetime
+    /// singleton without bound by joining invented ids. Parsing alone is not enough - fresh Guids are free
+    /// to mint - so the row has to actually exist.
+    /// </summary>
+    private async Task<bool> IsRealGameAsync(string gameId)
+    {
+        if (!System.Guid.TryParse(gameId, out var parsed)) return false;
+
+        using var scope = _scopeFactory.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        return await context.Games.AsNoTracking().AnyAsync(g => g.Id == parsed);
     }
 
     public override async Task OnConnectedAsync()
@@ -58,6 +79,8 @@ public class GameHub : Hub
 
     public async Task<int> JoinGameGroup(string gameId, bool isObserver = false)
     {
+        if (!await IsRealGameAsync(gameId)) return 0;
+
         await Groups.AddToGroupAsync(Context.ConnectionId, gameId);
         var userId = Context.UserIdentifier ?? Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         

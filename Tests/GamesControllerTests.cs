@@ -360,24 +360,29 @@ namespace Imperial2030.Tests
                 // Act 1: P1 (Russia) moves to Investor slot
                 await controllerP1.MoveNation(gameId, Nation.Russia, 4);
 
-                // Assert 1: After landing on Investor, P2 (Swiss Bank) should get the chance to invest BEFORE P1
+                // Assert 1: the Investor CARD HOLDER (P1) invests first.
+                // Imperial-2030-Rules.pdf p.11 numbers the steps "2. Activating the Investor" then
+                // "3. Investing as Swiss Bank". This assertion used to expect P2 ("Swiss Bank players go
+                // first"), which is the opposite of the rulebook and had no source behind it.
                 var updatedGame = await context.Games.FirstAsync(g => g.Id == gameId);
                 Assert.True(updatedGame.IsInvestorTurn);
-                // Assert that P2 is the acting player because Swiss Bank players go first
+                Assert.Equal(p1Id, updatedGame.ActingPlayerId);
+
+                // Act 2: P1 takes their turn and passes, handing the queue to the Swiss Bank player.
+                await controllerP1.PerformInvestment(gameId, new GamesController.InvestmentActionDto { ActionType = "Pass" });
+
+                // Assert 2: P2 (Swiss Bank) is now up.
+                updatedGame = await context.Games.FirstAsync(g => g.Id == gameId);
                 Assert.Equal(p2Id, updatedGame.ActingPlayerId);
 
-                // Act 2: P2 invests 9M into Russia
+                // Act 3: P2 invests 9M into Russia
                 var controllerP2 = GetController(context, p2UserId);
                 var investRequest = new GamesController.InvestmentActionDto { ActionType = "Buy", BondId = bond9M.Id };
                 await controllerP2.PerformInvestment(gameId, investRequest);
 
-                // Assert 2: P2 should now control Russia
+                // Assert 3: P2 outbid P1's 2M and takes over Russia - the point of this test.
                 var updatedNsRussia = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
                 Assert.Equal(p2Id, updatedNsRussia.ControllerId);
-
-                // Act 3: After P2 invests, the Investor card holder (P1) should get their turn
-                updatedGame = await context.Games.FirstAsync(g => g.Id == gameId);
-                Assert.Equal(p1Id, updatedGame.ActingPlayerId);
             }
         }
 

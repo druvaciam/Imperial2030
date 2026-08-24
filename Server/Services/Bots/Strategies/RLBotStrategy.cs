@@ -4,6 +4,7 @@ using Imperial2030.Shared.Models;
 using System.Text;
 using System.Threading;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 
@@ -86,8 +87,13 @@ public class RLBotStrategy : BotStrategyBase
 
     public static readonly string[] AllManeuverTerritories = HomeProvinceIds.Concat(NeutralLandIds).Concat(SeaZoneIds).ToArray();
 
-    public RLBotStrategy(string botType = "RL")
+    private readonly ILogger _logger;
+
+    // logger is optional: this strategy is constructed by bot-type name (BotService.GetStrategy), not
+    // resolved from DI, so callers without one fall back to a no-op sink.
+    public RLBotStrategy(string botType = "RL", ILogger? logger = null)
     {
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         Name = botType;
         try
         {
@@ -117,18 +123,18 @@ public class RLBotStrategy : BotStrategyBase
                         InterOpNumThreads = 1
                     };
                     var session = new InferenceSession(path, options);
-                    Console.WriteLine($"Loaded ONNX model: {modelFilename}");
+                    _logger.LogInformation("Loaded ONNX model: {ModelFilename}", modelFilename);
                     return session;
                 });
             }
             else
             {
-                Console.WriteLine($"WARNING: ONNX model {modelFilename} not found at {onnxPath}. Inference will be disabled.");
+                _logger.LogWarning("ONNX model {ModelFilename} not found at {OnnxPath}. Inference will be disabled.", modelFilename, onnxPath);
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error loading ONNX model for {botType}: {ex.Message}");
+            _logger.LogError(ex, "Error loading ONNX model for {BotType}", botType);
         }
     }
 
@@ -1001,16 +1007,7 @@ public class RLBotStrategy : BotStrategyBase
     {
         if (ns.RondelPosition.HasValue && ns.RondelPosition.Value == targetSlot) return false;
 
-        int moveCost = 0;
-        if (ns.RondelPosition.HasValue)
-        {
-            int dist = (targetSlot - ns.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
-            if (dist > RondelData.FreeMoveDistance)
-            {
-                int pf = ns.Power / 5;
-                moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
-            }
-        }
+        int moveCost = RondelData.GetMoveCost(ns.RondelPosition, targetSlot, ns.Power);
         return rlPlayer.Cash >= moveCost;
     }
 }

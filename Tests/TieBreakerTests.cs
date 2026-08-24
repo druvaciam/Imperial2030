@@ -111,5 +111,42 @@ namespace Imperial2030.Tests
             // Tie breaker goes to China (P2 has 9, P1 has 6)
             Assert.Equal(p2.Id, ranked[0].Id);
         }
+
+        [Fact]
+        public void UpdateNationController_IncumbentTiedForTheLead_RetainsTheGovernment()
+        {
+            // Imperial-2030-Rules.pdf p.12: a challenger takes over only if it "has achieved the highest
+            // credit sum (a tie is not sufficient)" - matching the sitting government is not enough, even
+            // for the player who just invested.
+            //
+            // A tie needs different bond sets summing equal, since denominations are unique per nation
+            // (BondData.AvailableCosts): the incumbent holds Russia's 2M + 4M = 6M, the challenger buys
+            // Russia's 6M. This is the only tie branch real play can reach - the one where the tied leaders
+            // EXCLUDE the incumbent is unreachable, because this runs after each single purchase and the
+            // government always already holds the maximum. See the comment in UpdateNationController.
+            var incumbent = Guid.NewGuid();
+            var challenger = Guid.NewGuid();
+
+            var game = new Game
+            {
+                InvestorCardHolderId = challenger,
+                ActingPlayerId = challenger, // the challenger is the one who just bought in
+                Players = new List<Player> { new Player { Id = incumbent }, new Player { Id = challenger } },
+                NationStates = new List<NationState>
+                {
+                    new NationState { Nation = Nation.Russia, ControllerId = incumbent }
+                },
+                Bonds = new List<Bond>
+                {
+                    new Bond { Nation = Nation.Russia, Cost = 2, Interest = 1, HolderId = incumbent },
+                    new Bond { Nation = Nation.Russia, Cost = 4, Interest = 2, HolderId = incumbent },
+                    new Bond { Nation = Nation.Russia, Cost = 6, Interest = 3, HolderId = challenger }
+                }
+            };
+
+            Imperial2030.Server.Controllers.GamesController.UpdateNationController(null, game, Nation.Russia);
+
+            Assert.Equal(incumbent, game.NationStates.First(ns => ns.Nation == Nation.Russia).ControllerId);
+        }
     }
 }

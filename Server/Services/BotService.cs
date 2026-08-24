@@ -45,7 +45,7 @@ public class BotService
             // mutable fields and corrupt each other's cached action. The underlying ONNX InferenceSession
             // stays shared via _sessionCache (keyed by model path) regardless, so this costs nothing extra.
             var key = $"{type}:{player.Id}";
-            return _rlStrategies.GetOrAdd(key, _ => new Bots.Strategies.RLBotStrategy(type));
+            return _rlStrategies.GetOrAdd(key, _ => new Bots.Strategies.RLBotStrategy(type, _logger));
         }
 
         return _botStrategies.FirstOrDefault(s => s.Name.Equals(type, StringComparison.OrdinalIgnoreCase))
@@ -227,7 +227,7 @@ public class BotService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[TryPlayBotTurnAsync] ERROR: {ex.Message}\n{ex.StackTrace}");
+            _logger.LogError(ex, "TryPlayBotTurnAsync failed");
             throw;
         }
         finally
@@ -249,16 +249,7 @@ public class BotService
             targetSlot = ChooseRondelSlot(game, nationState, controller);
 
             // Calculate cost
-            int cost = 0;
-            if (nationState.RondelPosition != null)
-            {
-                int distance = (targetSlot - nationState.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
-                if (distance > RondelData.FreeMoveDistance)
-                {
-                    int powerFactor = nationState.Power / 5;
-                    cost = (distance - RondelData.FreeMoveDistance) * (1 + powerFactor);
-                }
-            }
+            int cost = RondelData.GetMoveCost(nationState.RondelPosition, targetSlot, nationState.Power);
 
             int? oldPos = nationState.RondelPosition;
 
@@ -426,14 +417,10 @@ public class BotService
             int moveCost = 0;
             if (ns.RondelPosition.HasValue)
             {
-                int dist = (slot - ns.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
+                int dist = RondelData.GetMoveDistance(ns.RondelPosition.Value, slot);
                 if (dist > RondelData.MaxMoveDistance) continue;
 
-                if (dist > RondelData.FreeMoveDistance)
-                {
-                    int pf = ns.Power / 5;
-                    moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
-                }
+                moveCost = RondelData.GetMoveCost(ns.RondelPosition, slot, ns.Power);
             }
 
             if (moveCost > controller.Cash) continue;
@@ -1356,12 +1343,7 @@ public class BotService
             {
                 int targetSlot = RondelData.InvestorSlot;
                 int? currentSlot = nationState.RondelPosition;
-                int cost = 0;
-                if (currentSlot != null)
-                {
-                    int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
-                    if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
-                }
+                int cost = RondelData.GetMoveCost(currentSlot, targetSlot, nationState.Power);
 
                 game.PendingSwissBankForceNation = null;
                 game.PendingSwissBankForceTargetSlot = null;
@@ -1400,12 +1382,7 @@ public class BotService
                 {
                     int targetSlot = game.PendingSwissBankForceTargetSlot.Value;
                     int? currentSlot = nationState.RondelPosition;
-                    int cost = 0;
-                    if (currentSlot != null)
-                    {
-                        int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
-                        if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
-                    }
+                    int cost = RondelData.GetMoveCost(currentSlot, targetSlot, nationState.Power);
 
                     game.PendingSwissBankForceNation = null;
                     game.PendingSwissBankForceTargetSlot = null;
