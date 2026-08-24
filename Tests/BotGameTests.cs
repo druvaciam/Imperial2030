@@ -290,6 +290,7 @@ namespace Imperial2030.Tests
                     .Include(g => g.Players)
                     .Include(g => g.NationStates)
                     .Include(g => g.Bonds)
+                    .AsSplitQuery()
                     .FirstOrDefault(g => g.Id == gameId);
                 if (finalGame?.Status == GameStatus.Finished)
                 {
@@ -972,6 +973,7 @@ namespace Imperial2030.Tests
                 .Include(g => g.Units)
                 .Include(g => g.NationStates)
                 .Include(g => g.Players)
+                .AsSplitQuery()
                 .FirstAsync(g => g.Id == gameId);
 
             var botService = new Imperial2030.Server.Services.BotService(

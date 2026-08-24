@@ -6,6 +6,8 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Security.Claims;
 using Imperial2030.Shared.Models;
+using Imperial2030.Shared.Constants;
+using Imperial2030.Server.Configuration;
 using NLog.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -80,9 +82,23 @@ if (isTrainingMode)
         builder.Services.AddScoped<Imperial2030.Server.Data.ApplicationDbContext>(sp => sp.GetRequiredService<Imperial2030.Server.Data.SqlServerApplicationDbContext>());
     }
 
-builder.Services.AddIdentity<Imperial2030.Server.Models.ApplicationUser, Microsoft.AspNetCore.Identity.IdentityRole>()
+builder.Services.AddIdentity<Imperial2030.Server.Models.ApplicationUser, Microsoft.AspNetCore.Identity.IdentityRole>(
+        Imperial2030.Server.Configuration.AuthSecurity.ConfigureLockout)
     .AddEntityFrameworkStores<Imperial2030.Server.Data.ApplicationDbContext>()
     .AddDefaultTokenProviders();
+
+// Caps every /api/auth/* endpoint per caller. Applied via [EnableRateLimiting] on AuthController rather
+// than globally, so gameplay traffic is never throttled — see AuthSecurity for the partitioning caveat
+// behind reverse proxies.
+builder.Services.AddAuthRateLimiting(builder.Configuration);
+
+// Resolved once here and registered as a singleton so token ISSUANCE (AuthController) and token
+// VALIDATION (below) are guaranteed to use the same key, issuer, audience and lifetime. These were
+// previously duplicated literals in both files, each with its own hardcoded signing-key fallback.
+// Throws outside Development when Jwt:Key is missing, too short, or set to the key that leaked into
+// this repository's git history — see JwtOptions.
+var (jwtOptions, jwtWarning) = Imperial2030.Server.Configuration.JwtOptions.Resolve(builder.Configuration, builder.Environment);
+builder.Services.AddSingleton(jwtOptions);
 
 builder.Services.AddAuthentication(options =>
 {
@@ -98,11 +114,9 @@ builder.Services.AddAuthentication(options =>
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = "Imperial2030Server",
-            ValidAudience = "Imperial2030Client",
-            // JWT key can be overridden via config/env var (e.g. Jwt__Key on Linux VPS)
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(
-                builder.Configuration["Jwt:Key"] ?? "ThisIsASecretKeyForImperial2030GameOnly!"))
+            ValidIssuer = Imperial2030.Server.Configuration.JwtOptions.Issuer,
+            ValidAudience = Imperial2030.Server.Configuration.JwtOptions.Audience,
+            IssuerSigningKey = jwtOptions.SigningKey
         };
         options.Events = new JwtBearerEvents
         {
@@ -128,6 +142,19 @@ builder.Services.AddAuthentication(options =>
             },
             OnTokenValidated = async context =>
             {
+                // Guest principals (AuthController.GuestLogin) are backed by no ApplicationUser row at
+                // all — by design: a guest is a throwaway identity, minted with a random NameIdentifier
+                // so it can browse and spectate without registering. Running the store lookup below on
+                // one always came back null and failed the token, so the server rejected its own
+                // freshly-issued guest tokens with 401 on every [Authorize] endpoint, which in turn made
+                // GamesController's eight `User.IsInRole("Guest")` checks unreachable dead code.
+                // Gate on the same role claim those checks use, so the two can never disagree.
+                //
+                // Not a weakening of the existence check: minting a token with this role still requires
+                // the signing key, and a real user who has since been deleted carries no Guest role and
+                // is still rejected below.
+                if (context.Principal?.IsInRole(GameConstants.GuestRole) == true) return;
+
                 var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<Imperial2030.Server.Models.ApplicationUser>>();
                 var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (userId != null)
@@ -144,6 +171,12 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+// Deferred from JwtOptions.Resolve, which runs before the logging pipeline exists.
+if (jwtWarning != null)
+{
+    app.Logger.LogWarning("{JwtWarning}", jwtWarning);
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -163,6 +196,10 @@ app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();
 
 app.UseRouting();
+
+// After UseRouting so the endpoint's [EnableRateLimiting] metadata has been resolved, and before
+// UseAuthentication so throttled requests are rejected without doing token or password work first.
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

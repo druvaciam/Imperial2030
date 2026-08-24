@@ -156,6 +156,76 @@ namespace Imperial2030.Tests
             }
         }
 
+        // Production is one action taken on landing (Imperial-2030-Rules.pdf p.7 "Production"), not a
+        // repeatable one. HasProducedThisTurn was previously only ever WRITTEN — never read as a guard,
+        // unlike its siblings HasBuiltThisTurn (BuildFactory) and HasImportedThisTurn (ExecuteImport) —
+        // so re-POSTing the endpoint produced another full batch of free units, up to the unit cap.
+        [Fact]
+        public async Task ExecuteProduction_CalledTwiceInSameTurn_SecondCallIsRejected()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                // RondelPosition 2 is Production
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 2);
+
+                var moscowId = "Moscow";
+                var vladivostokId = "Vladivostok";
+
+                context.TerritoryStates.AddRange(
+                    new TerritoryState { TerritoryId = moscowId, GameId = gameId, Controller = Nation.Russia, HasFactory = true },
+                    new TerritoryState { TerritoryId = vladivostokId, GameId = gameId, Controller = Nation.Russia, HasFactory = true });
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+
+                // First call: both factories are unblocked, so both produce.
+                var first = await controller.ExecuteProduction(gameId);
+                Assert.IsType<OkObjectResult>(first);
+
+                var unitsAfterFirst = await context.Units.Where(u => u.GameId == gameId).ToListAsync();
+                Assert.Equal(2, unitsAfterFirst.Count);
+
+                var nsAfterFirst = await context.NationStates.FirstAsync(n => n.GameId == gameId && n.Nation == Nation.Russia);
+                Assert.True(nsAfterFirst.HasProducedThisTurn);
+
+                // Second call in the same turn must be refused outright, not silently produce again.
+                var second = await controller.ExecuteProduction(gameId);
+                var badRequest = Assert.IsType<BadRequestObjectResult>(second);
+                Assert.Equal("Already produced this turn.", badRequest.Value);
+
+                var unitsAfterSecond = await context.Units.Where(u => u.GameId == gameId).ToListAsync();
+                Assert.Equal(2, unitsAfterSecond.Count);
+            }
+        }
+
+        // The nation's turn is suspended while an Investor phase resolves, so no slot action may run —
+        // BuildFactory already guarded this and ExecuteProduction did not.
+        [Fact]
+        public async Task ExecuteProduction_DuringInvestorTurn_IsRejected()
+        {
+            var dbName = Guid.NewGuid().ToString();
+            using (var context = GetDbContext(dbName))
+            {
+                var (gameId, userId, _) = await SetupGame(context, rondelPosition: 2);
+
+                context.TerritoryStates.Add(
+                    new TerritoryState { TerritoryId = "Moscow", GameId = gameId, Controller = Nation.Russia, HasFactory = true });
+
+                var game = await context.Games.FirstAsync(g => g.Id == gameId);
+                game.IsInvestorTurn = true;
+                await context.SaveChangesAsync();
+
+                var controller = GetController(context, userId);
+
+                var result = await controller.ExecuteProduction(gameId);
+
+                var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+                Assert.Equal("Waiting for Investor Phase.", badRequest.Value);
+                Assert.Empty(await context.Units.Where(u => u.GameId == gameId).ToListAsync());
+            }
+        }
+
         [Fact]
         public async Task ExecuteTaxation_OccupiedFactory_DoesNotYieldRevenue()
         {

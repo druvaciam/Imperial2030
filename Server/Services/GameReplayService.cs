@@ -334,7 +334,13 @@ public class GameReplayService
                 // authenticate as whoever the replayed game thinks is acting, not the logged PlayerName.
                 // For nation-based actions (Move, Production, etc.), auth is checked against the nation controller.
                 Player? actingPlayer = null;
-                var currentGameState = context.Games.Include(g => g.Players).Include(g => g.NationStates).First(g => g.Id == replayGameId);
+                // Runs once per replayed action, so this is the hottest query in the loop. Two collection
+                // Includes without AsSplitQuery is a cartesian product (see .agents/AGENTS.md rule #19).
+                var currentGameState = await context.Games
+                    .Include(g => g.Players)
+                    .Include(g => g.NationStates)
+                    .AsSplitQuery()
+                    .FirstAsync(g => g.Id == replayGameId);
 
                 if (action.ActionType == "Investment")
                 {
@@ -393,7 +399,11 @@ public class GameReplayService
                     {
                         case "Move":
                             var moveMeta = JsonSerializer.Deserialize<RondelMoveMetadata>(action.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                            var moveGame = context.Games.Include(g => g.NationStates).Include(g => g.Players).First(g => g.Id == replayGameId);
+                            var moveGame = await context.Games
+                                .Include(g => g.NationStates)
+                                .Include(g => g.Players)
+                                .AsSplitQuery()
+                                .FirstAsync(g => g.Id == replayGameId);
                             if (action.Nation.HasValue)
                             {
                                 int maxAdvances = 6;
@@ -1122,7 +1132,11 @@ public class GameReplayService
                 }
                 if (result is ForbidResult || (result as StatusCodeResult)?.StatusCode == 403)
                 {
-                    var curGame = context.Games.Include(g => g.Players).Include(g => g.NationStates).First(g => g.Id == replayGameId);
+                    var curGame = await context.Games
+                        .Include(g => g.Players)
+                        .Include(g => g.NationStates)
+                        .AsSplitQuery()
+                        .FirstAsync(g => g.Id == replayGameId);
                     var curActPlayer = curGame.Players.FirstOrDefault(p => p.Id == curGame.ActingPlayerId);
 
                     // BattleResponse/Battle/SwissBankResponse don't authorize via ActingPlayerId at all (that's
