@@ -87,10 +87,10 @@ builder.Services.AddIdentity<Imperial2030.Server.Models.ApplicationUser, Microso
     .AddEntityFrameworkStores<Imperial2030.Server.Data.ApplicationDbContext>()
     .AddDefaultTokenProviders();
 
-// Caps every /api/auth/* endpoint per caller. Applied via [EnableRateLimiting] on AuthController rather
-// than globally, so gameplay traffic is never throttled — see AuthSecurity for the partitioning caveat
-// behind reverse proxies.
-builder.Services.AddAuthRateLimiting(builder.Configuration);
+// Endpoint rate-limit policies (auth, replay). Applied via [EnableRateLimiting] on the specific
+// endpoints rather than globally, so gameplay traffic is never throttled — see RateLimitPolicies for
+// the partitioning caveat behind reverse proxies.
+builder.Services.AddAppRateLimiting(builder.Configuration);
 
 // Resolved once here and registered as a singleton so token ISSUANCE (AuthController) and token
 // VALIDATION (below) are guaranteed to use the same key, issuer, audience and lifetime. These were

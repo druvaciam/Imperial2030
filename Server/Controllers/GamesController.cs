@@ -695,8 +695,23 @@ public class GamesController : ControllerBase
 
     [HttpPost("{gameId}/replay/start")]
     [AllowAnonymous]
+    // ReplaySessionManager's caps bound how many sessions one caller may HOLD; this bounds how fast they
+    // can churn them. Without it, start/stop/start stays under the cap forever while costing a full
+    // source-game load and reseed on every cycle.
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting(Imperial2030.Server.Configuration.RateLimitPolicies.Replay)]
     public async Task<IActionResult> StartReplay(Guid gameId, [FromServices] Imperial2030.Server.Services.ReplaySessionManager replaySessionManager)
     {
+        // Capacity is decided FIRST, before the source game and its entire action log are loaded and
+        // projected into DTOs below. This endpoint is [AllowAnonymous], so if admission were checked after
+        // that work, every rejected request would still cost a multi-collection query and thousands of
+        // allocations — the cap would protect memory while leaving the database open to the same flood.
+        var ownerKey = ReplayOwnerKey();
+        var admission = replaySessionManager.CheckAdmission(ownerKey);
+        if (admission != Imperial2030.Server.Services.ReplayAdmission.Accepted)
+        {
+            return ReplayCapacityResponse(admission);
+        }
+
         var sourceGame = await _context.Games.Include(g => g.Actions).AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
         if (sourceGame == null) return NotFound();
         if (sourceGame.Status != GameStatus.Finished) return BadRequest("Only finished games can be replayed.");
@@ -733,8 +748,32 @@ public class GamesController : ControllerBase
             return BadRequest("Roster/nation-distribution snapshot is missing or incomplete.");
         }
 
-        var replaySessionId = await replaySessionManager.StartReplayAsync(sourceGame, orderedActions, setupMeta);
-        return Ok(replaySessionId);
+        // Re-checked inside StartReplayAsync under its admission lock — the check above is only an early-out,
+        // and capacity can legitimately fill between the two.
+        var start = await replaySessionManager.StartReplayAsync(sourceGame, orderedActions, setupMeta, ownerKey);
+        if (start.Admission != Imperial2030.Server.Services.ReplayAdmission.Accepted || start.SessionId == null)
+        {
+            return ReplayCapacityResponse(start.Admission);
+        }
+
+        return Ok(start.SessionId.Value);
+    }
+
+    /// <summary>
+    /// Identifies a caller for per-caller replay capacity. Uses the transport-level remote address and
+    /// deliberately ignores X-Forwarded-For, which a client can set freely — honouring it would hand an
+    /// attacker a fresh budget per request. Same trade-off and the same reverse-proxy caveat as the auth
+    /// rate limiter; see AuthSecurity.
+    /// </summary>
+    private string ReplayOwnerKey() => HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    private ObjectResult ReplayCapacityResponse(Imperial2030.Server.Services.ReplayAdmission admission)
+    {
+        string message = admission == Imperial2030.Server.Services.ReplayAdmission.CallerAtCapacity
+            ? "You already have the maximum number of replay sessions open. Close one and try again."
+            : "The server is running its maximum number of replay sessions. Please try again shortly.";
+
+        return StatusCode(StatusCodes.Status429TooManyRequests, message);
     }
 
     [HttpGet("replay/{replaySessionId}")]
