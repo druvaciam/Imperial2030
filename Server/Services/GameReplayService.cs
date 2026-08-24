@@ -433,6 +433,7 @@ public class GameReplayService
                             {
                                 maGame.PendingBattleTerritoryId = null;
                                 maGame.PendingBattleAggressorNation = null;
+                                maGame.PendingBattleAggressorUnitId = null;
                                 maGame.PendingBattleDefenders = new List<Nation>();
                                 context.Entry(maGame).Property(g => g.PendingBattleDefenders).IsModified = true;
                                 context.Entry(maGame).State = EntityState.Modified;
@@ -503,6 +504,7 @@ public class GameReplayService
                                     {
                                         mg.PendingBattleTerritoryId = null;
                                         mg.PendingBattleAggressorNation = null;
+                                        mg.PendingBattleAggressorUnitId = null;
                                         mg.PendingBattleDefenders = new List<Nation>();
                                         context.Entry(mg).Property(g => g.PendingBattleDefenders).IsModified = true;
                                         context.Entry(mg).State = EntityState.Modified;
@@ -531,6 +533,7 @@ public class GameReplayService
                             {
                                 mfGame.PendingBattleTerritoryId = null;
                                 mfGame.PendingBattleAggressorNation = null;
+                                mfGame.PendingBattleAggressorUnitId = null;
                                 mfGame.PendingBattleDefenders = new List<Nation>();
                                 context.Entry(mfGame).Property(g => g.PendingBattleDefenders).IsModified = true;
                                 context.Entry(mfGame).State = EntityState.Modified;
@@ -588,6 +591,7 @@ public class GameReplayService
                                     {
                                         mg.PendingBattleTerritoryId = null;
                                         mg.PendingBattleAggressorNation = null;
+                                        mg.PendingBattleAggressorUnitId = null;
                                         mg.PendingBattleDefenders = new List<Nation>();
                                         context.Entry(mg).Property(g => g.PendingBattleDefenders).IsModified = true;
                                         context.Entry(mg).State = EntityState.Modified;
@@ -1005,6 +1009,7 @@ public class GameReplayService
                                 }
                                 phaseGame.PendingBattleTerritoryId = null;
                                 phaseGame.PendingBattleAggressorNation = null;
+                                phaseGame.PendingBattleAggressorUnitId = null;
                                 phaseGame.PendingBattleDefenders = new List<Nation>();
                                 context.Entry(phaseGame).Property(g => g.PendingBattleDefenders).IsModified = true;
                                 context.Entry(phaseGame).State = EntityState.Modified;
@@ -1027,6 +1032,7 @@ public class GameReplayService
                             await maneuverController.UpdateTerritoryControl(etGame);
                             etGame.PendingBattleTerritoryId = null;
                             etGame.PendingBattleAggressorNation = null;
+                            etGame.PendingBattleAggressorUnitId = null;
                             etGame.PendingBattleDefenders = new List<Nation>();
                             etGame.CurrentManeuverPhase = ManeuverPhase.None;
                             context.Entry(etGame).Property(g => g.PendingBattleDefenders).IsModified = true;

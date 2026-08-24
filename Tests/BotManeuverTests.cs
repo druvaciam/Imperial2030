@@ -43,7 +43,7 @@ namespace Imperial2030.Tests
         }
     }
 
-    public class BotPeacefulMoveTests
+    public class BotManeuverTests
     {
         private ApplicationDbContext GetDbContext(string dbName)
         {
@@ -206,6 +206,75 @@ namespace Imperial2030.Tests
             Assert.Equal("Mexico", meta!.ToTerritoryId);
             Assert.True(meta.RouteVia == null || meta.RouteVia.Count == 0,
                 $"An adjacent step must log no waypoints, got: {string.Join(", ", meta.RouteVia ?? new List<string>())}");
+        }
+
+        /// <summary>
+        /// Mirrors ManeuverControllerTests.BattleResponse_Fight_DestroysTheUnitThatMoved_NotABystander,
+        /// but against the bot's own independent fight-resolution path (HandleBotBattleResponse), used
+        /// for live bot turns and the RL training server. Europe already had a Fleet sitting in Ukraine
+        /// before an Europe Army moved in hostilely and triggered this pending battle; only the mover
+        /// may die when the fight resolves, not the bystander Fleet that never moved.
+        /// </summary>
+        [Fact]
+        public async Task HandleBotBattleResponse_Fight_DestroysTheUnitThatMoved_NotABystander()
+        {
+            string dbName = Guid.NewGuid().ToString();
+            var ctx = GetDbContext(dbName);
+
+            var gameId = Guid.NewGuid();
+            var aggressorPlayerId = Guid.NewGuid();
+            var defenderPlayerId = Guid.NewGuid();
+
+            var bystanderFleet = new Unit { Id = Guid.NewGuid(), Nation = Nation.Europe, TerritoryId = "Ukraine", UnitType = UnitType.Fleet };
+            var moverArmy = new Unit { Id = Guid.NewGuid(), Nation = Nation.Europe, TerritoryId = "Ukraine", UnitType = UnitType.Army, IsHostile = true };
+            var defenderUnit = new Unit { Id = Guid.NewGuid(), Nation = Nation.Russia, TerritoryId = "Ukraine", UnitType = UnitType.Army };
+
+            var game = new Game
+            {
+                Id = gameId,
+                CurrentTurnNation = Nation.Europe,
+                Status = GameStatus.InProgress,
+                PendingBattleTerritoryId = "Ukraine",
+                PendingBattleAggressorNation = Nation.Europe,
+                PendingBattleAggressorUnitId = moverArmy.Id,
+                PendingBattleDefenders = new List<Nation> { Nation.Russia },
+                Players = new List<Player>
+                {
+                    new Player { Id = aggressorPlayerId, IsBot = true, BotType = "StubPeaceful" },
+                    new Player { Id = defenderPlayerId, IsBot = true, BotType = "StubPeaceful" } // RetreatFromBattle => false, i.e. fights
+                },
+                NationStates = new List<NationState>
+                {
+                    new NationState { Nation = Nation.Europe, ControllerId = aggressorPlayerId },
+                    new NationState { Nation = Nation.Russia, ControllerId = defenderPlayerId }
+                },
+                Units = new List<Unit> { bystanderFleet, moverArmy, defenderUnit }
+            };
+
+            ctx.Games.Add(game);
+            await ctx.SaveChangesAsync();
+
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(new Mock<IClientProxy>().Object);
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            var botService = new BotService(mockScopeFactory.Object, mockHub.Object,
+                [new StubPeacefulBotStrategy()], new Mock<ILogger<BotService>>().Object);
+            botService.SkipDelays = true;
+
+            var loadedGame = await ctx.Games.Include(g => g.Units).Include(g => g.Players).Include(g => g.NationStates)
+                .FirstAsync(g => g.Id == gameId);
+
+            // Act
+            await botService.HandleBotBattleResponse(ctx, loadedGame);
+
+            // Assert: the bystander Fleet survives; the mover Army and the defender are destroyed.
+            var updatedGame = await GetDbContext(dbName).Games.Include(g => g.Units).FirstAsync(g => g.Id == gameId);
+            var unitsInTerritory = updatedGame.Units.Where(u => u.TerritoryId == "Ukraine").ToList();
+            Assert.Single(unitsInTerritory);
+            Assert.Equal(bystanderFleet.Id, unitsInTerritory.First().Id);
         }
     }
 
