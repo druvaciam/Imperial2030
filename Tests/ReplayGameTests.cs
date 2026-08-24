@@ -827,16 +827,32 @@ namespace Imperial2030.Tests
             int timeoutTicks = 0;
             var hardTimeout = System.Diagnostics.Stopwatch.StartNew();
             var hardTestTimeout = TimeSpan.FromMinutes(5);
+            // Distinguishes "the bots finished the game" from "we gave up waiting". Both exit this loop
+            // identically, so without the flag a timeout surfaced further down as a bare
+            // Assert.Equal(Finished, InProgress) — which reads like a replay/import defect when it is
+            // really just this wait expiring under load (the game played here is randomised, and the whole
+            // suite runs test classes in parallel). Everything below is only meaningful once the ORIGINAL
+            // game actually reached Finished, so say so explicitly and fail here instead.
+            bool reachedFinished = false;
             while (timeoutTicks < 5000 && hardTimeout.Elapsed < hardTestTimeout)
             {
                 using var scope = mockScopeFactory.Object.CreateScope();
                 var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                 var game = ctx.Games.AsNoTracking().FirstOrDefault(g => g.Id == gameId);
-                if (game == null || game.Status == GameStatus.Finished) break;
+                if (game == null || game.Status == GameStatus.Finished)
+                {
+                    reachedFinished = game?.Status == GameStatus.Finished;
+                    break;
+                }
                 if (timeoutTicks % 30 == 0) botService.TriggerBotTurn(gameId);
                 await Task.Delay(10);
                 timeoutTicks++;
             }
+
+            Assert.True(reachedFinished,
+                $"The bot-played source game never reached Finished: gave up after {timeoutTicks} ticks / " +
+                $"{hardTimeout.Elapsed.TotalSeconds:0.0}s. This is the wait expiring, NOT an export/import " +
+                "or replay failure — nothing below this point has run yet.");
 
             // The bot loop above finished the game through BotService's own scoped DbContext instances (a
             // different ApplicationDbContext object than `context`, sharing the same InMemory store name) —

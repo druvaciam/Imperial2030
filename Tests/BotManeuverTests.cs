@@ -192,7 +192,7 @@ namespace Imperial2030.Tests
             await botService.TryPlayBotTurnAsync(gameId, singleTurnOnly: true);
 
             var after = GetDbContext(dbName);
-            var updatedGame = await after.Games.Include(g => g.Units).Include(g => g.Actions).FirstAsync(g => g.Id == gameId);
+            var updatedGame = await after.Games.Include(g => g.Units).Include(g => g.Actions).AsSplitQuery().FirstAsync(g => g.Id == gameId);
 
             Assert.Equal("Mexico", updatedGame.Units.First(u => u.UnitType == UnitType.Army).TerritoryId);
 
@@ -265,6 +265,7 @@ namespace Imperial2030.Tests
             botService.SkipDelays = true;
 
             var loadedGame = await ctx.Games.Include(g => g.Units).Include(g => g.Players).Include(g => g.NationStates)
+                .AsSplitQuery()
                 .FirstAsync(g => g.Id == gameId);
 
             // Act

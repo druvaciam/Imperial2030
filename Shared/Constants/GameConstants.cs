@@ -16,4 +16,14 @@ public static class GameConstants
     // A nation reaching this many power points ends the game immediately (Imperial 2030 rules, "Object of
     // the Game / End of the Game"), and it is also the top of the scoring track, so power is clamped here.
     public const int MaxPowerPoints = 25;
+
+    // Role claim carried by tokens from AuthController.GuestLogin. A guest is a throwaway identity with no
+    // backing ApplicationUser row, so it may browse and spectate but not create or join games.
+    //
+    // Centralized because this one string is load-bearing in two places that MUST agree: Program.cs's
+    // OnTokenValidated skips its user-store existence check for this role (a guest has no row to find),
+    // and every `User.IsInRole(...)` gate in GamesController refuses guest writes. When these were
+    // separate "Guest" literals and only one side knew about the role, guest tokens authenticated
+    // nowhere and the authorization gates became unreachable.
+    public const string GuestRole = "Guest";
 }

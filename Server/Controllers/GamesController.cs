@@ -1490,6 +1490,9 @@ public class GamesController : ControllerBase
 
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
+        // The nation's turn is suspended while an Investor phase resolves, so no slot action may run.
+        // Mirrors BuildFactory/ExecuteImport, which have always had this guard.
+        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
 
         var currentNation = game.CurrentTurnNation;
         var nationState = game.NationStates.First(n => n.Nation == currentNation);
@@ -1503,6 +1506,14 @@ public class GamesController : ControllerBase
         {
             return BadRequest("Not on a Production slot.");
         }
+
+        // Per-turn limit. Production is a single action taken on landing (Imperial-2030-Rules.pdf p.7,
+        // "Production": each factory "may produce one army or one fleet"), not a repeatable one.
+        // HasProducedThisTurn used to be written here but never read, unlike the identical guards on
+        // HasBuiltThisTurn (BuildFactory) and HasImportedThisTurn (ExecuteImport) — so re-POSTing this
+        // endpoint produced another full batch of free units on every call, letting a nation fill to its
+        // GetMaxArmies/GetMaxFleets cap in a single turn.
+        if (nationState.HasProducedThisTurn) return BadRequest("Already produced this turn.");
 
         var factoryTerritories = game.TerritoryStates
             .Where(t => t.HasFactory)

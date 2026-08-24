@@ -15,7 +15,10 @@ RestartSec=10
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://localhost:5000
 Environment=ConnectionStrings__DefaultConnection="Data Source=/opt/imperial2030/imperial2030.db"
-# openssl rand -base64 32
+# REQUIRED. The server refuses to start outside Development if this is unset, shorter than 32 bytes,
+# or set to the old default key that was committed to this repo's source history (it is public, so
+# anyone holding it could forge a token for any user). Generate a fresh one:
+#   openssl rand -base64 32
 Environment=Jwt__Key=YourStrongRandomKeyHere_AtLeast32CharsLong!!
 Environment=AzureFunctionNotificationKey=YOUR_FUNCTION_KEY_HERE
 
