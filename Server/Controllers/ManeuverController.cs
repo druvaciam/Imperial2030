@@ -271,10 +271,10 @@ public class ManeuverController : ControllerBase
             {
                 GameLogger.LogUnitMove(_context, game, UnitType.Fleet, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, nation, controller.GetPlayerName(_context));
             }
-            await UpdateTerritoryControl(game);
+            // No UpdateTerritoryControl here: flags are step 3 of the maneuver, placed once the fleets and
+            // armies have all moved (Imperial-2030-Rules.pdf p.8/p.10) - see TryAutoAdvanceManeuver.
             await TryAutoAdvanceManeuver(game, nation);
         }
-        await UpdateTerritoryControl(game);
         await _context.SaveChangesAsync();
         if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
@@ -299,6 +299,11 @@ public class ManeuverController : ControllerBase
         var game = await _context.Games
             .Include(g => g.Units)
             .Include(g => g.NationStates)
+            // Required: destroying the last unmoved unit here ends the maneuver phase via
+            // TryAutoAdvanceManeuver, whose flag pass reads and writes game.TerritoryStates. Without this
+            // the collection loads empty, so every already-flagged region looks unflagged and gets a
+            // duplicate TerritoryState row plus a spurious flag-placement log entry.
+            .Include(g => g.TerritoryStates)
             .Include(g => g.Players)
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
@@ -338,7 +343,9 @@ public class ManeuverController : ControllerBase
 
         GameLogger.LogBattleDestruction(_context, game, unit.UnitType, targetNation, enemyUnit.UnitType, unit.TerritoryId, nation, controller.GetPlayerName(_context));
 
-        await UpdateTerritoryControl(game);
+        // See MoveFleet: a battle resolved mid-maneuver doesn't place flags either. The rulebook's
+        // "as the result of a battle... the previous flag is removed and replaced" (p.10, 3. Flags) is
+        // still settled in step 3, once every unit has finished moving.
         await TryAutoAdvanceManeuver(game, nation);
 
         await _context.SaveChangesAsync();
@@ -618,10 +625,9 @@ public class ManeuverController : ControllerBase
             {
                 GameLogger.LogUnitMove(_context, game, UnitType.Army, sourceWasHostile, sourceTerritory, request.DestinationId, unit.IsHostile, nation, controller.GetPlayerName(_context), routeVia);
             }
-            await UpdateTerritoryControl(game);
+            // See MoveFleet: flag placement belongs to the end of the maneuver, not to each move.
             await TryAutoAdvanceManeuver(game, nation);
         }
-        await UpdateTerritoryControl(game);
         await _context.SaveChangesAsync();
         if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
@@ -905,7 +911,7 @@ public class ManeuverController : ControllerBase
                 game.PendingBattleAggressorUnitId = null;
                 game.PendingBattleDefenders.Clear();
 
-                await UpdateTerritoryControl(game);
+                // See MoveFleet: flags are settled at the end of the maneuver, not when this battle resolves.
                 // Advance Maneuver if applicable
                 await TryAutoAdvanceManeuver(game, aggressorNation);
         }
@@ -932,12 +938,11 @@ public class ManeuverController : ControllerBase
                 game.PendingBattleAggressorUnitId = null;
                 game.PendingBattleDefenders.Clear();
 
-                await UpdateTerritoryControl(game);
+                // See MoveFleet: flags are settled at the end of the maneuver, not when this battle resolves.
                 // Advance Maneuver if applicable
                 await TryAutoAdvanceManeuver(game, aggressorNation);
             }
         }
-        await UpdateTerritoryControl(game);
         await _context.SaveChangesAsync();
         if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 

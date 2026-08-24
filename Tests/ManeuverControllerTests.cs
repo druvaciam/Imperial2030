@@ -949,6 +949,99 @@ namespace Imperial2030.Tests
         }
 
         [Fact]
+        public async Task MoveFleet_TransientlyVacatedSeaRegion_KeepsItsFlagUntilTheManeuverEnds()
+        {
+            // Imperial-2030-Rules.pdf p.8 ("MANEUVER"): "This turn is conducted in three steps. First the
+            // fleets are moved, then the armies, and finally flags are placed in newly occupied regions."
+            // and p.10 ("3. Flags"): "A flag remains in a region until the region is occupied exclusively
+            // by another nation."
+            //
+            // Flags are therefore step 3 - evaluated ONCE, on the post-battle board - not after each
+            // individual unit move. Here Russia holds the North Atlantic with two fleets alongside one
+            // Europe fleet, moves both of its fleets out, then brings a third fleet in hostilely; the
+            // battle destroys that fleet and Europe's. The region ends the maneuver EMPTY, so it is never
+            // "occupied exclusively" by Europe and Russia's flag stays put.
+            //
+            // Evaluating control per-move instead handed Europe the flag during the window when Russia had
+            // stepped out, and nothing took it back once the region emptied - worth 1M/turn of Europe tax
+            // revenue it never earned. It also made human/replay play disagree with BotService, which has
+            // always updated control only at the phase boundary.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context); // Setup user as controller of Russia
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.CurrentManeuverPhase = ManeuverPhase.Fleets;
+
+            var outboundA = new Unit { Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Russia, UnitType = UnitType.Fleet, TerritoryId = "NorthAtlantic" };
+            var outboundB = new Unit { Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Russia, UnitType = UnitType.Fleet, TerritoryId = "NorthAtlantic" };
+            var attacker = new Unit { Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Russia, UnitType = UnitType.Fleet, TerritoryId = "MediterraneanSea" };
+            var europeFleet = new Unit { Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Europe, UnitType = UnitType.Fleet, TerritoryId = "NorthAtlantic" };
+            context.Units.AddRange(outboundA, outboundB, attacker, europeFleet);
+            context.TerritoryStates.Add(new TerritoryState { GameId = setup.GameId, TerritoryId = "NorthAtlantic", Controller = Nation.Russia });
+            await context.SaveChangesAsync();
+
+            var controller = GetController(context, setup.UserId);
+
+            // Act: step out with both fleets, then come back in and fight.
+            Assert.IsType<OkResult>(await controller.MoveFleet(setup.GameId, new MoveUnitRequest { UnitId = outboundA.Id, DestinationId = "CaribbeanSea" }));
+            Assert.IsType<OkResult>(await controller.MoveFleet(setup.GameId, new MoveUnitRequest { UnitId = outboundB.Id, DestinationId = "GulfOfGuinea" }));
+            Assert.IsType<OkResult>(await controller.MoveFleet(setup.GameId, new MoveUnitRequest { UnitId = attacker.Id, DestinationId = "NorthAtlantic", IsHostile = true }));
+
+            // Assert
+            var updatedGame = await context.Games.Include(g => g.Units).Include(g => g.TerritoryStates).FirstAsync(g => g.Id == setup.GameId);
+
+            // The battle destroyed the mover and the Europe fleet 1:1, leaving the region empty.
+            Assert.DoesNotContain(updatedGame.Units, u => u.TerritoryId == "NorthAtlantic");
+
+            // ...so Russia's flag was never displaced.
+            var northAtlantic = updatedGame.TerritoryStates.Single(ts => ts.TerritoryId == "NorthAtlantic");
+            Assert.Equal(Nation.Russia, northAtlantic.Controller);
+        }
+
+        [Fact]
+        public async Task Battle_EndingTheManeuverPhase_DoesNotDuplicateTerritoryStates()
+        {
+            // The Battle endpoint is the one maneuver endpoint that reaches UpdateTerritoryControl (via
+            // TryAutoAdvanceManeuver, when destroying the last unmoved unit ends the phase). It loaded the
+            // game without .Include(g => g.TerritoryStates), so game.TerritoryStates came back EMPTY and
+            // every already-flagged region looked unflagged: UpdateTerritoryControl inserted a second
+            // TerritoryState row for it and re-logged a flag placement that never happened.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context); // Setup user as controller of Russia
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.CurrentManeuverPhase = ManeuverPhase.Fleets;
+
+            // The battle itself: Russia's last unmoved fleet trades 1:1 with a Europe fleet, which ends the
+            // phase because nothing of Russia's is left to move.
+            var attacker = new Unit { Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Russia, UnitType = UnitType.Fleet, TerritoryId = "NorthAtlantic" };
+            var europeFleet = new Unit { Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Europe, UnitType = UnitType.Fleet, TerritoryId = "NorthAtlantic" };
+            // An unrelated region Russia already holds and has already moved into this turn - the one the
+            // end-of-phase flag pass then walks over.
+            var parked = new Unit { Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Russia, UnitType = UnitType.Fleet, TerritoryId = "CaribbeanSea", HasMoved = true };
+            context.Units.AddRange(attacker, europeFleet, parked);
+            context.TerritoryStates.Add(new TerritoryState { GameId = setup.GameId, TerritoryId = "CaribbeanSea", Controller = Nation.Russia });
+            await context.SaveChangesAsync();
+
+            // A SEPARATE context, as a real request gets: sharing the seeding context would let EF's
+            // change-tracker fixup populate game.TerritoryStates for free and hide the missing Include.
+            var controller = GetController(GetDbContext(dbName), setup.UserId);
+
+            // Act
+            var result = await controller.Battle(setup.GameId, new MoveUnitRequest { UnitId = attacker.Id, BattleTargetNation = Nation.Europe });
+
+            // Assert
+            Assert.IsType<OkResult>(result);
+
+            var caribbeanStates = await GetDbContext(dbName).TerritoryStates.AsNoTracking()
+                .Where(ts => ts.GameId == setup.GameId && ts.TerritoryId == "CaribbeanSea").ToListAsync();
+            Assert.Single(caribbeanStates);
+            Assert.Equal(Nation.Russia, caribbeanStates[0].Controller);
+        }
+
+        [Fact]
         public async Task MoveArmy_PeacefulIntoOwnHome_WithForeignArmy_ForcesBattle()
         {
             var dbName = Guid.NewGuid().ToString();

@@ -728,8 +728,9 @@ public class BotService
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
                             GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, sourceWasHostile, originalTerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
-                            // Update territory control before pausing
-                            await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
+                            // Deliberately no BotUpdateTerritoryControl before pausing: flags are step 3 of
+                            // the maneuver (Imperial-2030-Rules.pdf p.8/p.10) and this maneuver isn't over -
+                            // it resumes here once the defenders answer, and the phase-end call below runs then.
 
                             // Exit BotManeuverFleets and pause the turn to await responses
                             return;
@@ -907,8 +908,7 @@ public class BotService
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
                             GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot", routeVia);
-                            // Update territory control before pausing
-                            await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
+                            // See the Fleets loop above: no flag placement while the maneuver is only paused.
 
                             // Exit BotManeuver and pause the turn to await responses
                             return;
@@ -1317,7 +1317,9 @@ public class BotService
             }
         }
 
-        await BotUpdateTerritoryControl(ctx, game, GameConstants.SystemPlayerName);
+        // No BotUpdateTerritoryControl here: resolving these responses doesn't end the aggressor's
+        // maneuver, so its flags aren't settled yet (Imperial-2030-Rules.pdf p.8/p.10). The maneuver
+        // resumes afterwards and places them at its phase boundary.
 
         if (!game.PendingBattleDefenders.Any() || !game.Units.Any(u => u.TerritoryId == (game.PendingBattleTerritoryId ?? "") && u.Nation == game.PendingBattleAggressorNation))
         {
