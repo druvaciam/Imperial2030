@@ -861,6 +861,7 @@ public class TcpTrainingServer : BackgroundService
                                 {
                                     game.PendingBattleTerritoryId = target;
                                     game.PendingBattleAggressorNation = unit.Nation;
+                                    game.PendingBattleAggressorUnitId = unit.Id;
                                     game.PendingBattleDefenders = foreignDefenders.ToList();
                                 }
                             }

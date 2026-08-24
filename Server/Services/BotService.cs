@@ -724,6 +724,7 @@ public class BotService
                             // Trigger Negotiation Phase
                             game.PendingBattleTerritoryId = target;
                             game.PendingBattleAggressorNation = nation;
+                            game.PendingBattleAggressorUnitId = fleet.Id;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
                             GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, sourceWasHostile, originalTerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
@@ -902,6 +903,7 @@ public class BotService
                             // Trigger Negotiation Phase
                             game.PendingBattleTerritoryId = best;
                             game.PendingBattleAggressorNation = nation;
+                            game.PendingBattleAggressorUnitId = army.Id;
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
                             GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot", routeVia);
@@ -1303,7 +1305,8 @@ public class BotService
                 game.PendingBattleDefenders = defenders;
                 if (ctx != null) ctx.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
 
-                var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation);
+                var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation && u.Id == game.PendingBattleAggressorUnitId)
+                    ?? game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation);
                 var friendlyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == defNation);
                 if (enemyUnit != null && friendlyUnit != null)
                 {
@@ -1321,6 +1324,7 @@ public class BotService
             game.PendingBattleDefenders.Clear();
             game.PendingBattleTerritoryId = null;
             game.PendingBattleAggressorNation = null;
+            game.PendingBattleAggressorUnitId = null;
         }
 
         await SaveChangesAsync(ctx);

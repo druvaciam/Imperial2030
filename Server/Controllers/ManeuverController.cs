@@ -254,6 +254,7 @@ public class ManeuverController : ControllerBase
                     // Enter Pending Battle Negotiation Phase
                     game.PendingBattleTerritoryId = request.DestinationId;
                     game.PendingBattleAggressorNation = nation;
+                    game.PendingBattleAggressorUnitId = unit.Id;
                     game.PendingBattleDefenders = foreignFleets.ToList();
 
                     string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
@@ -602,6 +603,7 @@ public class ManeuverController : ControllerBase
                     // Enter Pending Battle Negotiation Phase (if peaceful or multiple targets)
                     game.PendingBattleTerritoryId = request.DestinationId;
                     game.PendingBattleAggressorNation = nation;
+                    game.PendingBattleAggressorUnitId = unit.Id;
                     game.PendingBattleDefenders = foreignDefenders.ToList();
 
                     string peaceOrHostile = request.IsHostile ? "hostilely" : "peacefully";
@@ -887,7 +889,8 @@ public class ManeuverController : ControllerBase
             if (myUnits.Any() && aggressorUnits.Any())
             {
                 var myUnit = myUnits.First();
-                var aggUnit = aggressorUnits.First();
+                var aggUnit = aggressorUnits.FirstOrDefault(u => u.Id == game.PendingBattleAggressorUnitId)
+                    ?? aggressorUnits.First();
                 _context.Units.Remove(myUnit);
                 _context.Units.Remove(aggUnit);
                 game.Units.Remove(myUnit);
@@ -899,6 +902,7 @@ public class ManeuverController : ControllerBase
 
                 game.PendingBattleTerritoryId = null;
                 game.PendingBattleAggressorNation = null;
+                game.PendingBattleAggressorUnitId = null;
                 game.PendingBattleDefenders.Clear();
 
                 await UpdateTerritoryControl(game);
@@ -925,6 +929,7 @@ public class ManeuverController : ControllerBase
 
                 game.PendingBattleTerritoryId = null;
                 game.PendingBattleAggressorNation = null;
+                game.PendingBattleAggressorUnitId = null;
                 game.PendingBattleDefenders.Clear();
 
                 await UpdateTerritoryControl(game);

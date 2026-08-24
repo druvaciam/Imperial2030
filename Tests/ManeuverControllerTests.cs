@@ -909,6 +909,46 @@ namespace Imperial2030.Tests
         }
 
         [Fact]
+        public async Task BattleResponse_Fight_DestroysTheUnitThatMoved_NotABystander()
+        {
+            // Arrange: Europe already had a Fleet sitting in Ukraine (e.g. a home Fleet-production
+            // territory) before an Europe Army moved in hostilely and triggered this pending battle.
+            // Only the mover should be at risk when the fight resolves - the bystander Fleet never
+            // took part in the move and must survive.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context); // Setup user as controller of Russia
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.PendingBattleTerritoryId = "Ukraine";
+            game.PendingBattleAggressorNation = Nation.Europe;
+            game.PendingBattleDefenders = new List<Nation> { Nation.Russia };
+
+            var bystanderFleet = new Unit { Id = Guid.NewGuid(), Nation = Nation.Europe, TerritoryId = "Ukraine", UnitType = UnitType.Fleet, GameId = setup.GameId };
+            var moverArmy = new Unit { Id = Guid.NewGuid(), Nation = Nation.Europe, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId, IsHostile = true };
+            var defenderUnit = new Unit { Id = Guid.NewGuid(), Nation = Nation.Russia, TerritoryId = "Ukraine", UnitType = UnitType.Army, GameId = setup.GameId };
+            context.Units.AddRange(bystanderFleet, moverArmy, defenderUnit);
+            game.PendingBattleAggressorUnitId = moverArmy.Id;
+            await context.SaveChangesAsync();
+
+            var controller = GetController(context, setup.UserId);
+            var request = new BattleResponseRequest { IsFight = true };
+
+            // Act
+            var result = await controller.BattleResponse(setup.GameId, request);
+
+            // Assert
+            Assert.IsType<OkResult>(result);
+
+            var updatedGame = await context.Games.Include(g => g.Units).FirstAsync(g => g.Id == setup.GameId);
+            var unitsInTerritory = updatedGame.Units.Where(u => u.TerritoryId == "Ukraine").ToList();
+
+            // The bystander Fleet survives; the mover Army and the defender are the ones destroyed.
+            Assert.Single(unitsInTerritory);
+            Assert.Equal(bystanderFleet.Id, unitsInTerritory.First().Id);
+        }
+
+        [Fact]
         public async Task MoveArmy_PeacefulIntoOwnHome_WithForeignArmy_ForcesBattle()
         {
             var dbName = Guid.NewGuid().ToString();

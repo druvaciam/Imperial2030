@@ -52,7 +52,12 @@ public class Game
     public string? PendingBattleTerritoryId { get; set; }
     public Nation? PendingBattleAggressorNation { get; set; }
 
-    // Using a list of Nations that must still answer. If a Nation responds Fight, it triggers. 
+    // The specific unit that moved into the territory and triggered this negotiation - so that
+    // when a defender fights, the mover (not some other unit of the same nation already sitting
+    // in the territory) is the one put at risk.
+    public Guid? PendingBattleAggressorUnitId { get; set; }
+
+    // Using a list of Nations that must still answer. If a Nation responds Fight, it triggers.
     // If Peace, they are removed. If empty, Peace prevails.
     public List<Nation> PendingBattleDefenders { get; set; } = new List<Nation>();
 
