@@ -38,13 +38,13 @@ public class Game
     public Guid? InvestorCardHolderId { get; set; }
     public bool IsInvestorTurn { get; set; } = false;
     public Guid? ActingPlayerId { get; set; } // If set, this player must take action (e.g. Investor) instead of CurrentTurnNation controller
-    public string PendingInvestorIdsJson { get; set; } = "[]";
-    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
-    public List<Guid> PendingInvestorIds
-    {
-        get => string.IsNullOrEmpty(PendingInvestorIdsJson) ? new List<Guid>() : System.Text.Json.JsonSerializer.Deserialize<List<Guid>>(PendingInvestorIdsJson) ?? new List<Guid>();
-        set => PendingInvestorIdsJson = System.Text.Json.JsonSerializer.Serialize(value);
-    }
+    // A plain list, mapped by EF as a primitive collection — the same shape as PendingBattleDefenders and
+    // PendingSwissBankResponders below. It was previously a [NotMapped] accessor over a hand-serialised
+    // PendingInvestorIdsJson column whose getter deserialised a FRESH list on every read, so
+    // `PendingInvestorIds.Add(x)` compiled, ran, and silently did nothing — while the identical call on
+    // its two neighbours worked. Every call site happened to reassign instead, so nothing was broken, but
+    // the three are now the same thing and behave the same way.
+    public List<Guid> PendingInvestorIds { get; set; } = new List<Guid>();
 
     public ManeuverPhase CurrentManeuverPhase { get; set; } = ManeuverPhase.None;
 

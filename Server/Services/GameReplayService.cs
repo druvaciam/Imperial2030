@@ -1175,7 +1175,7 @@ public class GameReplayService
                 }
 
                 var postReplayGame = context.Games.First(g => g.Id == replayGameId);
-                _logger.LogDebug($"  -> IsInvestorTurn={postReplayGame.IsInvestorTurn}, Pending={postReplayGame.PendingInvestorIdsJson}");
+                _logger.LogDebug($"  -> IsInvestorTurn={postReplayGame.IsInvestorTurn}, Pending=[{string.Join(", ", postReplayGame.PendingInvestorIds)}]");
 
                 if (onActionReplayed != null) await onActionReplayed(action, i, false);
             }

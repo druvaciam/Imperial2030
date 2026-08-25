@@ -17,12 +17,12 @@ namespace Imperial2030.Tests
     ///   * `PendingBattleDefenders` and `PendingSwissBankResponders` are plain `List&lt;T&gt;` properties,
     ///     which EF maps automatically as primitive collections (`PrimitiveCollection&lt;string&gt;` in the
     ///     model snapshot) — real backing lists, so in-place mutation works.
-    ///   * `PendingInvestorIds` is `[NotMapped]`, backed by a hand-serialised `PendingInvestorIdsJson`
-    ///     column whose getter deserialises a FRESH list on every read — so in-place mutation is a silent
-    ///     no-op and callers must reassign.
+    ///   * `PendingInvestorIds` used to be `[NotMapped]`, backed by a hand-serialised
+    ///     `PendingInvestorIdsJson` column whose getter deserialised a FRESH list on every read — so
+    ///     in-place mutation was a silent no-op while the identical call on its two neighbours worked.
+    ///     It is now a primitive collection like the other two.
     ///
-    /// Production code mutates the first two in place (`.Clear()`) and only ever reassigns the third.
-    /// These run against real SQLite because that difference lives in the provider's change tracking, and
+    /// These run against real SQLite because the behaviour lives in the provider's change tracking, and
     /// the InMemory provider the rest of the suite uses cannot show it.
     /// </summary>
     public class GameCollectionPersistenceTests : IDisposable
@@ -136,24 +136,61 @@ namespace Imperial2030.Tests
         }
 
         [Fact]
-        public async Task MutatingPendingInvestorIdsInPlace_IsSilentlyLost()
+        public async Task MutatingPendingInvestorIdsInPlace_NowPersistsLikeItsNeighbours()
         {
-            // Documents the trap rather than endorsing it: the getter deserialises a new list per read, so
-            // this Add lands on a throwaway. The two primitive collections above accept the same call.
-            // Anyone reaching for `.Add` here needs to know it does nothing - hence this test.
+            // This used to be silently lost: the [NotMapped] getter handed back a new list per read, so
+            // the Add landed on a throwaway while the same call on PendingBattleDefenders worked. The
+            // three properties now behave identically.
             var gameId = await SeedAsync();
+            var added = Guid.NewGuid();
 
             using (var mutate = CreateContext())
             {
                 var game = await mutate.Games.FirstAsync(g => g.Id == gameId);
-                game.PendingInvestorIds.Add(Guid.NewGuid());
+                game.PendingInvestorIds.Add(added);
                 await mutate.SaveChangesAsync();
             }
 
             using var read = CreateContext();
             var reloaded = await read.Games.FirstAsync(g => g.Id == gameId);
 
-            Assert.Single(reloaded.PendingInvestorIds);
+            Assert.Equal(2, reloaded.PendingInvestorIds.Count);
+            Assert.Contains(added, reloaded.PendingInvestorIds);
+        }
+
+        [Fact]
+        public async Task RowsWrittenInTheOldJsonFormat_StillReadBack()
+        {
+            // The migration is a bare RenameColumn, so live games carry JSON written by the old
+            // System.Text.Json accessor - which lowercases its GUIDs, where EF's primitive collection
+            // writes them uppercase. That difference must not matter on the way back in, or every
+            // in-flight investor queue would be silently emptied by the upgrade.
+            var gameId = Guid.NewGuid();
+            var first = Guid.NewGuid();
+            var second = Guid.NewGuid();
+
+            using (var context = CreateContext())
+            {
+                await context.Database.EnsureCreatedAsync();
+                context.Games.Add(new Game { Id = gameId, Name = "Legacy Row", Status = GameStatus.InProgress });
+                await context.SaveChangesAsync();
+            }
+
+            // Overwrite with exactly what the old accessor would have persisted.
+            using (var cmd = _connection.CreateCommand())
+            {
+                // Matched by name: SQLite stores the Guid key as uppercase text, so a lowercase
+                // ToString() would not match - the same case difference this test exists to check.
+                cmd.CommandText = "UPDATE Games SET PendingInvestorIds = $json WHERE Name = $name";
+                cmd.Parameters.AddWithValue("$json", System.Text.Json.JsonSerializer.Serialize(new List<Guid> { first, second }));
+                cmd.Parameters.AddWithValue("$name", "Legacy Row");
+                Assert.Equal(1, cmd.ExecuteNonQuery());
+            }
+
+            using var read = CreateContext();
+            var reloaded = await read.Games.FirstAsync(g => g.Id == gameId);
+
+            Assert.Equal(new[] { first, second }, reloaded.PendingInvestorIds);
         }
     }
 }
