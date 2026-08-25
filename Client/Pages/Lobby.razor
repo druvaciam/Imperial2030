@@ -24,7 +24,9 @@
                 <span class="input-group-text bg-dark text-white border-secondary"><span class="oi oi-magnifying-glass"></span></span>
                 <input type="text" class="form-control" placeholder="@L["SearchPlaceholder"]" @bind="newGameName" @bind:event="oninput" />
             </div>
-            @if (!isGuest)
+            @* authResolved, not just !isGuest — see the field's comment: without it these render on the
+               first paint, before the auth state has been read, and a guest watches them disappear. *@
+            @if (authResolved && !isGuest)
             {
                 <button class="btn btn-success text-nowrap" @onclick="ShowCreateGameModal">
                     <span class="oi oi-plus me-1"></span>@L["CreateGame"]
@@ -102,7 +104,7 @@
         <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
             @foreach (var game in GetFilteredGames())
             {
-                bool amIInGame = currentUserId != null && game.UserIds.Contains(currentUserId);
+                bool amIInGame = game.IsCurrentUserInGame;
                 
                 <div class="col">
                     <div class="card h-100 bg-dark text-white border-secondary shadow-sm">
@@ -144,7 +146,7 @@
                                 }
                                 <br />
                                 @L["Card_Players", game.PlayerCount, game.MaxPlayers]
-                                @if (game.IsPrivate && amIInGame && game.HostId == currentUserId && game.JoinCode != null)
+                                @if (game.IsPrivate && amIInGame && game.IsCurrentUserHost && game.JoinCode != null)
                                 {
                                     <br />
                                     <span class="text-info small">@L["Card_JoinCode"] <strong>@game.JoinCode</strong></span>
@@ -163,7 +165,7 @@
                                         @L["Card_Leave"]
                                     </button>
                                 }
-                                @if (game.Status == GameStatus.InProgress && game.HostId == currentUserId)
+                                @if (game.Status == GameStatus.InProgress && game.IsCurrentUserHost)
                                 {
                                      <button class="btn btn-danger btn-sm" @onclick="@(() => DeleteGame(game.Id))">
                                         @Shared["Common_Delete"]
@@ -400,6 +402,19 @@
     private bool showOnlyMyGames = false;
     private bool isGuest = false;
 
+    /// <summary>
+    /// False until OnInitializedAsync has actually read the authentication state.
+    ///
+    /// isGuest cannot be resolved before the first render: it comes from
+    /// CustomAuthenticationStateProvider, which reads the token out of localStorage over JSInterop, so
+    /// OnInitializedAsync yields and Blazor paints the component once with isGuest still at its default.
+    /// Gating only on !isGuest therefore showed a guest the Create Game and Import Game buttons on that
+    /// first paint, and kept showing them until the whole initializer finished — including LoadGames(), a
+    /// network round-trip — before they abruptly vanished. Actions a guest is forbidden from taking must
+    /// not appear at all rather than appear and be retracted.
+    /// </summary>
+    private bool authResolved = false;
+
     /// <summary>localStorage key holding the lobby's filter checkboxes.</summary>
     private const string FilterStorageKey = "Imperial2030.lobbyFilters";
 
@@ -482,7 +497,7 @@
         // Apply My Games Filter
         if (showOnlyMyGames && currentUserId != null)
         {
-            query = query.Where(g => g.UserIds.Contains(currentUserId));
+            query = query.Where(g => g.IsCurrentUserInGame);
         }
 
         // Apply Status Filters
@@ -510,6 +525,11 @@
              currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
         isGuest = user.IsInRole("Guest");
+        authResolved = true;
+        // Repaint as soon as the identity is known. Blazor otherwise only re-renders once this whole
+        // method returns, so a registered user would wait out LoadFiltersAsync + LoadGames' network call
+        // before their buttons appeared — trading the guest's flash for everyone else's delay.
+        StateHasChanged();
 
         await LoadFiltersAsync();
         await LoadGames();

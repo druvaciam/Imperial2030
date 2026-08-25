@@ -335,5 +335,135 @@ namespace Imperial2030.Tests
             Assert.Equal(10, dbController.Cash);
             Assert.Equal(0, dbNation.Treasury);
         }
+
+        [Fact]
+        public void HandleInvestorPhase_InvestorCardHolderInvestsBeforeSwissBankPlayers()
+        {
+            // Imperial-2030-Rules.pdf p.11 numbers the Investor turn's steps: "2. Activating the Investor -
+            // The player who is holding the Investor card (Investor) gets paid 2 million from the bank and
+            // then may invest in any nation." followed by "3. Investing as Swiss Bank - Each player who has
+            // a Swiss Bank and does not hold the investor card at the same time is also allowed to invest
+            // once."
+            //
+            // So the card holder picks first and the Swiss Banks pick after. Order is not cosmetic: bonds
+            // are a scarce shared pool and the trade-in mechanic makes first pick materially valuable, so
+            // whoever the queue puts first can take a bond the other one wanted.
+            //
+            // The queue is exactly the investment order - ActingPlayerId acts now and PendingInvestorIds is
+            // drained one at a time (GamesController.cs:1733-1736).
+            var investorId = Guid.NewGuid();
+            var swissBankId = Guid.NewGuid();
+            var rivalId = Guid.NewGuid();
+
+            var investor = new Player { Id = investorId, BotName = "Investor" };
+            var swissBanker = new Player { Id = swissBankId, BotName = "SwissBanker" };
+            var rival = new Player { Id = rivalId, BotName = "Rival" };
+
+            var game = new Game
+            {
+                Id = Guid.NewGuid(),
+                InvestorCardHolderId = investorId,
+                Players = new List<Player> { investor, swissBanker, rival },
+                NationStates = new List<NationState>
+                {
+                    // swissBanker controls no nation, which is what makes them a Swiss Bank (p.12).
+                    new NationState { Nation = Nation.Russia, ControllerId = investorId },
+                    new NationState { Nation = Nation.China, ControllerId = rivalId }
+                },
+                Bonds = new List<Bond>()
+            };
+
+            var russia = game.NationStates.First(n => n.Nation == Nation.Russia);
+
+            // isLandedOn: false - the Investor space was only passed over, which per p.11 still runs steps
+            // two and three. Keeps this test on the ordering and out of the interest-payout branch.
+            GamesController.HandleInvestorPhase(null, game, russia, investor, isLandedOn: false);
+
+            Assert.Equal(investorId, game.ActingPlayerId);
+            Assert.Equal(new List<Guid> { swissBankId }, game.PendingInvestorIds);
+        }
+
+        [Fact]
+        public void HandleInvestorPhase_CardHolderWhoAlsoHasASwissBank_InvestsOnlyOnce()
+        {
+            // Imperial-2030-Rules.pdf FAQ p.14: "Can the investor invest twice if he owns a Swiss Bank?
+            // No." The card holder here controls no nation, so they qualify as a Swiss Bank too and are
+            // picked up by both halves of the queue construction - they must still appear exactly once.
+            var investorId = Guid.NewGuid();
+            var rivalId = Guid.NewGuid();
+
+            var investor = new Player { Id = investorId, BotName = "Investor" };
+            var rival = new Player { Id = rivalId, BotName = "Rival" };
+
+            var game = new Game
+            {
+                Id = Guid.NewGuid(),
+                InvestorCardHolderId = investorId,
+                Players = new List<Player> { investor, rival },
+                NationStates = new List<NationState>
+                {
+                    // The card holder controls nothing - they hold a Swiss Bank as well as the card.
+                    new NationState { Nation = Nation.Russia, ControllerId = rivalId }
+                },
+                Bonds = new List<Bond>()
+            };
+
+            var russia = game.NationStates.First(n => n.Nation == Nation.Russia);
+
+            GamesController.HandleInvestorPhase(null, game, russia, rival, isLandedOn: false);
+
+            Assert.Equal(investorId, game.ActingPlayerId);
+            Assert.Empty(game.PendingInvestorIds);
+        }
+
+        [Fact]
+        public void HandleInvestorPhase_SeveralSwissBanks_AreOrderedFromTheInvestorCardHolder()
+        {
+            // Imperial-2030-Rules.pdf p.11: "If several players have a Swiss Bank, investing is done in the
+            // order of play (clockwise), starting from the player currently with the Investor card."
+            //
+            // Play order here is [first, second, third, fourth]. The card holder is `third`, so the order
+            // of play counting from them is third -> fourth -> first -> second. `fourth` and `first` hold
+            // Swiss Banks (they control no nation), so they invest in THAT order - fourth, then first -
+            // not in the unrotated [first, fourth] the plain player ordering would give.
+            //
+            // "Starting from the player with the Investor card" is unambiguous here even though the card
+            // holder is themselves in the rotation: they are already queued first as the Investor, so the
+            // Swiss Bank pass skips them either way (FAQ p.14).
+            var ordered = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() }.OrderBy(g => g).ToList();
+            var first = ordered[0];
+            var second = ordered[1];
+            var third = ordered[2];
+            var fourth = ordered[3];
+
+            var game = new Game
+            {
+                Id = Guid.NewGuid(),
+                InvestorCardHolderId = third,
+                Players = new List<Player>
+                {
+                    // Deliberately not in play order - the code must derive the order, not take this list's.
+                    new Player { Id = fourth, BotName = "Fourth" },
+                    new Player { Id = first, BotName = "First" },
+                    new Player { Id = third, BotName = "Third" },
+                    new Player { Id = second, BotName = "Second" }
+                },
+                NationStates = new List<NationState>
+                {
+                    new NationState { Nation = Nation.Russia, ControllerId = third },
+                    new NationState { Nation = Nation.China, ControllerId = second }
+                    // `first` and `fourth` control nothing: two simultaneous Swiss Banks.
+                },
+                Bonds = new List<Bond>()
+            };
+
+            var russia = game.NationStates.First(n => n.Nation == Nation.Russia);
+            var cardHolder = game.Players.First(p => p.Id == third);
+
+            GamesController.HandleInvestorPhase(null, game, russia, cardHolder, isLandedOn: false);
+
+            Assert.Equal(third, game.ActingPlayerId);
+            Assert.Equal(new List<Guid> { fourth, first }, game.PendingInvestorIds);
+        }
     }
 }

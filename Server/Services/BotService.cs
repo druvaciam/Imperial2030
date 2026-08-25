@@ -45,7 +45,7 @@ public class BotService
             // mutable fields and corrupt each other's cached action. The underlying ONNX InferenceSession
             // stays shared via _sessionCache (keyed by model path) regardless, so this costs nothing extra.
             var key = $"{type}:{player.Id}";
-            return _rlStrategies.GetOrAdd(key, _ => new Bots.Strategies.RLBotStrategy(type));
+            return _rlStrategies.GetOrAdd(key, _ => new Bots.Strategies.RLBotStrategy(type, _logger));
         }
 
         return _botStrategies.FirstOrDefault(s => s.Name.Equals(type, StringComparison.OrdinalIgnoreCase))
@@ -81,16 +81,42 @@ public class BotService
         });
     }
 
+    // Only one bot loop runs per game at a time; this is the claim on that slot.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> _activeBotGames = new();
+
+    // "A bot may have work in this game." Recorded by every caller, INCLUDING the ones that find a loop
+    // already running and return - otherwise their request is simply lost.
+    //
+    // Bots have no clock: they act only when TriggerBotTurn says something changed. The old code dropped
+    // any request that arrived while a loop was running, which is fine while that loop is still working
+    // but not while it is on its way out. A loop that has just decided it has nothing left to do has not
+    // yet released its claim, so a request landing in that window was discarded by the caller AND never
+    // seen by the loop - leaving nobody running and nobody coming. The game then sits forever waiting on
+    // a bot (e.g. for the battle response a human's move just asked for).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> _pendingBotWakeups = new();
+
+    /// <summary>Test seam: whether a wakeup request is recorded but not yet consumed.</summary>
+    internal static bool HasPendingWakeup(Guid gameId) => _pendingBotWakeups.ContainsKey(gameId);
+
+    /// <summary>Test seam: claim/release the single-loop slot without running a real bot loop.</summary>
+    internal static bool TryClaimBotLoopSlot(Guid gameId) => _activeBotGames.TryAdd(gameId, true);
+    internal static void ReleaseBotLoopSlot(Guid gameId) => _activeBotGames.TryRemove(gameId, out _);
 
     public async Task TryPlayBotTurnAsync(Guid gameId, bool singleTurnOnly = false)
     {
+        // Recorded BEFORE the slot is claimed, so a loop that is already running is guaranteed to see it.
+        _pendingBotWakeups[gameId] = true;
+
         if (!_activeBotGames.TryAdd(gameId, true)) return;
 
         try
         {
             while (true)
             {
+                // Consumed at the START of the pass that will service it, so a request arriving DURING
+                // this pass leaves a fresh mark behind instead of being swallowed by this one.
+                _pendingBotWakeups.TryRemove(gameId, out _);
+
                 using var scope = _scopeFactory.CreateScope();
                 var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
@@ -218,7 +244,11 @@ public class BotService
                     }
                 }
 
-                if (!botActed || singleTurnOnly) break;
+                if (singleTurnOnly) break;
+
+                // Nothing to do AND nothing newly asked for: safe to leave. If a request came in while
+                // this pass ran, take another one rather than exiting and stranding it.
+                if (!botActed && !_pendingBotWakeups.ContainsKey(gameId)) break;
             }
         }
         catch (ObjectDisposedException)
@@ -227,12 +257,21 @@ public class BotService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[TryPlayBotTurnAsync] ERROR: {ex.Message}\n{ex.StackTrace}");
+            _logger.LogError(ex, "TryPlayBotTurnAsync failed");
             throw;
         }
         finally
         {
             _activeBotGames.TryRemove(gameId, out _);
+        }
+
+        // The slot is free now. A request that landed between the last check above and that release saw
+        // the slot still taken and returned, so nothing is running to service it - start a fresh loop.
+        // This cannot spin: each pass consumes the mark, so an unprompted re-entry finds nothing to do
+        // and leaves without setting it again.
+        if (!singleTurnOnly && _pendingBotWakeups.ContainsKey(gameId))
+        {
+            TriggerBotTurn(gameId, delayMs: 0);
         }
     }
 
@@ -249,16 +288,7 @@ public class BotService
             targetSlot = ChooseRondelSlot(game, nationState, controller);
 
             // Calculate cost
-            int cost = 0;
-            if (nationState.RondelPosition != null)
-            {
-                int distance = (targetSlot - nationState.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
-                if (distance > RondelData.FreeMoveDistance)
-                {
-                    int powerFactor = nationState.Power / 5;
-                    cost = (distance - RondelData.FreeMoveDistance) * (1 + powerFactor);
-                }
-            }
+            int cost = RondelData.GetMoveCost(nationState.RondelPosition, targetSlot, nationState.Power);
 
             int? oldPos = nationState.RondelPosition;
 
@@ -426,14 +456,10 @@ public class BotService
             int moveCost = 0;
             if (ns.RondelPosition.HasValue)
             {
-                int dist = (slot - ns.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
+                int dist = RondelData.GetMoveDistance(ns.RondelPosition.Value, slot);
                 if (dist > RondelData.MaxMoveDistance) continue;
 
-                if (dist > RondelData.FreeMoveDistance)
-                {
-                    int pf = ns.Power / 5;
-                    moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
-                }
+                moveCost = RondelData.GetMoveCost(ns.RondelPosition, slot, ns.Power);
             }
 
             if (moveCost > controller.Cash) continue;
@@ -728,8 +754,9 @@ public class BotService
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
                             GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, sourceWasHostile, originalTerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
-                            // Update territory control before pausing
-                            await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
+                            // Deliberately no BotUpdateTerritoryControl before pausing: flags are step 3 of
+                            // the maneuver (Imperial-2030-Rules.pdf p.8/p.10) and this maneuver isn't over -
+                            // it resumes here once the defenders answer, and the phase-end call below runs then.
 
                             // Exit BotManeuverFleets and pause the turn to await responses
                             return;
@@ -907,8 +934,7 @@ public class BotService
                             game.PendingBattleDefenders = foreignDefenders.ToList();
 
                             GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot", routeVia);
-                            // Update territory control before pausing
-                            await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
+                            // See the Fleets loop above: no flag placement while the maneuver is only paused.
 
                             // Exit BotManeuver and pause the turn to await responses
                             return;
@@ -1317,7 +1343,9 @@ public class BotService
             }
         }
 
-        await BotUpdateTerritoryControl(ctx, game, GameConstants.SystemPlayerName);
+        // No BotUpdateTerritoryControl here: resolving these responses doesn't end the aggressor's
+        // maneuver, so its flags aren't settled yet (Imperial-2030-Rules.pdf p.8/p.10). The maneuver
+        // resumes afterwards and places them at its phase boundary.
 
         if (!game.PendingBattleDefenders.Any() || !game.Units.Any(u => u.TerritoryId == (game.PendingBattleTerritoryId ?? "") && u.Nation == game.PendingBattleAggressorNation))
         {
@@ -1354,12 +1382,7 @@ public class BotService
             {
                 int targetSlot = RondelData.InvestorSlot;
                 int? currentSlot = nationState.RondelPosition;
-                int cost = 0;
-                if (currentSlot != null)
-                {
-                    int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
-                    if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
-                }
+                int cost = RondelData.GetMoveCost(currentSlot, targetSlot, nationState.Power);
 
                 game.PendingSwissBankForceNation = null;
                 game.PendingSwissBankForceTargetSlot = null;
@@ -1398,12 +1421,7 @@ public class BotService
                 {
                     int targetSlot = game.PendingSwissBankForceTargetSlot.Value;
                     int? currentSlot = nationState.RondelPosition;
-                    int cost = 0;
-                    if (currentSlot != null)
-                    {
-                        int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
-                        if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
-                    }
+                    int cost = RondelData.GetMoveCost(currentSlot, targetSlot, nationState.Power);
 
                     game.PendingSwissBankForceNation = null;
                     game.PendingSwissBankForceTargetSlot = null;

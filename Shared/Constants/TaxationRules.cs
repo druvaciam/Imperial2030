@@ -60,6 +60,29 @@ public static class TaxationRules
     public static int ComputeSoldiersPay(int unitCount) => unitCount * SoldiersPayPerUnit;
 
     /// <summary>
+    /// The government's success bonus, before it is capped at what the treasury can actually afford.
+    ///
+    /// Standard rules (p.12, "3. Success bonus"): read straight off the tax chart — "1 million with at
+    /// least a tax revenue of 6 million, 2 million with at least a tax revenue of 10 million etc."
+    ///
+    /// Under the house variant (<c>Game.VariantBonusOnlyForTaxIncreases</c>) the bonus is instead the
+    /// increase in power-gain tier since the nation's last taxation, so holding steady pays nothing and a
+    /// decline never pays out negatively.
+    ///
+    /// Only the rule lives here, as with the rest of this class: the caller supplies the previous and
+    /// current revenue, and applies its own treasury cap afterwards. This block was previously written
+    /// out identically in both <c>TaxationHelper.PreviewTaxation</c> and <c>ApplyTaxation</c>.
+    /// </summary>
+    public static int ComputeSuccessBonus(bool variantBonusOnlyForTaxIncreases, int previousTaxRevenue, int totalTaxRevenue)
+    {
+        if (!variantBonusOnlyForTaxIncreases) return TaxChart.GetStandardBonus(totalTaxRevenue);
+
+        int oldTier = TaxChart.GetPowerGain(previousTaxRevenue);
+        int newTier = TaxChart.GetPowerGain(totalTaxRevenue);
+        return Math.Max(0, newTier - oldTier);
+    }
+
+    /// <summary>
     /// Factories of <paramref name="nation"/> that can be taxed: built in one of its own home
     /// provinces, with no hostile army standing there.
     ///

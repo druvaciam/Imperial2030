@@ -314,6 +314,42 @@ namespace Imperial2030.Tests
         }
 
         [Fact]
+        public async Task GetGames_TellsTheCallerAboutThemselves_WithoutExposingAnyoneElsesUserId()
+        {
+            // The lobby list is [AllowAnonymous]. It used to hand every caller `UserIds` - the raw ASP.NET
+            // Identity GUID of every player in every game - plus the host's, when the client only ever
+            // asked two questions about the CALLER: am I in this game, and do I host it. Those are now
+            // answered server-side as booleans, so no user id is served to anyone.
+            var dbName = Guid.NewGuid().ToString();
+            using var context = GetDbContext(dbName);
+
+            var gameId = Guid.NewGuid();
+            context.Games.Add(new Game { Id = gameId, Name = "Lobby Game", Status = GameStatus.Lobby, IsPrivate = false });
+            context.Players.AddRange(
+                new Player { Id = Guid.NewGuid(), GameId = gameId, UserId = "host-user", IsHost = true },
+                new Player { Id = Guid.NewGuid(), GameId = gameId, UserId = "other-user", IsHost = false });
+            await context.SaveChangesAsync();
+
+            // The host sees both flags set.
+            var asHost = Assert.IsType<List<GameDto>>(((await GetController(context, "host-user").GetGames()).Value)?.ToList());
+            var hostView = Assert.Single(asHost);
+            Assert.True(hostView.IsCurrentUserInGame);
+            Assert.True(hostView.IsCurrentUserHost);
+
+            // A player who is in the game but does not host it.
+            var asOther = Assert.IsType<List<GameDto>>(((await GetController(context, "other-user").GetGames()).Value)?.ToList());
+            var otherView = Assert.Single(asOther);
+            Assert.True(otherView.IsCurrentUserInGame);
+            Assert.False(otherView.IsCurrentUserHost);
+
+            // A stranger - and, by the same path, an anonymous caller - sees neither.
+            var asStranger = Assert.IsType<List<GameDto>>(((await GetController(context, "nobody").GetGames()).Value)?.ToList());
+            var strangerView = Assert.Single(asStranger);
+            Assert.False(strangerView.IsCurrentUserInGame);
+            Assert.False(strangerView.IsCurrentUserHost);
+        }
+
+        [Fact]
         public async Task SwissBank_PlayerWithoutNations_CanInvestAndGainControl()
         {
             var dbName = Guid.NewGuid().ToString();
@@ -360,24 +396,29 @@ namespace Imperial2030.Tests
                 // Act 1: P1 (Russia) moves to Investor slot
                 await controllerP1.MoveNation(gameId, Nation.Russia, 4);
 
-                // Assert 1: After landing on Investor, P2 (Swiss Bank) should get the chance to invest BEFORE P1
+                // Assert 1: the Investor CARD HOLDER (P1) invests first.
+                // Imperial-2030-Rules.pdf p.11 numbers the steps "2. Activating the Investor" then
+                // "3. Investing as Swiss Bank". This assertion used to expect P2 ("Swiss Bank players go
+                // first"), which is the opposite of the rulebook and had no source behind it.
                 var updatedGame = await context.Games.FirstAsync(g => g.Id == gameId);
                 Assert.True(updatedGame.IsInvestorTurn);
-                // Assert that P2 is the acting player because Swiss Bank players go first
+                Assert.Equal(p1Id, updatedGame.ActingPlayerId);
+
+                // Act 2: P1 takes their turn and passes, handing the queue to the Swiss Bank player.
+                await controllerP1.PerformInvestment(gameId, new GamesController.InvestmentActionDto { ActionType = "Pass" });
+
+                // Assert 2: P2 (Swiss Bank) is now up.
+                updatedGame = await context.Games.FirstAsync(g => g.Id == gameId);
                 Assert.Equal(p2Id, updatedGame.ActingPlayerId);
 
-                // Act 2: P2 invests 9M into Russia
+                // Act 3: P2 invests 9M into Russia
                 var controllerP2 = GetController(context, p2UserId);
                 var investRequest = new GamesController.InvestmentActionDto { ActionType = "Buy", BondId = bond9M.Id };
                 await controllerP2.PerformInvestment(gameId, investRequest);
 
-                // Assert 2: P2 should now control Russia
+                // Assert 3: P2 outbid P1's 2M and takes over Russia - the point of this test.
                 var updatedNsRussia = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
                 Assert.Equal(p2Id, updatedNsRussia.ControllerId);
-
-                // Act 3: After P2 invests, the Investor card holder (P1) should get their turn
-                updatedGame = await context.Games.FirstAsync(g => g.Id == gameId);
-                Assert.Equal(p1Id, updatedGame.ActingPlayerId);
             }
         }
 

@@ -172,7 +172,7 @@ namespace Imperial2030.Server.Migrations.SqliteMigrations
                     b.Property<string>("PendingBattleTerritoryId")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("PendingInvestorIdsJson")
+                    b.PrimitiveCollection<string>("PendingInvestorIds")
                         .IsRequired()
                         .HasColumnType("TEXT");
 

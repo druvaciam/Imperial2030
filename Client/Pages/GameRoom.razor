@@ -35,7 +35,7 @@ else
                 {
                     <span class="text-white-50 small px-3 d-none d-md-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">@L["TopBar_Host"] <strong class="text-white">@host.UserName</strong></span>
                 }
-                @if (game.IsPrivate && MyPlayer != null && game.HostId == MyPlayer.UserId && game.JoinCode != null)
+                @if (game.IsPrivate && game.IsCurrentUserHost && game.JoinCode != null)
                 {
                     <span class="text-info small px-3 d-none d-lg-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">@L["TopBar_JoinCode"] <strong>@game.JoinCode</strong></span>
                 }
@@ -446,7 +446,7 @@ else
                                                         @(pEffect.Delta > 0 ? "+" : "")@(pEffect.Delta)
                                                     </span>
                                                 }
-                                                </span> (@(ns.Power / 5)x)
+                                                </span> (@(RondelData.GetPowerFactor(ns.Power))x)
                                             </span><br/>
                                             @{
                                                 var taxInfo = GetTaxPreview(ns);
@@ -1928,7 +1928,7 @@ else
                 var nation = g.NationStates.FirstOrDefault(n => n.Nation == bond.Nation);
                 if (nation != null)
                 {
-                    int factor = nation.Power / 5;
+                    int factor = RondelData.GetPowerFactor(nation.Power);
                     score += bond.Interest * factor;
                 }
             }
@@ -2033,12 +2033,7 @@ else
                 return;
             }
 
-            if (dist > RondelData.FreeMoveDistance)
-            {
-                int powerFactor = ns.Power / 5;
-                int costPerStep = 1 + powerFactor;
-                cost = (dist - RondelData.FreeMoveDistance) * costPerStep;
-            }
+            cost = RondelData.GetMoveCost(current, slotIndex, ns.Power);
         }
 
         if (cost > 0)

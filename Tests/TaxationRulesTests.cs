@@ -68,4 +68,37 @@ public class TaxationRulesTests
     {
         Assert.Equal(expected, TaxationRules.ComputeSoldiersPay(units));
     }
+
+    // --- Success bonus (step 3 of Taxation) ---------------------------------------------------------
+    // Previously written out twice, identically, in TaxationHelper's preview and apply paths.
+
+    [Theory]
+    // Imperial-2030-Rules.pdf p.12, "3. Success bonus": "1 million with at least a tax revenue of
+    // 6 million, 2 million with at least a tax revenue of 10 million etc."
+    [InlineData(5, 0)]
+    [InlineData(6, 1)]
+    [InlineData(9, 1)]
+    [InlineData(10, 2)]
+    [InlineData(12, 3)]
+    [InlineData(14, 4)]
+    [InlineData(16, 5)]
+    public void ComputeSuccessBonus_StandardRules_ReadsTheTaxChart(int totalTaxRevenue, int expected)
+    {
+        // previousTaxRevenue is irrelevant outside the variant, so vary it to prove it is ignored.
+        Assert.Equal(expected, TaxationRules.ComputeSuccessBonus(false, previousTaxRevenue: 0, totalTaxRevenue));
+        Assert.Equal(expected, TaxationRules.ComputeSuccessBonus(false, previousTaxRevenue: 23, totalTaxRevenue));
+    }
+
+    [Theory]
+    // House variant (Game.VariantBonusOnlyForTaxIncreases): the bonus is the GAIN in power-gain tier,
+    // so standing still pays nothing and only genuine growth is rewarded.
+    [InlineData(0, 6, 1)]    // tier 0 -> 1
+    [InlineData(6, 6, 0)]    // no change
+    [InlineData(6, 10, 2)]   // tier 1 -> 3
+    [InlineData(10, 6, 0)]   // a DROP never pays out, and never goes negative
+    [InlineData(0, 18, 10)]  // tier 0 -> 10
+    public void ComputeSuccessBonus_VariantRules_PaysOnlyTheIncreaseInTier(int previousTaxRevenue, int totalTaxRevenue, int expected)
+    {
+        Assert.Equal(expected, TaxationRules.ComputeSuccessBonus(true, previousTaxRevenue, totalTaxRevenue));
+    }
 }

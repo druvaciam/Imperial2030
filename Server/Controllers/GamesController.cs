@@ -27,6 +27,8 @@ public class GamesController : ControllerBase
     private readonly Imperial2030.Server.Services.PresenceTracker _presenceTracker;
     private readonly Imperial2030.Server.Services.BotService _botService;
     private readonly Imperial2030.Server.Services.INotificationService _notificationService;
+    private readonly ILogger<GamesController> _logger;
+    private readonly Imperial2030.Server.Services.BotTypeCatalog _botTypeCatalog;
 
     /// <summary>
     /// When true, suppresses all SignalR broadcasts from this controller instance. Set by
@@ -35,7 +37,9 @@ public class GamesController : ControllerBase
     /// </summary>
     public bool SuppressBroadcasts { get; set; } = false;
 
-    public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.PresenceTracker presenceTracker, Imperial2030.Server.Services.BotService botService, Imperial2030.Server.Services.INotificationService notificationService)
+    // logger is optional so the many direct `new GamesController(...)` constructions in Tests/ keep
+    // working; DI supplies the real one in production.
+    public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.PresenceTracker presenceTracker, Imperial2030.Server.Services.BotService botService, Imperial2030.Server.Services.INotificationService notificationService, ILogger<GamesController>? logger = null, Imperial2030.Server.Services.BotTypeCatalog? botTypeCatalog = null)
     {
         _context = context;
         _userManager = userManager;
@@ -43,6 +47,8 @@ public class GamesController : ControllerBase
         _presenceTracker = presenceTracker;
         _botService = botService;
         _notificationService = notificationService;
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<GamesController>.Instance;
+        _botTypeCatalog = botTypeCatalog ?? new Imperial2030.Server.Services.BotTypeCatalog();
     }
 
     [HttpGet]
@@ -65,8 +71,10 @@ public class GamesController : ControllerBase
                 IsPrivate = g.IsPrivate,
                 VariantBonusOnlyForTaxIncreases = g.VariantBonusOnlyForTaxIncreases,
                 JoinCode = g.Players.Any(p => p.UserId == currentUserId && p.IsHost) ? g.JoinCode : null,
-                UserIds = g.Players.Select(p => p.UserId).ToList(),
-                HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault(),
+                // Null-guarded: an anonymous caller has no id, and bots have a null UserId, so an
+                // unguarded comparison would match every bot player.
+                IsCurrentUserInGame = currentUserId != null && g.Players.Any(p => p.UserId == currentUserId),
+                IsCurrentUserHost = currentUserId != null && g.Players.Any(p => p.IsHost && p.UserId == currentUserId),
                 HostName = g.Players.Where(p => p.IsHost).Select(p => p.User.UserName).FirstOrDefault(),
                 MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0,
                 TurnCount = g.TurnCount,
@@ -80,7 +88,7 @@ public class GamesController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<GameDto>> CreateGame([FromBody] CreateGameRequest req)
     {
-        if (User.IsInRole("Guest")) return Forbid();
+        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -120,8 +128,9 @@ public class GamesController : ControllerBase
             TurnCount = game.TurnCount,
             VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
             IsPaused = game.IsPaused,
-            UserIds = new List<string> { userId },
-            HostId = userId,
+            // The creator is, by construction, the sole player and the host.
+            IsCurrentUserInGame = true,
+            IsCurrentUserHost = true,
             HostName = User.Identity?.Name
         };
 
@@ -133,7 +142,7 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/join")]
     public async Task<IActionResult> JoinGame(Guid gameId, [FromBody] JoinGameRequest? req)
     {
-        if (User.IsInRole("Guest")) return Forbid();
+        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -175,7 +184,7 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/leave")]
     public async Task<IActionResult> LeaveGame(Guid gameId)
     {
-        if (User.IsInRole("Guest")) return Forbid();
+        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -266,7 +275,7 @@ public class GamesController : ControllerBase
     [HttpDelete("{gameId}")]
     public async Task<IActionResult> DeleteGame(Guid gameId)
     {
-        if (User.IsInRole("Guest")) return Forbid();
+        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
@@ -303,6 +312,10 @@ public class GamesController : ControllerBase
 
         _context.Games.Remove(game);
         await _context.SaveChangesAsync();
+
+        // Nobody disconnects when a game is deleted, so PresenceTracker's per-connection cleanup would
+        // never reach this game's entries and they would sit in the singleton for the process lifetime.
+        _presenceTracker.RemoveGame(gameId.ToString());
 
         if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameDeleted", gameId); }
         if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
@@ -398,7 +411,8 @@ public class GamesController : ControllerBase
             IsPrivate = game.IsPrivate,
             IsPaused = game.IsPaused,
             VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
-            HostId = game.Players.FirstOrDefault(p => p.IsHost)?.UserId,
+            IsCurrentUserInGame = userId != null && game.Players.Any(p => p.UserId == userId),
+            IsCurrentUserHost = userId != null && game.Players.Any(p => p.IsHost && p.UserId == userId),
             JoinCode = game.Players.Any(p => p.UserId == userId && p.IsHost) ? game.JoinCode : null,
             CurrentTurnNation = game.CurrentTurnNation,
             PlayerCount = game.Players.Count,
@@ -542,7 +556,7 @@ public class GamesController : ControllerBase
     [HttpPost("import")]
     public async Task<ActionResult<GameDto>> ImportGame([FromBody] GameExportDto import)
     {
-        if (User.IsInRole("Guest")) return Forbid();
+        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -676,8 +690,9 @@ public class GamesController : ControllerBase
                 IsPrivate = finalGame.IsPrivate,
                 VariantBonusOnlyForTaxIncreases = finalGame.VariantBonusOnlyForTaxIncreases,
                 IsPaused = finalGame.IsPaused,
-                UserIds = new List<string>(),
-                HostId = null,
+                // An imported game is all bots; the importer never becomes a player in it.
+                IsCurrentUserInGame = false,
+                IsCurrentUserHost = false,
                 HostName = importedPlayers.FirstOrDefault(p => p.IsHost)?.BotName,
                 IsAllBots = true
             };
@@ -686,7 +701,8 @@ public class GamesController : ControllerBase
         catch (Exception ex)
         {
             if (transaction != null) { await transaction.RollbackAsync(); }
-            return StatusCode(500, $"Internal server error during import: {ex.Message}");
+            _logger.LogError(ex, "ImportGame failed");
+            return StatusCode(500, ErrorResponses.Internal(HttpContext?.TraceIdentifier));
         }
     }
 
@@ -695,8 +711,23 @@ public class GamesController : ControllerBase
 
     [HttpPost("{gameId}/replay/start")]
     [AllowAnonymous]
+    // ReplaySessionManager's caps bound how many sessions one caller may HOLD; this bounds how fast they
+    // can churn them. Without it, start/stop/start stays under the cap forever while costing a full
+    // source-game load and reseed on every cycle.
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting(Imperial2030.Server.Configuration.RateLimitPolicies.Replay)]
     public async Task<IActionResult> StartReplay(Guid gameId, [FromServices] Imperial2030.Server.Services.ReplaySessionManager replaySessionManager)
     {
+        // Capacity is decided FIRST, before the source game and its entire action log are loaded and
+        // projected into DTOs below. This endpoint is [AllowAnonymous], so if admission were checked after
+        // that work, every rejected request would still cost a multi-collection query and thousands of
+        // allocations — the cap would protect memory while leaving the database open to the same flood.
+        var ownerKey = ReplayOwnerKey();
+        var admission = replaySessionManager.CheckAdmission(ownerKey);
+        if (admission != Imperial2030.Server.Services.ReplayAdmission.Accepted)
+        {
+            return ReplayCapacityResponse(admission);
+        }
+
         var sourceGame = await _context.Games.Include(g => g.Actions).AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
         if (sourceGame == null) return NotFound();
         if (sourceGame.Status != GameStatus.Finished) return BadRequest("Only finished games can be replayed.");
@@ -733,8 +764,32 @@ public class GamesController : ControllerBase
             return BadRequest("Roster/nation-distribution snapshot is missing or incomplete.");
         }
 
-        var replaySessionId = await replaySessionManager.StartReplayAsync(sourceGame, orderedActions, setupMeta);
-        return Ok(replaySessionId);
+        // Re-checked inside StartReplayAsync under its admission lock — the check above is only an early-out,
+        // and capacity can legitimately fill between the two.
+        var start = await replaySessionManager.StartReplayAsync(sourceGame, orderedActions, setupMeta, ownerKey);
+        if (start.Admission != Imperial2030.Server.Services.ReplayAdmission.Accepted || start.SessionId == null)
+        {
+            return ReplayCapacityResponse(start.Admission);
+        }
+
+        return Ok(start.SessionId.Value);
+    }
+
+    /// <summary>
+    /// Identifies a caller for per-caller replay capacity. Uses the transport-level remote address and
+    /// deliberately ignores X-Forwarded-For, which a client can set freely — honouring it would hand an
+    /// attacker a fresh budget per request. Same trade-off and the same reverse-proxy caveat as the auth
+    /// rate limiter; see AuthSecurity.
+    /// </summary>
+    private string ReplayOwnerKey() => HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    private ObjectResult ReplayCapacityResponse(Imperial2030.Server.Services.ReplayAdmission admission)
+    {
+        string message = admission == Imperial2030.Server.Services.ReplayAdmission.CallerAtCapacity
+            ? "You already have the maximum number of replay sessions open. Close one and try again."
+            : "The server is running its maximum number of replay sessions. Please try again shortly.";
+
+        return StatusCode(StatusCodes.Status429TooManyRequests, message);
     }
 
     [HttpGet("replay/{replaySessionId}")]
@@ -818,40 +873,13 @@ public class GamesController : ControllerBase
         return Ok(bots);
     }
 
-    private static List<string> GetAvailableBotTypes()
-    {
-        var botTypes = new List<string> { "Default", "Aggressive", "Friendly", "Greedy", "Random" };
-
-        try
-        {
-            var basePath = AppContext.BaseDirectory;
-            if (System.IO.File.Exists(System.IO.Path.Combine(basePath, "imperial_ppo_bot.onnx")) || System.IO.File.Exists(System.IO.Path.Combine(basePath, "RL.onnx")))
-            {
-                botTypes.Add("RL");
-            }
-
-            var onnxFiles = System.IO.Directory.GetFiles(basePath, "*.onnx");
-            foreach (var file in onnxFiles)
-            {
-                var fileName = System.IO.Path.GetFileNameWithoutExtension(file);
-                if (!fileName.Equals("imperial_ppo_bot", StringComparison.OrdinalIgnoreCase) && !fileName.Equals("RL", StringComparison.OrdinalIgnoreCase) && fileName.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
-                {
-                    botTypes.Add(fileName);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error discovering bot types: {ex.Message}");
-        }
-
-        return botTypes;
-    }
+    // Discovered once by BotTypeCatalog rather than scanning the deployment directory per call.
+    private IReadOnlyList<string> GetAvailableBotTypes() => _botTypeCatalog.Available;
 
     [HttpPost("{gameId}/add-bot")]
     public async Task<IActionResult> AddBot(Guid gameId, [FromQuery] string? botType = null)
     {
-        if (User.IsInRole("Guest")) return Forbid();
+        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -897,7 +925,7 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/remove-bot/{playerId}")]
     public async Task<IActionResult> RemoveBot(Guid gameId, Guid playerId)
     {
-        if (User.IsInRole("Guest")) return Forbid();
+        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -920,7 +948,7 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/start")]
     public async Task<IActionResult> StartGame(Guid gameId)
     {
-        if (User.IsInRole("Guest")) return Forbid();
+        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -990,8 +1018,8 @@ public class GamesController : ControllerBase
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error starting game: {ex}");
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            _logger.LogError(ex, "StartGame failed for game {GameId}", gameId);
+            return StatusCode(500, ErrorResponses.Internal(HttpContext?.TraceIdentifier));
         }
     }
 
@@ -1003,10 +1031,7 @@ public class GamesController : ControllerBase
 
     private string GenerateJoinCode()
     {
-        const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        var random = new Random();
-        return new string(Enumerable.Repeat(chars, 6)
-            .Select(s => s[random.Next(s.Length)]).ToArray());
+        return JoinCodeGenerator.Generate();
     }
 
     public static void HandleInvestorPhase(ApplicationDbContext? context, Game game, NationState nationState, Player controller, bool isLandedOn)
@@ -1159,23 +1184,36 @@ public class GamesController : ControllerBase
             }
         }
 
-        // Determine investment order: Swiss Bank players first, then Investor Card Holder
+        // Determine investment order. Imperial-2030-Rules.pdf p.11 numbers these steps: "2. Activating the
+        // Investor" - the card holder takes the 2M above and invests - and only then "3. Investing as Swiss
+        // Bank". The card holder therefore picks FIRST; bonds are a scarce shared pool and the trade-in
+        // mechanic makes first pick materially valuable, so this order changes who gets what.
         var eligibleInvestors = new List<Guid>();
 
-        // Swiss Bank players = players who control 0 nations
-        var controlledNations = game.NationStates.Where(ns => ns.ControllerId.HasValue).Select(ns => ns.ControllerId).Distinct().ToList();
-        var swissBankPlayers = game.Players
-            .Where(p => !controlledNations.Contains(p.Id))
-            .GetOrderedPlayers()
-            .Select(p => p.Id)
-            .ToList();
-
-        eligibleInvestors.AddRange(swissBankPlayers);
-
-        if (game.InvestorCardHolderId.HasValue && !eligibleInvestors.Contains(game.InvestorCardHolderId.Value))
+        if (game.InvestorCardHolderId.HasValue)
         {
             eligibleInvestors.Add(game.InvestorCardHolderId.Value);
         }
+
+        // Swiss Bank players = players who control 0 nations (p.12), taken in the order p.11 gives them:
+        // "If several players have a Swiss Bank, investing is done in the order of play (clockwise),
+        // starting from the player currently with the Investor card." So walk the play order rotated to
+        // begin at the card holder rather than from its arbitrary head.
+        var playOrder = game.Players.GetOrderedPlayers().Select(p => p.Id).ToList();
+        int rotation = game.InvestorCardHolderId.HasValue ? playOrder.IndexOf(game.InvestorCardHolderId.Value) : -1;
+        if (rotation < 0) rotation = 0; // no investor card in play: nothing to count from, keep play order
+
+        var controlledNations = game.NationStates.Where(ns => ns.ControllerId.HasValue).Select(ns => ns.ControllerId).Distinct().ToList();
+
+        var swissBankPlayers = Enumerable.Range(0, playOrder.Count)
+            .Select(i => playOrder[(rotation + i) % playOrder.Count])
+            .Where(id => !controlledNations.Contains(id))
+            // A card holder who also holds a Swiss Bank does not get a second turn - FAQ p.14: "Can the
+            // investor invest twice if he owns a Swiss Bank? No." They are already queued above.
+            .Where(id => !eligibleInvestors.Contains(id))
+            .ToList();
+
+        eligibleInvestors.AddRange(swissBankPlayers);
 
         if (eligibleInvestors.Any())
         {
@@ -1205,17 +1243,16 @@ public class GamesController : ControllerBase
             }
         }
 
-        // Find max
-        // Tie-breaking: Existing controller wins ties? 
-        // Rules: "If the sum of proper credits of several players is equal, the player among them who bought a bond of the nation most recently gets the card."
-        // We don't track purchase time perfectly, but we know the Acting Player just bought one.
-        // So if Acting Player ties with current controller, Acting Player takes it? 
-        // Or if Acting Player ties with someone else?
-
-        // Simpler Heuristic for now:
-        // 1. Sort by Total Investment Descending.
-        // 2. If Tie, and one is the current controller, keep controller.
-        // 3. If Tie, and one is Acting Player (who just bought), they take it (New Arrival).
+        // Imperial-2030-Rules.pdf p.12: "If, due to the allocation of bonds, a new player has achieved the
+        // highest credit sum (a tie is not sufficient), he takes over the government of that nation and is
+        // given the nation flag card. If several players achieve the same highest credit sum, the player
+        // first in seating order, counting from the player with the investor card, takes over the
+        // government."
+        //
+        // So: an outright leader takes over, and a tie that includes the sitting government leaves it in
+        // place ("a tie is not sufficient"). Note that "the player among them who bought a bond of the
+        // nation most recently gets the card" - which an earlier comment here cited as a rule - does not
+        // appear anywhere in the rulebook. Don't reason from it.
 
         if (!investmentMap.Any()) return;
 
@@ -1236,19 +1273,29 @@ public class GamesController : ControllerBase
         }
         else
         {
-            // Tie
+            // Tie for the highest credit sum.
             if (currentControllerId.HasValue && candidates.Contains(currentControllerId.Value))
             {
-                // Current controller is in the tie - Retain Control
-                // (Unless standard rules say new buyer takes it? 
-                // Imperial 2030 Rule: "If there is a tie, the player who already held the Governance card retains it.")
-                // OK, so Retain is correct.
+                // The sitting government is among the tied leaders: "a tie is not sufficient" to displace
+                // it, so it retains the nation flag card. Nothing to do.
             }
             else
             {
-                // Current controller is NOT in the tie (e.g. was overtaken by two others)
-                // OR there was no controller.
-                // Give to Acting Player if they are in the tie (they triggered the change)
+                // UNREACHABLE in real play, and left as a defensive fallback rather than built out.
+                //
+                // Reaching it needs the tied leaders to exclude the sitting government, and that cannot
+                // happen: this method runs after each SINGLE bond purchase, so exactly one player's credit
+                // sum changes per call, and the government always already holds the maximum (it is seeded
+                // that way at setup - GameSetupHelper assigns it from the nation's 2M bond holder - and
+                // every branch here preserves it). Let M be the old maximum, held by the government, and V
+                // the buyer's new sum: V > M makes the buyer the sole candidate; V == M or V < M leaves the
+                // government among the candidates and it retains. No path leaves it out.
+                //
+                // So the rulebook's own tie-break for this case - "the player first in seating order,
+                // counting from the player with the investor card" (p.12) - has nothing to resolve here.
+                // Do NOT implement it speculatively; if a future change can actually strand the government
+                // off the maximum (e.g. bonds being returned mid-game), write the failing test first, then
+                // replace this fallback with that rule.
                 if (game.ActingPlayerId.HasValue && candidates.Contains(game.ActingPlayerId.Value))
                 {
                     nationState.ControllerId = game.ActingPlayerId.Value;
@@ -1256,7 +1303,6 @@ public class GamesController : ControllerBase
                 }
                 else
                 {
-                    // Fallback: Pick first
                     nationState.ControllerId = candidates[0];
                     if (context != null) context.Entry(nationState).State = EntityState.Modified;
                 }
@@ -1314,13 +1360,7 @@ public class GamesController : ControllerBase
 
             if (distance == 0) return BadRequest("Must move at least 1 step."); // Should be covered by above equality check but safe.
             if (distance > RondelData.MaxMoveDistance) return BadRequest($"Cannot move more than {RondelData.MaxMoveDistance} spaces on the rondel.");
-            if (distance > RondelData.FreeMoveDistance)
-            {
-                // Cost per additional step = 1 + Power Factor (Power / 5)
-                int powerFactor = nationState.Power / 5;
-                int costPerStep = 1 + powerFactor;
-                cost = (distance - RondelData.FreeMoveDistance) * costPerStep;
-            }
+            cost = RondelData.GetMoveCost(currentSlot, targetSlot, nationState.Power);
         }
 
         if (cost > 0 && controller.Cash < cost) return BadRequest($"Not enough cash. Cost: {cost}M");
@@ -2053,12 +2093,7 @@ public class GamesController : ControllerBase
         {
             int targetSlot = RondelData.InvestorSlot;
             int? currentSlot = nationState.RondelPosition;
-            int cost = 0;
-            if (currentSlot != null)
-            {
-                int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
-                if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
-            }
+            int cost = RondelData.GetMoveCost(currentSlot, targetSlot, nationState.Power);
 
             game.PendingSwissBankForceNation = null;
             game.PendingSwissBankForceTargetSlot = null;
@@ -2099,12 +2134,7 @@ public class GamesController : ControllerBase
             {
                 int targetSlot = game.PendingSwissBankForceTargetSlot.Value;
                 int? currentSlot = nationState.RondelPosition;
-                int cost = 0;
-                if (currentSlot != null)
-                {
-                    int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
-                    if (distance > RondelData.FreeMoveDistance) cost = (distance - RondelData.FreeMoveDistance) * (1 + (nationState.Power / 5));
-                }
+                int cost = RondelData.GetMoveCost(currentSlot, targetSlot, nationState.Power);
 
                 game.PendingSwissBankForceNation = null;
                 game.PendingSwissBankForceTargetSlot = null;

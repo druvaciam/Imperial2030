@@ -26,4 +26,11 @@ public static class GameConstants
     // separate "Guest" literals and only one side knew about the role, guest tokens authenticated
     // nowhere and the authorization gates became unreachable.
     public const string GuestRole = "Guest";
+
+    /// <summary>
+    /// Authorization policy for endpoints no guest may reach. Applied wholesale to ManeuverController,
+    /// whose every action is a game move; GamesController stays per-action, because some of its endpoints
+    /// (browsing the lobby) are deliberately open to guests.
+    /// </summary>
+    public const string NotGuestPolicy = "NotGuest";
 }

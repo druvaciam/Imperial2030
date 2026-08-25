@@ -16,8 +16,8 @@ namespace Imperial2030.Server.Controllers;
 [ApiController]
 // Covers login (password guessing), register (account-creation spam) and guest-login (unbounded token
 // minting) in one place. Account lockout alone only protects a single known account; this caps the whole
-// auth surface per caller. See AuthSecurity.
-[EnableRateLimiting(AuthSecurity.AuthPolicyName)]
+// auth surface per caller. See RateLimitPolicies.
+[EnableRateLimiting(RateLimitPolicies.Auth)]
 public class AuthController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;

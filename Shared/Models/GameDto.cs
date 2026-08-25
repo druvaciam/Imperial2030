@@ -15,8 +15,18 @@ public class GameDto
     public bool IsPrivate { get; set; } = false;
     public string? JoinCode { get; set; }
     public bool IsFull => PlayerCount >= MaxPlayers;
-    public List<string> UserIds { get; set; } = [];
-    public string? HostId { get; set; }
+    /// <summary>
+    /// Whether the caller is a player in this game.
+    ///
+    /// The lobby list is served anonymously, and previously carried `UserIds` - every player's raw
+    /// ASP.NET Identity id, for every game, to everyone - together with the host's. The client only ever
+    /// compared those against the CALLER's own id, so the questions are answered here instead and no user
+    /// id leaves the server.
+    /// </summary>
+    public bool IsCurrentUserInGame { get; set; }
+
+    /// <summary>Whether the caller hosts this game. See <see cref="IsCurrentUserInGame"/>.</summary>
+    public bool IsCurrentUserHost { get; set; }
     public string? HostName { get; set; }
     public int MaxPower { get; set; }
     public int TurnCount { get; set; }

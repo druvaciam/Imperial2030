@@ -586,8 +586,14 @@ public class TcpTrainingServer : BackgroundService
         {
             wasFactoryBuildAction = true;
             var ns = factoryBuildNs!;
+            // Evaluated BEFORE the build below mutates Treasury/HasFactory — afterwards a successful build
+            // has already spent the money and filled the city, so the same check would misreport what was
+            // available at decision time (and would read the post-build treasury against the
+            // factory-plus-import threshold, mis-tiering the penalty as well).
+            float skipPenalty = AvoidableFactorySkipPenaltyFor(game, ns);
+            bool built = false;
 
-            if (req.Action >= RLBotStrategy.FactoryBuildActionBase && req.Action < RLBotStrategy.FactoryBuildActionBase + RLBotStrategy.FactoryBuildActionCount && ns.Treasury >= 5)
+            if (req.Action >= RLBotStrategy.FactoryBuildActionBase && req.Action < RLBotStrategy.FactoryBuildActionBase + RLBotStrategy.FactoryBuildActionCount && ns.Treasury >= FactoryCost)
             {
                 int slotIndex = req.Action - RLBotStrategy.FactoryBuildActionBase;
                 var (orderedHome, canBuild) = GetFactoryBuildOptions(game, ns);
@@ -618,8 +624,27 @@ public class TcpTrainingServer : BackgroundService
                     // investigation). The goal here is a fair expected value for attempting under uncertainty, not
                     // eliminating the penalty for genuinely wasted attempts.
                     explicitBonusReward += 10.0f;
+                    built = true;
                     _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +10");
                 }
+            }
+
+            // Landed on Factory, could build, chose not to. RLBotStrategy.ChooseCityForFactory keeps the
+            // skip action unmasked at all times (it has to — with no buildable city the mask would
+            // otherwise be entirely false), so nothing else made this cost anything: the wasted-Factory
+            // penalty on the rondel move only fires when the nation COULDN'T build, and a skip simply
+            // earned no reward rather than losing any. Observed live as Europe moving to Factory with a
+            // healthy treasury and ending its turn without building.
+            // The reduced tier applies when the treasury could not have covered a factory AND a full
+            // Import — there the skip may be the agent saving for imports rather than wasting the turn.
+            if (!built && skipPenalty > 0f)
+            {
+                explicitBonusReward -= skipPenalty;
+                bool savingForImport = skipPenalty == ReducedFactorySkipPenalty;
+                _logger.LogWarning(
+                    $"[RL PENALTY] {ns.Nation} skipped an available factory build (treasury {ns.Treasury}M" +
+                    (savingForImport ? ", too little to also fund a full import" : "") +
+                    $"). Penalty: -{skipPenalty}");
             }
 
             ns.HasBuiltThisTurn = true; // Resolved either way (built, or explicitly/implicitly skipped)
@@ -757,42 +782,14 @@ public class TcpTrainingServer : BackgroundService
                         // has no counterweight and will happily strip a factory city's defenders for a nearby
                         // flag grab (observed live: Russia emptied both Moscow armies to claim neutral Japan
                         // right after Europe had just hostile-moved into Russia's other home city).
-                        if (unitType == UnitType.Army && target != session.ManeuverSelectedTerritoryId)
+                        // See IsRecklessFactoryCityVacation for the full conditions, including the two
+                        // moves that are exempt because they answer the threat instead of ignoring it:
+                        // striking the enemy army that could have taken the city, and clearing an enemy
+                        // off one of the nation's own home provinces.
+                        if (IsRecklessFactoryCityVacation(game, unit, session.ManeuverSelectedTerritoryId!, target, isHostileMove))
                         {
-                            var originDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == session.ManeuverSelectedTerritoryId);
-                            if (originDef != null && originDef.Nation == unit.Nation)
-                            {
-                                var originTState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == session.ManeuverSelectedTerritoryId);
-                                if (originTState != null && originTState.HasFactory)
-                                {
-                                    bool remainingDefenders = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == session.ManeuverSelectedTerritoryId && u.Nation == unit.Nation && u.UnitType == UnitType.Army);
-                                    if (!remainingDefenders)
-                                    {
-                                        // Only a real risk if an enemy army can actually reach the now-undefended city
-                                        // this turn - via land adjacency, rail, or convoy, same as any other maneuver
-                                        // (a plain adjacency check would miss a fleet-convoyed army several sea zones
-                                        // away). Penalizing this unconditionally punished the correct move (grabbing
-                                        // a free, undefended flag with zero enemies anywhere in range) exactly as
-                                        // hard as the genuinely reckless one.
-                                        // Not filtered by IsHostile: that flag describes whether a unit is currently
-                                        // sitting hostilely where it already is, not whether it's capable of a
-                                        // hostile move next turn - a presently-peaceful enemy army can still turn
-                                        // hostile and take the now-undefended city.
-                                        var vacatedId = session.ManeuverSelectedTerritoryId;
-                                        bool enemyArmyCanReach = game.Units
-                                            .Where(u => u.Nation != unit.Nation && u.UnitType == UnitType.Army)
-                                            .Any(enemy => Imperial2030.Server.Helpers.ManeuverHelper
-                                                .GetAllReachableArmyDestinations(game, enemy.TerritoryId, enemy.Nation)
-                                                .Any(d => d.TerritoryId == vacatedId));
-
-                                        if (enemyArmyCanReach)
-                                        {
-                                            _logger.LogWarning($"[RL PENALTY] {unit.Nation} emptied its factory city '{session.ManeuverSelectedTerritoryId}' of army defenders by moving to '{target}', with an enemy army able to reach it.");
-                                            explicitBonusReward -= 5.0f;
-                                        }
-                                    }
-                                }
-                            }
+                            _logger.LogWarning($"[RL PENALTY] {unit.Nation} emptied its factory city '{session.ManeuverSelectedTerritoryId}' of army defenders by moving to '{target}', with an enemy army able to reach it.");
+                            explicitBonusReward -= 5.0f;
                         }
 
                         // Penalize walking a unit straight back where it came from when the round trip
@@ -1154,13 +1151,8 @@ public class TcpTrainingServer : BackgroundService
         if (wasRondelTurn && req.Action >= 0 && req.Action <= 5 && preRondelPos.HasValue)
         {
             int targetSlot = (preRondelPos.Value + req.Action + 1) % RondelData.SlotCount;
-            int dist = (targetSlot - preRondelPos.Value + RondelData.SlotCount) % RondelData.SlotCount;
-            int moveCost = 0;
-            if (dist > RondelData.FreeMoveDistance && preNs != null)
-            {
-                int pf = preNs.Power / 5;
-                moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
-            }
+            int dist = RondelData.GetMoveDistance(preRondelPos.Value, targetSlot);
+            int moveCost = preNs == null ? 0 : RondelData.GetMoveCost(preRondelPos, targetSlot, preNs.Power);
 
             // Heavy penalty for paying for a long move to first Prod/Man when the second one was closer
             if (dist >= 5 && (targetSlot == RondelData.ProductionSlot1 || targetSlot == RondelData.ManeuverSlot1))
@@ -2019,16 +2011,7 @@ public class TcpTrainingServer : BackgroundService
     {
         if (ns.RondelPosition.HasValue && ns.RondelPosition.Value == targetSlot) return false;
 
-        int moveCost = 0;
-        if (ns.RondelPosition.HasValue)
-        {
-            int dist = (targetSlot - ns.RondelPosition.Value + RondelData.SlotCount) % RondelData.SlotCount;
-            if (dist > RondelData.FreeMoveDistance)
-            {
-                int pf = ns.Power / 5;
-                moveCost = (dist - RondelData.FreeMoveDistance) * (1 + pf);
-            }
-        }
+        int moveCost = RondelData.GetMoveCost(ns.RondelPosition, targetSlot, ns.Power);
         return rlPlayer.Cash >= moveCost;
     }
 
@@ -2059,7 +2042,154 @@ public class TcpTrainingServer : BackgroundService
 
     // Home territories (ordered by Id, same convention as GetImportOptions) with per-slot legality of
     // building a factory there right now (not already built, not blocked by a hostile foreign army).
+    /// <summary>
+    /// Cost of landing on Factory with a build genuinely available and declining it.
+    ///
+    /// Deliberately much larger than the +10 a successful build earns. Unlike the "wasted Factory action"
+    /// penalty on the rondel move — whose magnitude had to be halved because it taught the agent to avoid
+    /// the Factory slot outright — this one cannot cause slot avoidance: it only fires once the nation is
+    /// already standing on Factory AND could build, so the agent's way out is simply to build, which is
+    /// the behaviour being trained. Skipping in that position is never forced.
+    /// </summary>
+    public const float AvoidableFactorySkipPenalty = 30.0f;
+
+    /// <summary>
+    /// Charged instead when the nation can afford the factory but not the factory AND a full Import.
+    ///
+    /// Below <see cref="FactoryAndFullImportCost"/> the two purchases genuinely compete for the same
+    /// treasury, so holding the money can be a real plan rather than a wasted turn — the agent may be on
+    /// its way to Import. Still non-zero, and deliberately so: a factory produces a unit every Production
+    /// turn and adds 2M of tax revenue for the rest of the game, whereas an import buys units once, so
+    /// the trade is usually still wrong. It is an excuse, not a justification.
+    /// </summary>
+    public const float ReducedFactorySkipPenalty = 10.0f;
+
+    /// <summary>
+    /// What a nation needs to do both: 5M for the factory plus a full Import of
+    /// RLBotStrategy.MaxImportUnits units at 1M each (GamesController.ExecuteImport: `cost = Units.Count`).
+    /// Derived rather than written as 8 so it cannot drift from either rule.
+    /// </summary>
+    private const int FactoryAndFullImportCost = FactoryCost + RLBotStrategy.MaxImportUnits;
+
+    /// <summary>
+    /// The penalty owed for however this factory decision was resolved: 0 when the skip was not
+    /// avoidable at all, the reduced rate when building would have starved an Import, otherwise the
+    /// full rate.
+    /// </summary>
+    public static float AvoidableFactorySkipPenaltyFor(Game game, NationState ns)
+    {
+        if (!WasAvoidableFactorySkip(game, ns)) return 0f;
+
+        return ns.Treasury < FactoryAndFullImportCost
+            ? ReducedFactorySkipPenalty
+            : AvoidableFactorySkipPenalty;
+    }
+
+    /// <summary>
+    /// True when the acting nation declined a factory it could actually have built: treasury covers the
+    /// 5M cost and at least one home city is free and unblockaded.
+    ///
+    /// Scoped narrowly on purpose. "No treasury" and "every city built or blockaded" are already covered,
+    /// more precisely, by the wasted-Factory-action penalty applied to the rondel move itself, and firing
+    /// for those here would double-penalize one event (.agents/AGENTS.md rule #25). Reuses
+    /// GetFactoryBuildOptions rather than re-deriving buildability so the two cannot drift.
+    /// </summary>
+    public static bool WasAvoidableFactorySkip(Game game, NationState ns)
+    {
+        if (ns.Treasury < FactoryCost) return false;
+
+        var (_, canBuild) = GetFactoryBuildOptionsFor(game, ns);
+        return canBuild.Any(c => c);
+    }
+
+    /// <summary>The rulebook's factory price (Imperial-2030-Rules.pdf p.7: "The nation pays 5 million").</summary>
+    private const int FactoryCost = 5;
+
+    /// <summary>
+    /// True when <paramref name="unit"/> leaving <paramref name="vacatedTerritoryId"/> for
+    /// <paramref name="target"/> strips the last army defender from one of its own factory cities while
+    /// an enemy army is in range — and the move is not itself an answer to that threat.
+    ///
+    /// Reachability is full maneuver reachability (land adjacency, rail, convoy), not plain adjacency: a
+    /// fleet-convoyed army several sea zones away is just as much of a threat. It is deliberately not
+    /// filtered by IsHostile, which describes how a unit is sitting where it already is, not whether it
+    /// could turn hostile next turn.
+    ///
+    /// Two moves are exempt, because both REMOVE the risk rather than ignoring it — penalizing them
+    /// would teach the agent to sit still and let an enemy walk into the city:
+    ///
+    ///   * moving onto the very enemy army that could have reached the city (a preventative strike — the
+    ///     threat being counted is the thing being attacked);
+    ///   * moving onto one of the nation's own home provinces that an enemy is occupying (defending home
+    ///     ground). Any enemy unit counts here, not just an army: an enemy fleet sitting in a home city's
+    ///     harbour is still an enemy on home soil worth clearing.
+    ///
+    /// The two exemptions treat the hostility flag differently, because the engine does:
+    ///
+    ///   * Into the nation's OWN home province holding a foreign unit, a battle is guaranteed whatever
+    ///     the caller asked for — ManeuverController overrides the flag ("Foreign armies in your home
+    ///     territory are always hostile. You cannot peacefully coexist."). This exemption therefore does
+    ///     not read isHostileMove at all. It matches Imperial-2030-Rules.pdf, where the hostile/friendly
+    ///     choice (p.10) is about entering the home province of ANOTHER Great Power.
+    ///   * Anywhere else, the flag decides. A hostile move resolves as combat, but a FRIENDLY move only
+    ///     opens battle negotiation, which the inactive defender may decline (FAQ p.14: they are
+    ///     *allowed* to fight, not obliged) — both units then simply coexist in the region and the threat
+    ///     to the vacated city is completely untouched. So a friendly move onto the threat answers
+    ///     nothing and earns no exemption.
+    ///
+    /// This split is what keeps the predicate correct once the hostility decision is handed to the model.
+    /// RLBotStrategy currently hardcodes DetermineHostility to true whenever an enemy is present ("like
+    /// it did before"), so today the flag is always true here; other strategies already vary, with
+    /// BotStrategyBase choosing randomly. Reading the flag where it genuinely changes the outcome, and
+    /// ignoring it where the engine overrides it, means neither a future model policy nor a different
+    /// strategy can silently change what this reward means.
+    /// </summary>
+    public static bool IsRecklessFactoryCityVacation(Game game, Unit unit, string vacatedTerritoryId, string target, bool isHostileMove)
+    {
+        if (unit.UnitType != UnitType.Army) return false;
+        if (target == vacatedTerritoryId) return false;
+
+        var originDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == vacatedTerritoryId);
+        if (originDef == null || originDef.Nation != unit.Nation) return false;
+
+        var originTState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == vacatedTerritoryId);
+        if (originTState == null || !originTState.HasFactory) return false;
+
+        bool remainingDefenders = game.Units.Any(u => u.Id != unit.Id
+            && u.TerritoryId == vacatedTerritoryId && u.Nation == unit.Nation && u.UnitType == UnitType.Army);
+        if (remainingDefenders) return false;
+
+        // Kept as the threatening units themselves, not just a bool: the preventative-strike exemption
+        // below has to ask whether the destination holds one of them.
+        var threats = game.Units
+            .Where(u => u.Nation != unit.Nation && u.UnitType == UnitType.Army)
+            .Where(enemy => Imperial2030.Server.Helpers.ManeuverHelper
+                .GetAllReachableArmyDestinations(game, enemy.TerritoryId, enemy.Nation)
+                .Any(d => d.TerritoryId == vacatedTerritoryId))
+            .ToList();
+
+        if (threats.Count == 0) return false;
+
+        // Defending home ground: an enemy of any kind sitting in one of this nation's own home provinces.
+        // No hostility check — the engine forces the battle here. Any foreign unit counts, not just an
+        // army: an enemy fleet in a home city's harbour is still an enemy on home soil worth clearing.
+        var targetDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
+        bool targetIsOwnHome = targetDef != null && targetDef.Nation == unit.Nation;
+        bool enemyAtTarget = game.Units.Any(u => u.TerritoryId == target && u.Nation != unit.Nation);
+        if (targetIsOwnHome && enemyAtTarget) return false;
+
+        // Preventative strike: the destination holds one of the very armies counted as a threat above.
+        // Hostile only — a friendly arrival can end in the defender declining battle and both units
+        // sitting there together, leaving the threat free to take the vacated city next turn.
+        if (isHostileMove && threats.Any(t => t.TerritoryId == target)) return false;
+
+        return true;
+    }
+
     private (List<Territory> OrderedHome, bool[] CanBuild) GetFactoryBuildOptions(Game game, NationState ns)
+        => GetFactoryBuildOptionsFor(game, ns);
+
+    private static (List<Territory> OrderedHome, bool[] CanBuild) GetFactoryBuildOptionsFor(Game game, NationState ns)
     {
         var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation).OrderBy(t => t.Id).ToList();
         var canBuild = new bool[orderedHome.Count];

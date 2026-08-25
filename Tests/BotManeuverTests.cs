@@ -277,6 +277,62 @@ namespace Imperial2030.Tests
             Assert.Single(unitsInTerritory);
             Assert.Equal(bystanderFleet.Id, unitsInTerritory.First().Id);
         }
+
+        [Fact]
+        public async Task ExecuteBotTurn_ManeuverSlot_FleetlessNation_ConvergesOnTheSamePhaseAsTheHumanPath()
+        {
+            // BotService and MoveNation initialise the maneuver phase differently: MoveNation auto-skips
+            // Fleets (and then Armies) when the nation has no unmoved units of that type and logs the skip
+            // (GamesController.cs:1485-1504), while ExecuteBotTurn just sets Fleets unconditionally
+            // (BotService.cs:341). This pins the consequence of that asymmetry: it must stay cosmetic.
+            // BotManeuver walks the empty Fleets phase and ends it itself, so a fleetless nation still
+            // finishes its turn in the same place the human path would - it is never left stuck on Fleets
+            // with nothing to move. If the duplicated init ever does strand a bot mid-phase, this fails.
+            string dbName = Guid.NewGuid().ToString();
+            var ctx = GetDbContext(dbName);
+
+            var gameId = Guid.NewGuid();
+            var playerId = Guid.NewGuid();
+
+            var game = new Game
+            {
+                Id = gameId,
+                CurrentTurnNation = Nation.Russia,
+                Status = GameStatus.InProgress,
+                CurrentManeuverPhase = ManeuverPhase.None,
+                Players = new List<Player> { new Player { Id = playerId, IsBot = true, BotName = "StubBot", BotType = "StubMexico" } },
+                NationStates = new List<NationState>
+                {
+                    // One slot short of ManeuverSlot1, so the move is distance 1 (free) and does not cross
+                    // the Investor slot - this test is about the phase init, nothing else.
+                    new NationState { Nation = Nation.Russia, ControllerId = playerId, RondelPosition = RondelData.ManeuverSlot1 - 1, HasMovedThisTurn = false }
+                },
+                // Armies only: the nation has no fleets at all, which is the case the two paths disagree on.
+                Units = new List<Unit> { new Unit { Id = Guid.NewGuid(), Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = "Mexico" } }
+            };
+
+            ctx.Games.Add(game);
+            await ctx.SaveChangesAsync();
+
+            var mockHub = new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>();
+            var mockClients = new Mock<IHubClients>();
+            mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+            mockClients.Setup(c => c.Group(It.IsAny<string>())).Returns(new Mock<IClientProxy>().Object);
+
+            var botService = new BotService(new Mock<IServiceScopeFactory>().Object, mockHub.Object,
+                [new StubMexicoBotStrategy()], new Mock<ILogger<BotService>>().Object) { SkipDelays = true };
+
+            var loaded = await ctx.Games.Include(g => g.Units).Include(g => g.Players)
+                .Include(g => g.NationStates).Include(g => g.TerritoryStates).FirstAsync(g => g.Id == gameId);
+            var ns = loaded.NationStates.First(n => n.Nation == Nation.Russia);
+
+            // Act
+            await botService.ExecuteBotTurn(ctx, loaded, ns, loaded.Players.First());
+
+            // Assert: the bot walked itself off the empty Fleets phase and finished the maneuver.
+            var updated = await GetDbContext(dbName).Games.FirstAsync(g => g.Id == gameId);
+            Assert.Equal(ManeuverPhase.None, updated.CurrentManeuverPhase);
+        }
     }
 
     public class StubMexicoBotStrategy : BotStrategyBase

@@ -37,7 +37,27 @@ public class ReplaySession
     public CancellationTokenSource Cts { get; set; } = new();
     public Task? LoopTask { get; set; }
     public DateTime LastAccessedUtc { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Who asked for this session, for per-caller admission accounting. Opaque to this class — the
+    /// controller decides what identifies a caller (today, the remote address).
+    /// </summary>
+    public required string OwnerKey { get; init; }
 }
+
+/// <summary>Why <see cref="ReplaySessionManager.StartReplayAsync"/> did or did not create a session.</summary>
+public enum ReplayAdmission
+{
+    Accepted,
+
+    /// <summary>The server is already running its maximum number of concurrent replay sessions.</summary>
+    ServerAtCapacity,
+
+    /// <summary>This caller already holds their maximum number of concurrent sessions.</summary>
+    CallerAtCapacity
+}
+
+public readonly record struct StartReplayResult(Guid? SessionId, ReplayAdmission Admission);
 
 /// <summary>
 /// Owns "Start Replay" playback sessions: purely in-memory, ephemeral reconstructions of a finished game's
@@ -77,10 +97,40 @@ public class ReplaySessionManager : IDisposable
 
     private static readonly TimeSpan IdleSweepInterval = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// Hard ceiling on concurrent sessions. StartReplay is [AllowAnonymous] (the Vue viewer consumes it
+    /// without auth) and every accepted session costs a dedicated EF InMemory database, a long-lived
+    /// DbContext, a background replay task and a full GameDetailDto snapshot held until the idle sweep
+    /// reclaims it — so without a ceiling an unauthenticated caller can allocate those in a loop until the
+    /// process dies. Settable so an operator can tune it and tests can drive it down.
+    /// </summary>
+    public int MaxConcurrentSessions { get; set; } = 20;
+
+    /// <summary>
+    /// Ceiling per caller, so one client cannot consume the whole global budget and lock everyone else out
+    /// — that would be the same denial of service with extra steps.
+    ///
+    /// Deliberately generous, for the same reason the auth rate limiter is (see AuthSecurity): the caller
+    /// key is the transport-level remote address, so behind a reverse proxy that does not rewrite it every
+    /// viewer can collapse into one key and share this budget. Erring high keeps a shared-proxy deployment
+    /// working; the global cap above is what actually protects the process.
+    /// </summary>
+    public int MaxSessionsPerOwner { get; set; } = 5;
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ReplaySessionManager> _logger;
     private readonly ConcurrentDictionary<Guid, ReplaySession> _sessions = new();
     private readonly Timer _idleSweepTimer;
+
+    // Counting live sessions and then inserting is not atomic on a ConcurrentDictionary, so two concurrent
+    // requests could both observe "one slot left" and both take it. Admission is decided under this lock;
+    // everything after it (seeding, starting the loop) stays outside so the lock is never held across I/O.
+    private readonly object _admissionLock = new();
+
+    // Sessions admitted but not yet in _sessions (seeding in flight), id -> ownerKey. Counted against both
+    // budgets so a burst of concurrent requests cannot all pass the capacity check before any of them lands.
+    private readonly ConcurrentDictionary<Guid, string> _reservations = new();
+
     private bool _disposed;
 
     public ReplaySessionManager(IServiceScopeFactory scopeFactory, ILogger<ReplaySessionManager> logger)
@@ -145,31 +195,85 @@ public class ReplaySessionManager : IDisposable
         return null;
     }
 
+    /// <summary>
+    /// Decides admission without allocating anything, so a caller who is already at capacity can be turned
+    /// away before the endpoint does any expensive work. Cheap and side-effect-free by design — see
+    /// GamesController.StartReplay, which calls this before loading the source game and projecting its
+    /// whole action log.
+    /// </summary>
+    public ReplayAdmission CheckAdmission(string ownerKey)
+    {
+        lock (_admissionLock)
+        {
+            return EvaluateAdmission(ownerKey);
+        }
+    }
+
+    // Callers must hold _admissionLock. Reservations count towards both budgets: a session that has been
+    // admitted but is still being seeded is already committed to, and ignoring it would let a burst of
+    // concurrent requests all pass the check before any of them lands in _sessions.
+    private ReplayAdmission EvaluateAdmission(string ownerKey)
+    {
+        if (_sessions.Count + _reservations.Count >= MaxConcurrentSessions) return ReplayAdmission.ServerAtCapacity;
+
+        int ownedByCaller = _sessions.Values.Count(s => s.OwnerKey == ownerKey)
+                          + _reservations.Values.Count(key => key == ownerKey);
+        if (ownedByCaller >= MaxSessionsPerOwner) return ReplayAdmission.CallerAtCapacity;
+
+        return ReplayAdmission.Accepted;
+    }
+
     // sourceGame.Name is used only for the scratch replay Game's display name; orderedActions must already
     // be sorted by OrderIndex and setupMeta must be the deserialized StartGame action's GameSetupMetadata —
     // the caller (GamesController.StartReplay) already has to load/validate both to authorize the request.
-    public async Task<Guid> StartReplayAsync(Game sourceGame, List<GameActionDto> orderedActions, GameSetupMetadata setupMeta)
+    // ownerKey identifies the caller for per-caller capacity accounting.
+    public async Task<StartReplayResult> StartReplayAsync(
+        Game sourceGame, List<GameActionDto> orderedActions, GameSetupMetadata setupMeta, string ownerKey)
     {
         var replaySessionId = Guid.NewGuid();
-        var replayGameId = Guid.NewGuid();
-        var replayContext = CreateInMemoryContext(replaySessionId);
 
-        await SeedGameAsync(replayContext, replayGameId, sourceGame.Name, setupMeta);
-
-        var session = new ReplaySession
+        // Re-check under the lock and reserve in the same critical section. CheckAdmission earlier in the
+        // request is only an early-out to avoid wasted work; this is the decision that actually binds.
+        lock (_admissionLock)
         {
-            Id = replaySessionId,
-            SourceGameId = sourceGame.Id,
-            ReplayGameId = replayGameId,
-            Context = replayContext,
-            Actions = orderedActions,
-            PacingMs = PacingMs
-        };
-        _sessions[replaySessionId] = session;
+            var admission = EvaluateAdmission(ownerKey);
+            if (admission != ReplayAdmission.Accepted)
+            {
+                return new StartReplayResult(null, admission);
+            }
+            _reservations[replaySessionId] = ownerKey;
+        }
 
-        session.LoopTask = RunReplayLoopAsync(session);
+        try
+        {
+            var replayGameId = Guid.NewGuid();
+            var replayContext = CreateInMemoryContext(replaySessionId);
 
-        return replaySessionId;
+            await SeedGameAsync(replayContext, replayGameId, sourceGame.Name, setupMeta);
+
+            var session = new ReplaySession
+            {
+                Id = replaySessionId,
+                SourceGameId = sourceGame.Id,
+                ReplayGameId = replayGameId,
+                Context = replayContext,
+                Actions = orderedActions,
+                PacingMs = PacingMs,
+                OwnerKey = ownerKey
+            };
+            _sessions[replaySessionId] = session;
+
+            session.LoopTask = RunReplayLoopAsync(session);
+
+            return new StartReplayResult(replaySessionId, ReplayAdmission.Accepted);
+        }
+        finally
+        {
+            // Released whether seeding succeeded (the session now holds the slot) or threw (nothing holds
+            // it, and the slot must not leak — a reservation that is never cleared permanently shrinks
+            // capacity, which is the very failure this cap exists to prevent).
+            _reservations.TryRemove(replaySessionId, out _);
+        }
     }
 
     public void Pause(Guid replaySessionId)

@@ -371,6 +371,48 @@ namespace Imperial2030.Server.Helpers
 
             return null;
         }
+
+        /// <summary>
+        /// Whether a hostile unit standing in <paramref name="territoryId"/> would breach the last-factory
+        /// protection, i.e. whether entry there must be peaceful.
+        ///
+        /// Imperial-2030-Rules.pdf p.10: "If a nation has only one factory left that is not occupied by
+        /// hostile armies (standing upright), the province of this factory may not be entered by hostile
+        /// armies. Armies of other nations that enter this province are laid down on their sides."
+        ///
+        /// Note it is the owner's UNOCCUPIED factories that are counted, not all of them: a nation whose
+        /// other factories are already blockaded is down to this one, and the rule protects it.
+        /// </summary>
+        /// <param name="excludeUnitId">
+        /// The unit whose own hostility is being decided. Callers that have already placed it in the
+        /// destination (the Move* endpoints assign TerritoryId before this check) must exclude it, or it
+        /// counts itself as the occupier and the protection never triggers.
+        /// </param>
+        public static bool IsProtectedLastFactoryProvince(Game game, Nation movingNation, string territoryId, Guid? excludeUnitId = null)
+        {
+            var destination = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
+            if (destination?.Nation == null || destination.Nation.Value == movingNation) return false;
+
+            var owner = destination.Nation.Value;
+
+            var targetState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == territoryId);
+            if (targetState == null || !targetState.HasFactory) return false;
+
+            bool IsOccupied(string id) => game.Units.Any(u =>
+                (excludeUnitId == null || u.Id != excludeUnitId.Value) &&
+                u.TerritoryId == id && u.Nation != owner && u.IsHostile);
+
+            int unoccupiedFactories = game.TerritoryStates.Count(s =>
+            {
+                if (!s.HasFactory) return false;
+                var province = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
+                if (province == null || province.Nation != owner) return false;
+                return !IsOccupied(s.TerritoryId);
+            });
+
+            // Already blockaded by someone else: the protection has nothing left to preserve here.
+            return unoccupiedFactories <= 1 && !IsOccupied(territoryId);
+        }
+
     }
 }
-

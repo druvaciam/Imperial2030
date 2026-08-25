@@ -42,5 +42,10 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Lets Tests/ reach the internal test seams on BotService's bot-loop slot and wakeup latch, whose
+         behaviour is otherwise only observable by racing a real background loop. -->
+    <InternalsVisibleTo Include="Tests" />
+  </ItemGroup>
 
 </Project>
