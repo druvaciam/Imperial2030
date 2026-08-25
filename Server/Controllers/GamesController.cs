@@ -28,6 +28,7 @@ public class GamesController : ControllerBase
     private readonly Imperial2030.Server.Services.BotService _botService;
     private readonly Imperial2030.Server.Services.INotificationService _notificationService;
     private readonly ILogger<GamesController> _logger;
+    private readonly Imperial2030.Server.Services.BotTypeCatalog _botTypeCatalog;
 
     /// <summary>
     /// When true, suppresses all SignalR broadcasts from this controller instance. Set by
@@ -38,7 +39,7 @@ public class GamesController : ControllerBase
 
     // logger is optional so the many direct `new GamesController(...)` constructions in Tests/ keep
     // working; DI supplies the real one in production.
-    public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.PresenceTracker presenceTracker, Imperial2030.Server.Services.BotService botService, Imperial2030.Server.Services.INotificationService notificationService, ILogger<GamesController>? logger = null)
+    public GamesController(ApplicationDbContext context, UserManager<ApplicationUser> userManager, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.PresenceTracker presenceTracker, Imperial2030.Server.Services.BotService botService, Imperial2030.Server.Services.INotificationService notificationService, ILogger<GamesController>? logger = null, Imperial2030.Server.Services.BotTypeCatalog? botTypeCatalog = null)
     {
         _context = context;
         _userManager = userManager;
@@ -47,6 +48,7 @@ public class GamesController : ControllerBase
         _botService = botService;
         _notificationService = notificationService;
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<GamesController>.Instance;
+        _botTypeCatalog = botTypeCatalog ?? new Imperial2030.Server.Services.BotTypeCatalog();
     }
 
     [HttpGet]
@@ -69,8 +71,10 @@ public class GamesController : ControllerBase
                 IsPrivate = g.IsPrivate,
                 VariantBonusOnlyForTaxIncreases = g.VariantBonusOnlyForTaxIncreases,
                 JoinCode = g.Players.Any(p => p.UserId == currentUserId && p.IsHost) ? g.JoinCode : null,
-                UserIds = g.Players.Select(p => p.UserId).ToList(),
-                HostId = g.Players.Where(p => p.IsHost).Select(p => p.UserId).FirstOrDefault(),
+                // Null-guarded: an anonymous caller has no id, and bots have a null UserId, so an
+                // unguarded comparison would match every bot player.
+                IsCurrentUserInGame = currentUserId != null && g.Players.Any(p => p.UserId == currentUserId),
+                IsCurrentUserHost = currentUserId != null && g.Players.Any(p => p.IsHost && p.UserId == currentUserId),
                 HostName = g.Players.Where(p => p.IsHost).Select(p => p.User.UserName).FirstOrDefault(),
                 MaxPower = g.NationStates.Any() ? g.NationStates.Max(ns => ns.Power) : 0,
                 TurnCount = g.TurnCount,
@@ -124,8 +128,9 @@ public class GamesController : ControllerBase
             TurnCount = game.TurnCount,
             VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
             IsPaused = game.IsPaused,
-            UserIds = new List<string> { userId },
-            HostId = userId,
+            // The creator is, by construction, the sole player and the host.
+            IsCurrentUserInGame = true,
+            IsCurrentUserHost = true,
             HostName = User.Identity?.Name
         };
 
@@ -406,7 +411,8 @@ public class GamesController : ControllerBase
             IsPrivate = game.IsPrivate,
             IsPaused = game.IsPaused,
             VariantBonusOnlyForTaxIncreases = game.VariantBonusOnlyForTaxIncreases,
-            HostId = game.Players.FirstOrDefault(p => p.IsHost)?.UserId,
+            IsCurrentUserInGame = userId != null && game.Players.Any(p => p.UserId == userId),
+            IsCurrentUserHost = userId != null && game.Players.Any(p => p.IsHost && p.UserId == userId),
             JoinCode = game.Players.Any(p => p.UserId == userId && p.IsHost) ? game.JoinCode : null,
             CurrentTurnNation = game.CurrentTurnNation,
             PlayerCount = game.Players.Count,
@@ -684,8 +690,9 @@ public class GamesController : ControllerBase
                 IsPrivate = finalGame.IsPrivate,
                 VariantBonusOnlyForTaxIncreases = finalGame.VariantBonusOnlyForTaxIncreases,
                 IsPaused = finalGame.IsPaused,
-                UserIds = new List<string>(),
-                HostId = null,
+                // An imported game is all bots; the importer never becomes a player in it.
+                IsCurrentUserInGame = false,
+                IsCurrentUserHost = false,
                 HostName = importedPlayers.FirstOrDefault(p => p.IsHost)?.BotName,
                 IsAllBots = true
             };
@@ -866,37 +873,8 @@ public class GamesController : ControllerBase
         return Ok(bots);
     }
 
-    // Instance rather than static so the catch below can log through _logger; both call sites are
-    // instance methods and nothing here depends on static state.
-    private List<string> GetAvailableBotTypes()
-    {
-        var botTypes = new List<string> { "Default", "Aggressive", "Friendly", "Greedy", "Random" };
-
-        try
-        {
-            var basePath = AppContext.BaseDirectory;
-            if (System.IO.File.Exists(System.IO.Path.Combine(basePath, "imperial_ppo_bot.onnx")) || System.IO.File.Exists(System.IO.Path.Combine(basePath, "RL.onnx")))
-            {
-                botTypes.Add("RL");
-            }
-
-            var onnxFiles = System.IO.Directory.GetFiles(basePath, "*.onnx");
-            foreach (var file in onnxFiles)
-            {
-                var fileName = System.IO.Path.GetFileNameWithoutExtension(file);
-                if (!fileName.Equals("imperial_ppo_bot", StringComparison.OrdinalIgnoreCase) && !fileName.Equals("RL", StringComparison.OrdinalIgnoreCase) && fileName.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
-                {
-                    botTypes.Add(fileName);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error discovering bot types");
-        }
-
-        return botTypes;
-    }
+    // Discovered once by BotTypeCatalog rather than scanning the deployment directory per call.
+    private IReadOnlyList<string> GetAvailableBotTypes() => _botTypeCatalog.Available;
 
     [HttpPost("{gameId}/add-bot")]
     public async Task<IActionResult> AddBot(Guid gameId, [FromQuery] string? botType = null)
@@ -1053,10 +1031,7 @@ public class GamesController : ControllerBase
 
     private string GenerateJoinCode()
     {
-        const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        var random = new Random();
-        return new string(Enumerable.Repeat(chars, 6)
-            .Select(s => s[random.Next(s.Length)]).ToArray());
+        return JoinCodeGenerator.Generate();
     }
 
     public static void HandleInvestorPhase(ApplicationDbContext? context, Game game, NationState nationState, Player controller, bool isLandedOn)

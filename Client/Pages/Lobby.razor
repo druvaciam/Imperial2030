@@ -104,7 +104,7 @@
         <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
             @foreach (var game in GetFilteredGames())
             {
-                bool amIInGame = currentUserId != null && game.UserIds.Contains(currentUserId);
+                bool amIInGame = game.IsCurrentUserInGame;
                 
                 <div class="col">
                     <div class="card h-100 bg-dark text-white border-secondary shadow-sm">
@@ -146,7 +146,7 @@
                                 }
                                 <br />
                                 @L["Card_Players", game.PlayerCount, game.MaxPlayers]
-                                @if (game.IsPrivate && amIInGame && game.HostId == currentUserId && game.JoinCode != null)
+                                @if (game.IsPrivate && amIInGame && game.IsCurrentUserHost && game.JoinCode != null)
                                 {
                                     <br />
                                     <span class="text-info small">@L["Card_JoinCode"] <strong>@game.JoinCode</strong></span>
@@ -165,7 +165,7 @@
                                         @L["Card_Leave"]
                                     </button>
                                 }
-                                @if (game.Status == GameStatus.InProgress && game.HostId == currentUserId)
+                                @if (game.Status == GameStatus.InProgress && game.IsCurrentUserHost)
                                 {
                                      <button class="btn btn-danger btn-sm" @onclick="@(() => DeleteGame(game.Id))">
                                         @Shared["Common_Delete"]
@@ -497,7 +497,7 @@
         // Apply My Games Filter
         if (showOnlyMyGames && currentUserId != null)
         {
-            query = query.Where(g => g.UserIds.Contains(currentUserId));
+            query = query.Where(g => g.IsCurrentUserInGame);
         }
 
         // Apply Status Filters

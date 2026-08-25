@@ -81,16 +81,42 @@ public class BotService
         });
     }
 
+    // Only one bot loop runs per game at a time; this is the claim on that slot.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> _activeBotGames = new();
+
+    // "A bot may have work in this game." Recorded by every caller, INCLUDING the ones that find a loop
+    // already running and return - otherwise their request is simply lost.
+    //
+    // Bots have no clock: they act only when TriggerBotTurn says something changed. The old code dropped
+    // any request that arrived while a loop was running, which is fine while that loop is still working
+    // but not while it is on its way out. A loop that has just decided it has nothing left to do has not
+    // yet released its claim, so a request landing in that window was discarded by the caller AND never
+    // seen by the loop - leaving nobody running and nobody coming. The game then sits forever waiting on
+    // a bot (e.g. for the battle response a human's move just asked for).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> _pendingBotWakeups = new();
+
+    /// <summary>Test seam: whether a wakeup request is recorded but not yet consumed.</summary>
+    internal static bool HasPendingWakeup(Guid gameId) => _pendingBotWakeups.ContainsKey(gameId);
+
+    /// <summary>Test seam: claim/release the single-loop slot without running a real bot loop.</summary>
+    internal static bool TryClaimBotLoopSlot(Guid gameId) => _activeBotGames.TryAdd(gameId, true);
+    internal static void ReleaseBotLoopSlot(Guid gameId) => _activeBotGames.TryRemove(gameId, out _);
 
     public async Task TryPlayBotTurnAsync(Guid gameId, bool singleTurnOnly = false)
     {
+        // Recorded BEFORE the slot is claimed, so a loop that is already running is guaranteed to see it.
+        _pendingBotWakeups[gameId] = true;
+
         if (!_activeBotGames.TryAdd(gameId, true)) return;
 
         try
         {
             while (true)
             {
+                // Consumed at the START of the pass that will service it, so a request arriving DURING
+                // this pass leaves a fresh mark behind instead of being swallowed by this one.
+                _pendingBotWakeups.TryRemove(gameId, out _);
+
                 using var scope = _scopeFactory.CreateScope();
                 var ctx = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
@@ -218,7 +244,11 @@ public class BotService
                     }
                 }
 
-                if (!botActed || singleTurnOnly) break;
+                if (singleTurnOnly) break;
+
+                // Nothing to do AND nothing newly asked for: safe to leave. If a request came in while
+                // this pass ran, take another one rather than exiting and stranding it.
+                if (!botActed && !_pendingBotWakeups.ContainsKey(gameId)) break;
             }
         }
         catch (ObjectDisposedException)
@@ -233,6 +263,15 @@ public class BotService
         finally
         {
             _activeBotGames.TryRemove(gameId, out _);
+        }
+
+        // The slot is free now. A request that landed between the last check above and that release saw
+        // the slot still taken and returned, so nothing is running to service it - start a fresh loop.
+        // This cannot spin: each pass consumes the mark, so an unprompted re-entry finds nothing to do
+        // and leaves without setting it again.
+        if (!singleTurnOnly && _pendingBotWakeups.ContainsKey(gameId))
+        {
+            TriggerBotTurn(gameId, delayMs: 0);
         }
     }
 

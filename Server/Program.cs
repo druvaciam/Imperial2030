@@ -109,6 +109,10 @@ bool usingEphemeralSigningKey = jwtWarning != null;
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<Imperial2030.Server.Services.UserExistenceCache>();
 
+// Scans the deployment directory for exported .onnx bot models exactly once, instead of on every
+// AddBot and every anonymous hit on the available-bots endpoint.
+builder.Services.AddSingleton<Imperial2030.Server.Services.BotTypeCatalog>();
+
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;

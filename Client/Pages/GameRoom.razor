@@ -35,7 +35,7 @@ else
                 {
                     <span class="text-white-50 small px-3 d-none d-md-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">@L["TopBar_Host"] <strong class="text-white">@host.UserName</strong></span>
                 }
-                @if (game.IsPrivate && MyPlayer != null && game.HostId == MyPlayer.UserId && game.JoinCode != null)
+                @if (game.IsPrivate && game.IsCurrentUserHost && game.JoinCode != null)
                 {
                     <span class="text-info small px-3 d-none d-lg-inline" style="border-left: 1px solid rgba(255,255,255,0.2);">@L["TopBar_JoinCode"] <strong>@game.JoinCode</strong></span>
                 }

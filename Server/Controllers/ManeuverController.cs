@@ -170,30 +170,10 @@ public class ManeuverController : ControllerBase
             }
         }
 
-        if (request.IsHostile && !willFight)
+        if (request.IsHostile && !willFight
+            && ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, request.DestinationId, unit.Id))
         {
-            var destDef2 = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
-            if (destDef2 != null && destDef2.Nation.HasValue && destDef2.Nation.Value != nation)
-            {
-                var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == request.DestinationId);
-                if (tState != null && tState.HasFactory)
-                {
-                    var defenderNation = destDef2.Nation.Value;
-                    var defenderFactoryCount = game.TerritoryStates.Count(s =>
-                    {
-                        if (!s.HasFactory) return false;
-                        var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
-                        if (t == null || t.Nation != defenderNation) return false;
-                        bool isOccupied = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
-                        return !isOccupied;
-                    });
-                    bool isTargetOccupied = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == request.DestinationId && u.Nation != defenderNation && u.IsHostile);
-                    if (defenderFactoryCount <= 1 && !isTargetOccupied)
-                    {
-                        return BadRequest("Cannot enter the last unoccupied factory of a nation hostilely. Must enter peacefully.");
-                    }
-                }
-            }
+            return BadRequest("Cannot enter the last unoccupied factory of a nation hostilely. Must enter peacefully.");
         }
 
         // Auto-Battle Logic (If specified)
@@ -528,32 +508,10 @@ public class ManeuverController : ControllerBase
             }
         }
 
-        if (request.IsHostile && !willFight)
+        if (request.IsHostile && !willFight
+            && ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, request.DestinationId, unit.Id))
         {
-            var destDef2 = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == request.DestinationId);
-            if (destDef2 != null && destDef2.Nation.HasValue && destDef2.Nation.Value != nation)
-            {
-                var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == request.DestinationId);
-                if (tState != null && tState.HasFactory)
-                {
-                    var defenderNation = destDef2.Nation.Value;
-                    var defenderFactoryCount = game.TerritoryStates.Count(s =>
-                    {
-                        if (!s.HasFactory) return false;
-                        var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
-                        if (t == null || t.Nation != defenderNation) return false;
-                        bool isOccupied = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
-                        return !isOccupied;
-                    });
-
-                    bool isTargetOccupied = game.Units.Any(u => u.Id != unit.Id && u.TerritoryId == request.DestinationId && u.Nation != defenderNation && u.IsHostile);
-
-                    if (defenderFactoryCount <= 1 && !isTargetOccupied)
-                    {
-                        return BadRequest("Cannot enter the last unoccupied factory of a nation hostilely. Must enter peacefully.");
-                    }
-                }
-            }
+            return BadRequest("Cannot enter the last unoccupied factory of a nation hostilely. Must enter peacefully.");
         }
 
         // Auto-Battle Logic (MoveArmy)
@@ -678,6 +636,15 @@ public class ManeuverController : ControllerBase
 
         if (unit.Nation != nation) return BadRequest("You can only toggle hostility of your own units.");
 
+        // Entering hostilely is refused by MoveArmy/MoveFleet for a nation's last working factory province
+        // (Imperial-2030-Rules.pdf p.10); without this, that protection could simply be walked around by
+        // entering peacefully and standing the army upright afterwards.
+        if (!unit.IsHostile
+            && ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, unit.TerritoryId, unit.Id))
+        {
+            return BadRequest("Cannot blockade the last unoccupied factory of a nation.");
+        }
+
         unit.IsHostile = !unit.IsHostile;
 
         GameLogger.LogHostilityToggle(_context, game, unit.UnitType, unit.TerritoryId, unit.IsHostile, nation, controller.GetPlayerName(_context));
@@ -745,21 +712,18 @@ public class ManeuverController : ControllerBase
             attackingUnits.Add(u);
         }
 
-        // 7. Check Minimum Factory Exception (Defender must have > 1 factory)
-        // We need to count how many factories the defender currently has
-        // We look at TerritoryStates for this game where HasFactory is true AND it is a home province of defender
-        // Note: We need to rely on TerritoryData for "Home Province" check
-        var defenderFactoryCount = 0;
-        foreach (var ts in game.TerritoryStates.Where(s => s.HasFactory))
+        // 7. Minimum-factory exception. Imperial-2030-Rules.pdf p.10: "If a nation has only one factory
+        // left that has not been occupied by hostile armies (standing upright), this factory cannot be
+        // destroyed."
+        //
+        // The count is of UNOCCUPIED factories, not of all of them — a nation whose other factories are
+        // already blockaded is down to this one. Destroying does not require occupying (the armies above
+        // may be lying on their sides), so this and the entry protection are the same test: the province
+        // is shielded exactly when it is not itself occupied and the owner has no other working factory.
+        if (ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, request.TerritoryId))
         {
-            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (def != null && def.Nation == defenderNation)
-            {
-                defenderFactoryCount++;
-            }
+            return BadRequest("Cannot destroy the last factory of a nation.");
         }
-
-        if (defenderFactoryCount <= 1) return BadRequest("Cannot destroy the last factory of a nation.");
 
         // Execution
         // Remove Armies

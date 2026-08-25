@@ -239,9 +239,15 @@ namespace Imperial2030.Tests
                 // Only 1 factory for Europe
                 var tBerlin = new TerritoryState { TerritoryId = berlinId, GameId = gameId, Controller = Nation.Europe, HasFactory = true };
 
-                var army1 = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = berlinId };
-                var army2 = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = berlinId };
-                var army3 = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = berlinId };
+                // IsHostile: false is not incidental. Unit.IsHostile defaults to TRUE, and three HOSTILE
+                // armies in Europe's only factory province is a board that cannot legally arise: MoveArmy
+                // and MoveFleet have always refused hostile entry into a nation's last unoccupied factory
+                // (Imperial-2030-Rules.pdf p.10), so armies that got here are lying on their sides. They
+                // can still raze the factory - destroying does not require occupying - which is exactly
+                // the case the p.10 exception shields.
+                var army1 = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = berlinId, IsHostile = false };
+                var army2 = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = berlinId, IsHostile = false };
+                var army3 = new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.Russia, UnitType = UnitType.Army, TerritoryId = berlinId, IsHostile = false };
 
                 context.TerritoryStates.Add(tBerlin);
                 context.Units.AddRange(army1, army2, army3);
@@ -1039,6 +1045,113 @@ namespace Imperial2030.Tests
                 .Where(ts => ts.GameId == setup.GameId && ts.TerritoryId == "CaribbeanSea").ToListAsync();
             Assert.Single(caribbeanStates);
             Assert.Equal(Nation.Russia, caribbeanStates[0].Controller);
+        }
+
+        [Fact]
+        public async Task ToggleHostility_CannotBlockadeANationsLastUnoccupiedFactory()
+        {
+            // Imperial-2030-Rules.pdf p.10: "If a nation has only one factory left that is not occupied by
+            // hostile armies (standing upright), the province of this factory may not be entered by hostile
+            // armies. Armies of other nations that enter this province are laid down on their sides."
+            //
+            // MoveArmy, MoveFleet and BotService all enforce this on ENTRY. ToggleHostility did not, so the
+            // protection could be walked straight around: enter peacefully (which is allowed, and is what
+            // the rule forces), then flip the same army upright afterwards. The end state - a hostile army
+            // standing in the nation's last working factory province - is exactly what p.10 forbids, and it
+            // blockades that nation out of production, taxation, factory building and rail.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context); // test user controls Russia; Europe is someone else's
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.CurrentManeuverPhase = ManeuverPhase.Armies;
+
+            // London is a Europe home province, and this is Europe's ONLY factory.
+            context.TerritoryStates.Add(new TerritoryState { GameId = setup.GameId, TerritoryId = "London", HasFactory = true });
+
+            var invader = new Unit
+            {
+                Id = Guid.NewGuid(),
+                GameId = setup.GameId,
+                Nation = Nation.Russia,
+                UnitType = UnitType.Army,
+                TerritoryId = "London",
+                IsHostile = false // arrived peacefully, as the rule requires
+            };
+            context.Units.Add(invader);
+            await context.SaveChangesAsync();
+
+            var controller = GetController(context, setup.UserId);
+
+            // Act
+            var result = await controller.ToggleHostility(setup.GameId, invader.Id);
+
+            // Assert
+            Assert.IsType<BadRequestObjectResult>(result);
+
+            var updated = await GetDbContext(dbName).Units.AsNoTracking().FirstAsync(u => u.Id == invader.Id);
+            Assert.False(updated.IsHostile);
+        }
+
+        [Fact]
+        public async Task DestroyFactory_CannotDestroyTheLastFactoryNotOccupiedByHostileArmies()
+        {
+            // Imperial-2030-Rules.pdf p.10: "Exception: If a nation has only one factory left that has not
+            // been occupied by hostile armies (standing upright), this factory cannot be destroyed."
+            //
+            // The protection counts a nation's UNOCCUPIED factories, not all of them. Destroying does not
+            // require occupying - three armies laid on their sides in the province are enough - so a
+            // nation whose other factories are already blockaded is genuinely down to this one, and it is
+            // the one the rulebook shields.
+            //
+            // Here Europe owns two factories, but Berlin is already held by a hostile Russian army, so
+            // London is Europe's last unoccupied factory and must survive. Counting all factories instead
+            // sees two, decides Europe can spare one, and razes it.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context); // test user controls Russia; London/Berlin are Europe's
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.CurrentManeuverPhase = ManeuverPhase.Armies;
+
+            context.TerritoryStates.AddRange(
+                new TerritoryState { GameId = setup.GameId, TerritoryId = "London", HasFactory = true },
+                new TerritoryState { GameId = setup.GameId, TerritoryId = "Berlin", HasFactory = true });
+
+            // Berlin is blockaded: that factory is already occupied and cannot be taxed or produce.
+            context.Units.Add(new Unit
+            {
+                Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Russia,
+                UnitType = UnitType.Army, TerritoryId = "Berlin", IsHostile = true
+            });
+
+            // Three Russian armies sitting peacefully in London - enough to raze it, per the endpoint's
+            // own rules, and peaceful so London itself is NOT occupied.
+            var razers = new List<Unit>();
+            for (int i = 0; i < ManeuverRules.DestroyFactoryArmyCost; i++)
+            {
+                var army = new Unit
+                {
+                    Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Russia,
+                    UnitType = UnitType.Army, TerritoryId = "London", IsHostile = false
+                };
+                razers.Add(army);
+                context.Units.Add(army);
+            }
+            await context.SaveChangesAsync();
+
+            var controller = GetController(context, setup.UserId);
+
+            // Act
+            var result = await controller.DestroyFactory(setup.GameId,
+                new DestroyFactoryRequest { TerritoryId = "London", UnitIds = razers.Select(u => u.Id).ToList() });
+
+            // Assert
+            Assert.IsType<BadRequestObjectResult>(result);
+
+            var london = await GetDbContext(dbName).TerritoryStates.AsNoTracking()
+                .FirstAsync(ts => ts.GameId == setup.GameId && ts.TerritoryId == "London");
+            Assert.True(london.HasFactory);
         }
 
         [Fact]

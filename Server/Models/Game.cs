@@ -161,22 +161,30 @@ public class Game
             return credits;
         });
 
-        var ranked = this.Players.ToList();
-        ranked.Sort((p1, p2) =>
-        {
-            int scoreDiff = playerScores[p2.Id].CompareTo(playerScores[p1.Id]);
-            if (scoreDiff != 0) return scoreDiff;
-
-            // Tie-breaker: credit sum in nations ranked by power points
-            foreach (var nation in rankedNations)
+        // OrderBy, not List.Sort. Imperial-2030-Rules.pdf p.6's tie-break chain ("the player who has the
+        // higher credit sum in the nation with the most power points ... and so on") can still end in an
+        // absolute tie, and the comparison below then returns 0. List.Sort is an introsort and therefore
+        // UNSTABLE: it may order equal elements differently from one call to the next, so the same
+        // finished game could name a different winner on a replay than it did originally — and
+        // TestImportFromExportedJson asserts WinnerName matches exactly.
+        //
+        // OrderBy is documented as stable, so tied players simply keep their roster order. No winner is
+        // invented for a case the rulebook leaves open; the result is only made repeatable.
+        return this.Players
+            .OrderBy(p => p, Comparer<Player>.Create((p1, p2) =>
             {
-                int creditDiff = playerCredits[p2.Id][nation].CompareTo(playerCredits[p1.Id][nation]);
-                if (creditDiff != 0) return creditDiff;
-            }
+                int scoreDiff = playerScores[p2.Id].CompareTo(playerScores[p1.Id]);
+                if (scoreDiff != 0) return scoreDiff;
 
-            return 0; // Absolute tie
-        });
+                // Tie-breaker: credit sum in nations ranked by power points
+                foreach (var nation in rankedNations)
+                {
+                    int creditDiff = playerCredits[p2.Id][nation].CompareTo(playerCredits[p1.Id][nation]);
+                    if (creditDiff != 0) return creditDiff;
+                }
 
-        return ranked;
+                return 0; // Absolute tie — left to the stable order rather than broken arbitrarily.
+            }))
+            .ToList();
     }
 }
