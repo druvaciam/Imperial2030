@@ -2,6 +2,7 @@ using Imperial2030.Server.Configuration;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Auth;
 using Imperial2030.Shared.Constants;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -83,6 +84,29 @@ public class AuthController : ControllerBase
         }
 
         return BadRequest(new LoginResult { Successful = false, Error = "Invalid login attempt." });
+    }
+
+    /// <summary>
+    /// Confirms the caller's token is still ACCEPTED, not merely unexpired.
+    ///
+    /// The client can only check `exp` itself — it cannot verify a signature — so after the signing key
+    /// is rotated a stale token leaves a user permanently half-logged-in: the header greets them by name
+    /// while the server treats them as anonymous. Normal browsing never reveals it, because the lobby
+    /// list is [AllowAnonymous] and answers 200 with the caller silently unauthenticated, which shows up
+    /// only indirectly as their own games offering "Watch" instead of "Resume" and "My Games Only"
+    /// coming back empty. This endpoint is deliberately [Authorize] so that a token the server no longer
+    /// honours produces a 401, which CustomAuthorizationMessageHandler turns into a clean sign-out.
+    /// </summary>
+    [HttpGet("me")]
+    [Authorize]
+    public IActionResult Me()
+    {
+        return Ok(new CurrentUserDto
+        {
+            UserId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty,
+            UserName = User.Identity?.Name ?? string.Empty,
+            IsGuest = User.IsInRole(GameConstants.GuestRole)
+        });
     }
 
     [HttpPost("guest-login")]

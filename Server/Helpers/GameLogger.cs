@@ -217,14 +217,26 @@ public static class GameLogger
         LogAction(context, game, "Production", nation, playerName, metadata);
     }
 
+    // Interest comes out of the NATIONAL TREASURY, not the controller's pocket (Imperial-2030-Rules.pdf
+    // p.11: "each player who has granted bonds to the nation gets paid interest by the national
+    // treasury"), so there is no player actor to attribute these two to — the nation on the entry says
+    // everything. Logging controllerName here made the line read "Bot Alpha Russia paid 2M interest to
+    // player1", as though Bot Alpha had paid it personally, which is a genuinely different event with
+    // its own entry (LogInvestorPersonallyContributed below).
+    //
+    // controllerName is still taken as a parameter: every call site has it, and the two helpers below
+    // DO need it. Deliberately not applied to LogInvestorPersonallyContributed or LogInvestorUnableToPay —
+    // besides describing real controller outcomes, TcpTrainingServer's reward scan matches those entries
+    // by PlayerName, so re-attributing them would silently disable the personal-contribution and
+    // missed-interest penalties.
     public static void LogInvestorInterestPaid(ApplicationDbContext? context, Game game, Nation nation, string controllerName, int paidAmount, string payeeName)
     {
-        LogAction(context, game, "Investor", nation, controllerName, new InvestorMetadata { Type = "InterestPaid", PaidAmount = paidAmount, PayeeName = payeeName });
+        LogAction(context, game, "Investor", nation, GameConstants.SystemPlayerName, new InvestorMetadata { Type = "InterestPaid", PaidAmount = paidAmount, PayeeName = payeeName });
     }
 
     public static void LogInvestorInterestPartial(ApplicationDbContext? context, Game game, Nation nation, string controllerName, int paidAmount, int expectedAmount, string payeeName)
     {
-        LogAction(context, game, "Investor", nation, controllerName, new InvestorMetadata { Type = "InterestPartial", PaidAmount = paidAmount, ExpectedAmount = expectedAmount, PayeeName = payeeName });
+        LogAction(context, game, "Investor", nation, GameConstants.SystemPlayerName, new InvestorMetadata { Type = "InterestPartial", PaidAmount = paidAmount, ExpectedAmount = expectedAmount, PayeeName = payeeName });
     }
 
     public static void LogInvestorUnableToPay(ApplicationDbContext? context, Game game, Nation nation, string controllerName, int expectedAmount, string payeeName, bool treasuryEmpty, bool missedInterest)

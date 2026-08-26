@@ -1,6 +1,8 @@
 @inherits LayoutComponentBase
 @inject LanguageService LanguageService
 @inject IStringLocalizer<SharedResource> Shared
+@inject HttpClient Http
+@inject IJSRuntime JS
 
 <div class="page">
     <div class="sidebar">
@@ -59,6 +61,35 @@
 </div>
 
 @code {
+    /// <summary>
+    /// Asks the server, once per app load, whether the stored token is still accepted.
+    ///
+    /// CustomAuthenticationStateProvider can only check the token's `exp` claim — it cannot verify a
+    /// signature — so a token signed with a rotated-away key leaves the user half-logged-in: greeted by
+    /// name in the header while the server treats them as anonymous. Nothing surfaces it during normal
+    /// use, because the endpoints the lobby hits are [AllowAnonymous] and answer 200 with the caller
+    /// silently unauthenticated; it shows up only as their own games offering "Watch" instead of
+    /// "Resume", and "My Games Only" listing nothing.
+    ///
+    /// /api/auth/me is [Authorize], so a token the server no longer honours returns 401 here, and
+    /// CustomAuthorizationMessageHandler clears it and redirects to login. Any other failure (offline,
+    /// server down) is deliberately ignored — this must never sign someone out over a transient error.
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        var token = await JS.InvokeAsync<string>("localStorage.getItem", "authToken");
+        if (string.IsNullOrWhiteSpace(token) || token == "null") return;
+
+        try
+        {
+            await Http.GetAsync("api/auth/me");
+        }
+        catch
+        {
+            // Network-level failure, not a rejected session. Leave the user signed in.
+        }
+    }
+
     // Switching language reloads the app (see LanguageService.SetCultureAsync for why that is
     // required rather than preferred), so there is no local state to update here.
     private async Task OnCultureChanged(ChangeEventArgs e)

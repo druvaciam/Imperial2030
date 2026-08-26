@@ -21,7 +21,14 @@
             {
                 <div class="terminal-line">
                     <span class="timestamp">[@action.Timestamp.ToLocalTime().ToString("HH:mm:ss")]</span>
-                    <span class="player">@action.PlayerName</span>
+                    @* GameConstants.SystemPlayerName marks an entry with no human/bot actor — a
+                       consequence computed by the game itself, such as interest paid out of a national
+                       treasury. Printing the sentinel would read as a player called "System" performing
+                       the action; the nation tag beside it already identifies who it concerns. *@
+                    @if (action.PlayerName != GameConstants.SystemPlayerName)
+                    {
+                        <span class="player">@action.PlayerName</span>
+                    }
                     @if (action.Nation.HasValue)
                     {
                         <span class="nation-tag nation-@action.Nation.ToString()?.ToLower()">@Names.Nation(action.Nation.Value)</span>

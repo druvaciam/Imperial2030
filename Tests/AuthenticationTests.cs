@@ -187,7 +187,46 @@ namespace Imperial2030.Tests
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
 
-        private static string ForgeGuestToken(string signingKey)
+        /// <summary>
+        /// The last gap §M11 listed. `ValidateLifetime = true` is configured in Program.cs, but nothing
+        /// proved it was actually enforced end-to-end — and an expired token that still authenticates is
+        /// indistinguishable from a valid one until someone notices sessions never ending.
+        ///
+        /// Signed with the REAL key this host uses, so the only thing wrong with it is the clock. A 401
+        /// here means lifetime validation did the rejecting; a 403 would mean it sailed through to the
+        /// guest authorization check.
+        /// </summary>
+        [Fact]
+        public async Task ExpiredToken_IsRejectedWithUnauthorized()
+        {
+            var client = _factory.CreateClient();
+            var expired = ForgeGuestToken(RealAuthWebApplicationFactory<Program>.TestJwtKey,
+                                          System.DateTime.UtcNow.AddMinutes(-10));
+
+            var response = await WithToken(client, expired).PostAsJsonAsync("/api/games", NewGameRequest());
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        /// <summary>Control for the test above: the same forged token, unexpired, gets through to the
+        /// guest check (403). Without this, a blanket 401 from any forged token would pass the expiry
+        /// test for entirely the wrong reason.</summary>
+        [Fact]
+        public async Task UnexpiredTokenSignedWithTheRealKey_ReachesAuthorization()
+        {
+            var client = _factory.CreateClient();
+            var valid = ForgeGuestToken(RealAuthWebApplicationFactory<Program>.TestJwtKey,
+                                        System.DateTime.UtcNow.AddMinutes(10));
+
+            var response = await WithToken(client, valid).PostAsJsonAsync("/api/games", NewGameRequest());
+
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+
+        private static string ForgeGuestToken(string signingKey) =>
+            ForgeGuestToken(signingKey, System.DateTime.UtcNow.AddDays(1));
+
+        private static string ForgeGuestToken(string signingKey, System.DateTime expires)
         {
             var claims = new[]
             {
@@ -200,7 +239,7 @@ namespace Imperial2030.Tests
                 issuer: "Imperial2030Server",
                 audience: "Imperial2030Client",
                 claims: claims,
-                expires: System.DateTime.UtcNow.AddDays(1),
+                expires: expires,
                 signingCredentials: new Microsoft.IdentityModel.Tokens.SigningCredentials(key, Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256));
             return new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token);
         }

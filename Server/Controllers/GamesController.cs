@@ -1058,14 +1058,19 @@ public class GamesController : ControllerBase
             if (nationState.Treasury >= owedToOthers)
             {
                 nationState.Treasury -= owedToOthers;
-                // Distribute to others
-                foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+                // Distribute to others, one entry per HOLDER rather than per bond. Paying per bond made a
+                // player holding two bonds in this nation show up as two consecutive "paid Nm interest to
+                // X" lines while everyone else got one, which read as though they were being treated
+                // differently — the controller's own payment below has always been logged as a single
+                // combined total. Cash is identical either way; only the reporting changes.
+                foreach (var holderBonds in bonds.Where(b => b.HolderId != controller.Id).GroupBy(b => b.HolderId))
                 {
-                    var holder = game.Players.First(p => p.Id == bond.HolderId);
-                    holder.Cash += bond.Interest;
+                    var holder = game.Players.First(p => p.Id == holderBonds.Key);
+                    int owedToHolder = holderBonds.Sum(b => b.Interest);
+                    holder.Cash += owedToHolder;
                     if (context != null) context.Entry(holder).State = EntityState.Modified;
                     var holderName = holder.GetPlayerName(context);
-                    GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, bond.Interest, holderName);
+                    GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, owedToHolder, holderName);
                 }
 
                 // Pay Controller
@@ -1109,14 +1114,15 @@ public class GamesController : ControllerBase
                 // Distribute to others
                 if (totalForOthers >= owedToOthers)
                 {
-                    // Full payment possible
-                    foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+                    // Full payment possible — grouped per holder for the same reason as the branch above.
+                    foreach (var holderBonds in bonds.Where(b => b.HolderId != controller.Id).GroupBy(b => b.HolderId))
                     {
-                        var holder = game.Players.First(p => p.Id == bond.HolderId);
-                        holder.Cash += bond.Interest;
+                        var holder = game.Players.First(p => p.Id == holderBonds.Key);
+                        int owedToHolder = holderBonds.Sum(b => b.Interest);
+                        holder.Cash += owedToHolder;
                         if (context != null) context.Entry(holder).State = EntityState.Modified;
                         var holderName = holder.GetPlayerName(context);
-                        GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, bond.Interest, holderName);
+                        GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, owedToHolder, holderName);
                     }
                 }
                 else
@@ -1324,7 +1330,6 @@ public class GamesController : ControllerBase
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
-        if (game == null) return NotFound();
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
         if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");

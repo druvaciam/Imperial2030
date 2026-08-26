@@ -125,8 +125,20 @@ public class ManeuverController : ControllerBase
 
         if (currentT == null || destT == null) return BadRequest("Invalid territory definition.");
 
-        if (currentT.Type == TerritoryType.Land && destT.Type == TerritoryType.Land)
-            return BadRequest("Fleets cannot move between inland territories.");
+        // Imperial-2030-Rules.pdf p.8: "After their production or their import, fleets stay in the harbor.
+        // Consequently, their first move is always to the sea region that is adjacent to the harbor. Once
+        // fleets are at sea, they cannot return to a land region."
+        //
+        // So a fleet's destination is always a sea region — leaving its own harbour is the only move that
+        // starts on land, and it still ends at sea. This previously rejected only land-to-land, which let
+        // a fleet sail out of the North Atlantic and into Berlin or London. BotService and
+        // TcpTrainingServer already filter fleet destinations to sea regions; this brings the human
+        // endpoint in line with them and with the rulebook.
+        //
+        // Staying put is handled earlier and is unaffected ("As an alternative, any fleet may stay where
+        // it is.").
+        if (destT.Type != TerritoryType.Sea)
+            return BadRequest("Fleets can only move into sea regions.");
 
         // Execute Move
         var sourceTerritory = unit.TerritoryId;
@@ -170,6 +182,9 @@ public class ManeuverController : ControllerBase
             }
         }
 
+        // Now a no-op for fleets: the destination is always a sea region (checked above), which has no
+        // owning nation, so the helper returns false. Kept rather than deleted so the guard is still in
+        // place if fleets are ever allowed onto land again — it costs one call and states the intent.
         if (request.IsHostile && !willFight
             && ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, request.DestinationId, unit.Id))
         {
