@@ -91,7 +91,7 @@ lines and it converts a silent training corruption into an immediate, obvious fa
 
 ## Client
 
-### C1 — `GameMap.razor` schedules delayed UI updates it can never cancel **[VERIFIED]**
+### C1 — `GameMap.razor` schedules delayed UI updates it can never cancel **[VERIFIED]** — ✅ FIXED
 
 Five sites follow this shape ([GameMap.razor:1696](../Client/Components/GameMap.razor#L1696), 1738,
 1772, 1822, 2788):
@@ -118,7 +118,7 @@ message in WASM. The map re-renders on every poll (every 400 ms during replay), 
 exactly this with `_nationRotationCts` / `_replayPollCts` — the pattern is in the codebase, this
 component just does not use it.
 
-### C2 — A throwing `InvokeAsync` in `GameRoom.DisposeAsync` skips the connection teardown **[INSPECTION]**
+### C2 — A throwing `InvokeAsync` in `GameRoom.DisposeAsync` skips the connection teardown **[INSPECTION]** — ✅ FIXED
 
 [GameRoom.razor](../Client/Pages/GameRoom.razor):
 
@@ -145,7 +145,7 @@ Related, smaller: `Lobby.DisposeAsync` disposes its hub connection but never cal
 `PresenceTracker`'s observer counts rely entirely on `OnDisconnectedAsync` firing. That works, but the
 two pages handle the same lifecycle differently for no stated reason.
 
-### C3 — 16 silent `catch { }` blocks hide malformed action metadata **[VERIFIED]**
+### C3 — 16 silent `catch { }` blocks hide malformed action metadata **[VERIFIED]** — ✅ FIXED
 
 `GameTerminal.razor` renders each log line by deserializing `action.Metadata` into one of ~10 shapes.
 Every one of those is wrapped in a bare `catch { }` — 16 in the file, plus one `catch (TaskCanceledException) { }`
@@ -174,7 +174,7 @@ Extracting the shape dispatch into a small formatter — the way `VueReplayViewe
 already does it — would collapse the duplication, and gives a pure function that is unit-testable
 without mounting a component.
 
-### C4 — User-controlled names rendered as raw HTML, safe only by an undocumented Identity default **[VERIFIED]**
+### C4 — User-controlled names rendered as raw HTML, safe only by an undocumented Identity default **[VERIFIED]** — ✅ FIXED
 
 [GameRoom.razor:136](../Client/Pages/GameRoom.razor#L136) interpolates player names into a localized
 string and renders the result as raw markup:
@@ -401,15 +401,16 @@ Recorded so they are not "tidied" later by someone who does not know why they lo
 **Do first — silent-failure risks**
 
 1. §P1 Assert the observation size in `imperial_env.py` (three lines; prevents silent training corruption).
-2. §C1 Give `GameMap` a `CancellationTokenSource` and `IDisposable`.
-3. §C2 Guard the `InvokeAsync` in `GameRoom.DisposeAsync` so the connection is always disposed.
-4. §C3 Render a visible fallback instead of nothing when metadata fails to parse.
+2. ~~§C1 Give `GameMap` a `CancellationTokenSource` and `IDisposable`~~ — ✅ **done**, via a shared
+   `ScheduleExpiry` helper that replaced all five copies of the pattern.
+3. ~~§C2 Guard the `InvokeAsync` in `GameRoom.DisposeAsync`~~ — ✅ **done**.
+4. ~~§C3 Render a visible fallback when metadata fails to parse~~ — ✅ **done** (`DescribeUnreadableEntry`).
 
 **Then — correctness and hygiene**
 
 5. §F1 HTML-encode interpolated values in the notification emails.
 6. §F2 / §F3 Stop returning `ex.ToString()`; move the admin address to configuration.
-7. §C4 Encode the name arguments at the `MarkupString` site.
+7. ~~§C4 Encode the name arguments at the `MarkupString` site~~ — ✅ **done**.
 8. ~~§S1 Move `GamesController` onto `NotGuestPolicy`~~ — ✅ **done**, with 17 tests pinning both halves.
 9. ~~§S2 Extract the startup maintenance block from `Program.cs`~~ — ✅ **done** (`StartupMaintenance`).
 

@@ -4,6 +4,7 @@
 @inject IStringLocalizer<GameMap> L
 @inject IStringLocalizer<SharedResource> Shared
 @inject DisplayNameLocalizer Names
+@implements IDisposable
 
 <div class="map-container position-relative" style="flex: 1; width: 100%;">
     @if (selectedUnitId.HasValue)
@@ -1585,6 +1586,52 @@
 
     private List<RecentMove> recentMoves = new();
 
+    /// <summary>How long a move/battle/destruction stays highlighted on the map before fading out.</summary>
+    private static readonly TimeSpan RecentEventLifetime = TimeSpan.FromSeconds(10);
+
+    /// <summary>How long the "end phase" control pulses after being prompted.</summary>
+    private static readonly TimeSpan EndPhaseHighlightDuration = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Cancels every pending <see cref="ScheduleExpiry"/> when this component goes away.
+    ///
+    /// Without it each scheduled expiry held a 5-10 second window in which the user could navigate
+    /// away, after which InvokeAsync(StateHasChanged) ran against a disposed component. The work was
+    /// fire-and-forget, so the resulting ObjectDisposedException was unobserved - no log, no error
+    /// boundary. The map re-renders on every poll (every 400ms during replay), so these accumulated.
+    /// </summary>
+    private readonly CancellationTokenSource _expiryCts = new();
+
+    /// <summary>
+    /// Runs <paramref name="expire"/> after <paramref name="delay"/> and re-renders if it changed
+    /// anything, unless the component was disposed first.
+    ///
+    /// <paramref name="expire"/> returns whether it actually removed something - List.Remove's own
+    /// contract - so an entry already swept by the bulk RemoveAll passes costs no extra render.
+    /// </summary>
+    private void ScheduleExpiry(TimeSpan delay, Func<bool> expire)
+    {
+        var token = _expiryCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(delay, token);
+                if (token.IsCancellationRequested) return;
+                if (!expire()) return;
+                await InvokeAsync(StateHasChanged);
+            }
+            catch (OperationCanceledException) { /* component disposed while waiting */ }
+            catch (ObjectDisposedException) { /* renderer torn down between the check and the render */ }
+        });
+    }
+
+    public void Dispose()
+    {
+        _expiryCts.Cancel();
+        _expiryCts.Dispose();
+    }
+
     // Route of the most recent convoy this client initiated, matched onto the RecentMove that the
     // unit-diff subsequently detects (see AttachConvoyRoute).
     private List<string> _lastConvoyVia = new();
@@ -1693,15 +1740,7 @@
                         AttachConvoyRoute(move);
                         recentMoves.Add(move);
                         
-                        _ = Task.Run(async () => 
-                        {
-                            await Task.Delay(10000);
-                            if (recentMoves.Contains(move))
-                            {
-                                recentMoves.Remove(move);
-                                await InvokeAsync(StateHasChanged);
-                            }
-                        });
+                        ScheduleExpiry(RecentEventLifetime, () => recentMoves.Remove(move));
                     }
                 }
             }
@@ -1734,13 +1773,7 @@
                                 };
                                 recentBattles.Add(battle);
                                 
-                                _ = Task.Run(async () => {
-                                    await Task.Delay(10000);
-                                    if (recentBattles.Contains(battle)) {
-                                        recentBattles.Remove(battle);
-                                        await InvokeAsync(StateHasChanged);
-                                    }
-                                });
+                                ScheduleExpiry(RecentEventLifetime, () => recentBattles.Remove(battle));
                             }
                         }
                         catch
@@ -1768,13 +1801,7 @@
                                 };
                                 recentFactoryDestructions.Add(destruction);
                                 
-                                _ = Task.Run(async () => {
-                                    await Task.Delay(10000);
-                                    if (recentFactoryDestructions.Contains(destruction)) {
-                                        recentFactoryDestructions.Remove(destruction);
-                                        await InvokeAsync(StateHasChanged);
-                                    }
-                                });
+                                ScheduleExpiry(RecentEventLifetime, () => recentFactoryDestructions.Remove(destruction));
                             }
                         }
                         catch
@@ -1818,13 +1845,7 @@
                                     AttachConvoyRoute(m, meta.RouteVia);
                                     recentMoves.Add(m);
                                     
-                                    _ = Task.Run(async () => {
-                                        await Task.Delay(10000);
-                                        if (recentMoves.Contains(m)) {
-                                            recentMoves.Remove(m);
-                                            await InvokeAsync(StateHasChanged);
-                                        }
-                                    });
+                                    ScheduleExpiry(RecentEventLifetime, () => recentMoves.Remove(m));
                                 }
                             }
                         }
@@ -2783,12 +2804,7 @@
     {
         isHighlightingEndPhase = true;
         StateHasChanged();
-        _ = Task.Run(async () =>
-        {
-            await Task.Delay(5000);
-            isHighlightingEndPhase = false;
-            await InvokeAsync(StateHasChanged);
-        });
+        ScheduleExpiry(EndPhaseHighlightDuration, () => { isHighlightingEndPhase = false; return true; });
     }
 
 

@@ -77,7 +77,10 @@
                                 }
                             }
                         }
-                        catch { /* ignore parsing errors for older logs */ }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "Taxation" && !string.IsNullOrEmpty(action.Metadata))
                     {
@@ -93,7 +96,10 @@
                                 <span class="message">@L["CollectedTaxes", meta.TotalRevenue, soldiersPayStr, tGainStr, bonusStr, powerStr]</span>
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "Import" && !string.IsNullOrEmpty(action.Metadata))
                     {
@@ -109,7 +115,10 @@
                                 <span class="message">@L["ImportedUnits", meta.ImportedCount, string.Join(", ", locationNames)]</span>
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "EndTurn")
                     {
@@ -139,7 +148,10 @@
                                 }
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "AllPartiesPeace" && !string.IsNullOrEmpty(action.Metadata))
                     {
@@ -151,7 +163,10 @@
                                 <span class="message">@L["AllPartiesPeace", Names.Territory(meta.TerritoryId)]</span>
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "Move" && !string.IsNullOrEmpty(action.Metadata))
                     {
@@ -165,7 +180,10 @@
                                 <span class="message">@L["RondelMoved", targetStr, fromStr, meta.Cost]</span>
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if ((action.ActionType == "MoveFleet" || action.ActionType == "MoveArmy") && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
                     {
@@ -199,7 +217,10 @@
                                 }
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "Battle" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
                     {
@@ -219,7 +240,10 @@
                                 }
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "FlagPlacement" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
                     {
@@ -239,7 +263,10 @@
                                 }
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "Factory" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
                     {
@@ -251,7 +278,10 @@
                                 <span class="message">@L["BuiltFactory", Names.Territory(meta.TerritoryId)]</span>
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "DestroyFactory" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
                     {
@@ -263,7 +293,10 @@
                                 <span class="message">@L["DestroyedFactory", Names.Nation(action.Nation), Names.Territory(meta.TerritoryId)]</span>
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "SwissBankResponse" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
                     {
@@ -282,7 +315,10 @@
                                 }
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "BattleResponse" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
                     {
@@ -294,7 +330,10 @@
                                 <span class="message">@L["BattleResponsePeace", LocalizeNationList(meta.RespondingNationStr), Names.Nation(meta.AggressorNation), Names.Territory(meta.TerritoryId)]</span>
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "ToggleHostility" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
                     {
@@ -308,7 +347,10 @@
                                 <span class="message">@L[$"HostilityToggled_{unitSuffix}", Names.Territory(meta.TerritoryId), statusStr]</span>
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "Production" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
                     {
@@ -322,7 +364,10 @@
                                 <span class="message">@L["ProducedUnits", meta.ProducedCount, string.Join(", ", locationNames)]</span>
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     @if (action.ActionType == "JoinGame")
                     {
@@ -354,7 +399,10 @@
                                 <span class="message">@L["ReceivedInvestorBonus", meta.PaidAmount]</span>
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                     else if (action.ActionType == "Investor" && !string.IsNullOrEmpty(action.Metadata))
                     {
@@ -388,7 +436,10 @@
                                 }
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
+                        }
                     }
                 </div>
             }
@@ -401,6 +452,27 @@
     public List<GameActionDto> Actions { get; set; } = new();
 
     private ElementReference terminalBodyRef;
+
+    /// <summary>
+    /// Renders a visible marker for a log entry whose metadata could not be read, and reports the
+    /// reason to the browser console.
+    ///
+    /// Every metadata branch above used to end in a bare `catch { }`, so a shape mismatch produced a
+    /// line with a timestamp, a nation tag and no message at all — nothing logged, nothing to tell a
+    /// blank line from an entry that legitimately has none. That matters more here than it would
+    /// elsewhere: this mapping is what CLAUDE.md calls the riskiest port, replay and import both depend
+    /// on these shapes round-tripping, and a divergence is exactly what this code would otherwise hide.
+    ///
+    /// Deliberately not localized. It is a diagnostic for a should-never-happen case, and inventing a
+    /// resource key would mean adding it to every .resx (LocalizationResourceTests enforces parity) to
+    /// say something only a developer will act on.
+    /// </summary>
+    private static string DescribeUnreadableEntry(GameActionDto action, Exception ex)
+    {
+        Console.Error.WriteLine(
+            $"[GameTerminal] Could not render '{action.ActionType}' entry {action.Id}: {ex.GetType().Name}: {ex.Message}");
+        return $"[unreadable {action.ActionType} entry]";
+    }
 
     /// <summary>
     /// Localizes a comma-joined list of nation names that the server pre-composed into the action
