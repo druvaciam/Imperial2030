@@ -86,9 +86,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<ActionResult<GameDto>> CreateGame([FromBody] CreateGameRequest req)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -140,9 +140,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("{gameId}/join")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> JoinGame(Guid gameId, [FromBody] JoinGameRequest? req)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -182,9 +182,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("{gameId}/leave")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> LeaveGame(Guid gameId)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -273,9 +273,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpDelete("{gameId}")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> DeleteGame(Guid gameId)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
@@ -554,9 +554,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("import")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<ActionResult<GameDto>> ImportGame([FromBody] GameExportDto import)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -906,9 +906,9 @@ public class GamesController : ControllerBase
     private IReadOnlyList<string> GetAvailableBotTypes() => _botTypeCatalog.Available;
 
     [HttpPost("{gameId}/add-bot")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> AddBot(Guid gameId, [FromQuery] string? botType = null)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -952,9 +952,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("{gameId}/remove-bot/{playerId}")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> RemoveBot(Guid gameId, Guid playerId)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -975,9 +975,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("{gameId}/start")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> StartGame(Guid gameId)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 

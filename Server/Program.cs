@@ -279,46 +279,9 @@ app.MapFallbackToFile("index.html");
 
 using (var scope = app.Services.CreateScope())
 {
-    var services = scope.ServiceProvider;
-    try
-    {
-        await Imperial2030.Server.Data.DbSeeder.SeedAsync(services);
-        var logger = services.GetRequiredService<ILogger<Program>>();
-        var dbContext = services.GetRequiredService<Imperial2030.Server.Data.ApplicationDbContext>();
-
-        var twoWeeksAgo = DateTime.UtcNow.AddDays(-14);
-        var statuses = new[] { GameStatus.Lobby, GameStatus.InProgress };
-        var oldGames = await dbContext.Games
-            .Where(g => statuses.Contains(g.Status) && g.CreatedAt < twoWeeksAgo)
-            .ToListAsync();
-        
-        if (oldGames.Any())
-        {
-            dbContext.Games.RemoveRange(oldGames);
-            await dbContext.SaveChangesAsync();
-            logger.LogInformation($"Cleaned up {oldGames.Count} old in-progress/lobby games created before {twoWeeksAgo}.");
-        }
-
-        var finishedGamesWithoutWinner = await dbContext.Games
-            .Where(g => g.Status == GameStatus.Finished && (g.WinnerName == null || g.WinnerName == ""))
-            .ToListAsync();
-
-        if (finishedGamesWithoutWinner.Any())
-        {
-            logger.LogInformation($"Backfilling WinnerName for {finishedGamesWithoutWinner.Count} finished games...");
-            
-            foreach (var g in finishedGamesWithoutWinner)
-            {
-                await Imperial2030.Server.Helpers.GameHelper.SetWinnerNameAsync(g, dbContext);
-            }
-            await dbContext.SaveChangesAsync();
-        }
-    }
-    catch (Exception ex)
-    {
-        var logger = services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred creating the DB or cleaning up old games.");
-    }
+    await Imperial2030.Server.Data.StartupMaintenance.RunAsync(
+        scope.ServiceProvider,
+        scope.ServiceProvider.GetRequiredService<ILogger<Program>>());
 }
 
 app.Run();
