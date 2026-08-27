@@ -38,7 +38,27 @@ builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Im
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.RandomBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.BotService>();
 builder.Services.AddScoped<Imperial2030.Server.Services.GameReplayService>();
-builder.Services.AddSingleton<Imperial2030.Server.Services.ReplaySessionManager>();
+// Caps are bound from configuration so an operator can retune them (or open them back up) with an
+// environment variable and a restart, rather than a rebuild and redeploy. That matters because the
+// failure mode is user-visible: too low a per-caller cap refuses real people with "You already have
+// the maximum number of replay sessions open". Omitted keys keep the defaults on the class.
+builder.Services.AddSingleton(sp =>
+{
+    var manager = new Imperial2030.Server.Services.ReplaySessionManager(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Imperial2030.Server.Services.ReplaySessionManager>>());
+
+    var configured = builder.Configuration.GetValue<int?>("Replay:MaxConcurrentSessions");
+    if (configured is > 0) manager.MaxConcurrentSessions = configured.Value;
+
+    var perOwner = builder.Configuration.GetValue<int?>("Replay:MaxSessionsPerOwner");
+    if (perOwner is > 0) manager.MaxSessionsPerOwner = perOwner.Value;
+
+    var idleMinutes = builder.Configuration.GetValue<int?>("Replay:IdleTimeoutMinutes");
+    if (idleMinutes is > 0) manager.IdleTimeout = TimeSpan.FromMinutes(idleMinutes.Value);
+
+    return manager;
+});
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 var isTrainingMode = args.Contains("--training");

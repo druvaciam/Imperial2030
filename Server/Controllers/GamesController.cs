@@ -781,7 +781,36 @@ public class GamesController : ControllerBase
     /// attacker a fresh budget per request. Same trade-off and the same reverse-proxy caveat as the auth
     /// rate limiter; see AuthSecurity.
     /// </summary>
-    private string ReplayOwnerKey() => HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    private string ReplayOwnerKey() =>
+        ResolveReplayOwnerKey(User, HttpContext?.Connection.RemoteIpAddress?.ToString());
+
+    /// <summary>
+    /// Identifies a caller for per-caller replay capacity.
+    ///
+    /// Prefers the authenticated identity, falling back to the transport-level remote address only when
+    /// there is none. Keying on the address alone was wrong in deployment: behind a reverse proxy that
+    /// does not rewrite the connection address (nginx on the VPS), every caller collapses into ONE owner
+    /// and shares a single five-session budget — a signed-in user was refused with "You already have the
+    /// maximum number of replay sessions open" because unrelated traffic had consumed it.
+    ///
+    /// An identity is safe to trust here in a way a header is not: the server minted and signature-checked
+    /// the token it came from, whereas X-Forwarded-For is attacker-controlled and honouring it would hand
+    /// out a fresh budget per request. Guests carry a token too, so they are keyed per guest rather than
+    /// lumped together.
+    ///
+    /// Genuinely anonymous callers (the Vue viewer, which sends no token) still share one bucket per
+    /// address, and therefore one bucket in total behind a proxy. That is deliberate: an unauthenticated
+    /// flood is precisely what the per-caller cap exists to blunt, and ReplaySessionManager's global
+    /// MaxConcurrentSessions is the backstop that actually protects the process. The prefixes keep the two
+    /// namespaces distinct so a user id shaped like an address cannot land in that address's bucket.
+    /// </summary>
+    internal static string ResolveReplayOwnerKey(System.Security.Claims.ClaimsPrincipal? user, string? remoteAddress)
+    {
+        var userId = user?.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!string.IsNullOrEmpty(userId)) return $"user:{userId}";
+
+        return $"ip:{remoteAddress ?? "unknown"}";
+    }
 
     private ObjectResult ReplayCapacityResponse(Imperial2030.Server.Services.ReplayAdmission admission)
     {
