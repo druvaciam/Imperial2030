@@ -110,14 +110,27 @@ public static class GameLogger
         LogAction(context, game, "DestroyFactory", nation, playerName, new ActionMetadata { TerritoryId = territoryId });
     }
 
+    // Logged with a null action Nation, while the forced nation stays in the metadata.
+    //
+    // Everywhere else Nation means "the nation this player is acting AS", and GameTerminal renders it as
+    // a tag right after the player's name. Passing the nation being *forced* therefore read as ownership:
+    // "Bot Charlie (RL-3) Europe chose to PASS on forcing Europe to stop" sat directly above
+    // "Bot Echo (Default) Europe moved to Import", making it look like two players owned Europe. Only
+    // Bot Echo did; Charlie is a Swiss Bank holder answering a prompt about someone else's nation.
+    //
+    // It is definitionally wrong as well as confusing: a Swiss Bank holder controls zero nations
+    // (Imperial-2030-Rules.pdf p.12, "If a player does not control any government, he gets a Swiss Bank
+    // instead"), so there is no nation they could be acting as. Nothing reads this field for these
+    // entries either - GameReplayService resolves the actor by PlayerName for SwissBankResponse and
+    // replays the action as a no-op, and the terminal builds the message from metadata.Nation.
     public static void LogSwissBankForceStop(ApplicationDbContext? context, Game game, Nation nation, string playerName)
     {
-        LogAction(context, game, "SwissBankResponse", nation, playerName, new SwissBankResponseMetadata { IsForceStop = true, Nation = nation });
+        LogAction(context, game, "SwissBankResponse", null, playerName, new SwissBankResponseMetadata { IsForceStop = true, Nation = nation });
     }
 
     public static void LogSwissBankPass(ApplicationDbContext? context, Game game, Nation nation, string playerName)
     {
-        LogAction(context, game, "SwissBankResponse", nation, playerName, new SwissBankResponseMetadata { IsForceStop = false, Nation = nation });
+        LogAction(context, game, "SwissBankResponse", null, playerName, new SwissBankResponseMetadata { IsForceStop = false, Nation = nation });
     }
 
     public static void LogBattleResponsePeace(ApplicationDbContext? context, Game game, Nation respondingNation, Nation aggressorNation, string territoryName, string playerName)
