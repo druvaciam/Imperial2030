@@ -1155,6 +1155,76 @@ namespace Imperial2030.Tests
         }
 
         [Fact]
+        public async Task MoveFleet_CannotLeaveTheSeaForALandRegion()
+        {
+            // Imperial-2030-Rules.pdf p.8: "After their production or their import, fleets stay in the
+            // harbor. Consequently, their first move is always to the sea region that is adjacent to the
+            // harbor. Once fleets are at sea, they cannot return to a land region."
+            //
+            // MoveFleet only rejected land-to-land, so a fleet at sea could sail into any adjacent land
+            // region - including another nation's home province, since Berlin and London both border the
+            // North Atlantic. BotService and TcpTrainingServer have always filtered fleet destinations to
+            // sea regions; only the human endpoint did not.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context); // test user controls Russia
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.CurrentManeuverPhase = ManeuverPhase.Fleets;
+
+            var fleet = new Unit
+            {
+                Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Russia,
+                UnitType = UnitType.Fleet, TerritoryId = "NorthAtlantic"
+            };
+            context.Units.Add(fleet);
+            await context.SaveChangesAsync();
+
+            var controller = GetController(context, setup.UserId);
+
+            // Act: Berlin is a Europe home province, and it borders the North Atlantic.
+            var result = await controller.MoveFleet(setup.GameId,
+                new MoveUnitRequest { UnitId = fleet.Id, DestinationId = "Berlin", IsHostile = true });
+
+            // Assert
+            Assert.IsType<BadRequestObjectResult>(result);
+
+            var unmoved = await GetDbContext(dbName).Units.AsNoTracking().FirstAsync(u => u.Id == fleet.Id);
+            Assert.Equal("NorthAtlantic", unmoved.TerritoryId);
+        }
+
+        [Fact]
+        public async Task MoveFleet_StillLeavesItsOwnHarbourForTheAdjacentSea()
+        {
+            // The other half of p.8: a freshly produced fleet sits in its harbour - a LAND region - and
+            // its first move must still be allowed. Rejecting every land-touching move would strand it.
+            string dbName = Guid.NewGuid().ToString();
+            var context = GetDbContext(dbName);
+            var setup = await SetupGame(context);
+
+            var game = await context.Games.FirstAsync(g => g.Id == setup.GameId);
+            game.CurrentManeuverPhase = ManeuverPhase.Fleets;
+
+            var fleet = new Unit
+            {
+                Id = Guid.NewGuid(), GameId = setup.GameId, Nation = Nation.Russia,
+                UnitType = UnitType.Fleet, TerritoryId = "Murmansk" // Russia's own harbour
+            };
+            context.Units.Add(fleet);
+            await context.SaveChangesAsync();
+
+            var controller = GetController(context, setup.UserId);
+
+            var result = await controller.MoveFleet(setup.GameId,
+                new MoveUnitRequest { UnitId = fleet.Id, DestinationId = "NorthAtlantic" });
+
+            Assert.IsType<OkResult>(result);
+
+            var moved = await GetDbContext(dbName).Units.AsNoTracking().FirstAsync(u => u.Id == fleet.Id);
+            Assert.Equal("NorthAtlantic", moved.TerritoryId);
+        }
+
+        [Fact]
         public async Task NextPhase_WhenTheHandlerThrows_DoesNotReturnExceptionDetailToTheClient()
         {
             // NextPhase's catch-all used to `return StatusCode(500, ex.Message)`, handing the caller raw

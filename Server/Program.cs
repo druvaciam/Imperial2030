@@ -38,7 +38,27 @@ builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Im
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.RandomBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.BotService>();
 builder.Services.AddScoped<Imperial2030.Server.Services.GameReplayService>();
-builder.Services.AddSingleton<Imperial2030.Server.Services.ReplaySessionManager>();
+// Caps are bound from configuration so an operator can retune them (or open them back up) with an
+// environment variable and a restart, rather than a rebuild and redeploy. That matters because the
+// failure mode is user-visible: too low a per-caller cap refuses real people with "You already have
+// the maximum number of replay sessions open". Omitted keys keep the defaults on the class.
+builder.Services.AddSingleton(sp =>
+{
+    var manager = new Imperial2030.Server.Services.ReplaySessionManager(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Imperial2030.Server.Services.ReplaySessionManager>>());
+
+    var configured = builder.Configuration.GetValue<int?>("Replay:MaxConcurrentSessions");
+    if (configured is > 0) manager.MaxConcurrentSessions = configured.Value;
+
+    var perOwner = builder.Configuration.GetValue<int?>("Replay:MaxSessionsPerOwner");
+    if (perOwner is > 0) manager.MaxSessionsPerOwner = perOwner.Value;
+
+    var idleMinutes = builder.Configuration.GetValue<int?>("Replay:IdleTimeoutMinutes");
+    if (idleMinutes is > 0) manager.IdleTimeout = TimeSpan.FromMinutes(idleMinutes.Value);
+
+    return manager;
+});
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 var isTrainingMode = args.Contains("--training");
@@ -259,46 +279,9 @@ app.MapFallbackToFile("index.html");
 
 using (var scope = app.Services.CreateScope())
 {
-    var services = scope.ServiceProvider;
-    try
-    {
-        await Imperial2030.Server.Data.DbSeeder.SeedAsync(services);
-        var logger = services.GetRequiredService<ILogger<Program>>();
-        var dbContext = services.GetRequiredService<Imperial2030.Server.Data.ApplicationDbContext>();
-
-        var twoWeeksAgo = DateTime.UtcNow.AddDays(-14);
-        var statuses = new[] { GameStatus.Lobby, GameStatus.InProgress };
-        var oldGames = await dbContext.Games
-            .Where(g => statuses.Contains(g.Status) && g.CreatedAt < twoWeeksAgo)
-            .ToListAsync();
-        
-        if (oldGames.Any())
-        {
-            dbContext.Games.RemoveRange(oldGames);
-            await dbContext.SaveChangesAsync();
-            logger.LogInformation($"Cleaned up {oldGames.Count} old in-progress/lobby games created before {twoWeeksAgo}.");
-        }
-
-        var finishedGamesWithoutWinner = await dbContext.Games
-            .Where(g => g.Status == GameStatus.Finished && (g.WinnerName == null || g.WinnerName == ""))
-            .ToListAsync();
-
-        if (finishedGamesWithoutWinner.Any())
-        {
-            logger.LogInformation($"Backfilling WinnerName for {finishedGamesWithoutWinner.Count} finished games...");
-            
-            foreach (var g in finishedGamesWithoutWinner)
-            {
-                await Imperial2030.Server.Helpers.GameHelper.SetWinnerNameAsync(g, dbContext);
-            }
-            await dbContext.SaveChangesAsync();
-        }
-    }
-    catch (Exception ex)
-    {
-        var logger = services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred creating the DB or cleaning up old games.");
-    }
+    await Imperial2030.Server.Data.StartupMaintenance.RunAsync(
+        scope.ServiceProvider,
+        scope.ServiceProvider.GetRequiredService<ILogger<Program>>());
 }
 
 app.Run();

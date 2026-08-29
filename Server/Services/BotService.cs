@@ -73,11 +73,23 @@ public class BotService
     {
         _ = Task.Run(async () =>
         {
-            if (!SkipDelays && delayMs > 0)
+            try
             {
-                await Task.Delay(delayMs);
+                if (!SkipDelays && delayMs > 0)
+                {
+                    await Task.Delay(delayMs);
+                }
+                await TryPlayBotTurnAsync(gameId);
             }
-            await TryPlayBotTurnAsync(gameId);
+            catch (Exception ex)
+            {
+                // Nothing awaits this task, so an exception escaping here becomes an
+                // UnobservedTaskException: raised only when the task is garbage collected, long after the
+                // fact, and swallowed by default. Observed here instead, with the game it belongs to —
+                // otherwise a bot that dies mid-turn is indistinguishable from one that had nothing to do,
+                // which is the same silent-stall symptom the wakeup latch above exists to prevent.
+                _logger.LogError(ex, "Background bot turn failed for game {GameId}", gameId);
+            }
         });
     }
 
@@ -254,11 +266,6 @@ public class BotService
         catch (ObjectDisposedException)
         {
             // Ignore during application shutdown or test teardown
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "TryPlayBotTurnAsync failed");
-            throw;
         }
         finally
         {

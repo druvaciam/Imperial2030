@@ -30,7 +30,8 @@ Steps to Run:
          "SMTP_PORT": "587",
          "SMTP_USERNAME": "your-smtp-username",
          "SMTP_PASSWORD": "your-smtp-password",
-         "SMTP_FROM": "notifications@imperial2030.com"
+         "SMTP_FROM": "notifications@imperial2030.com",
+         "ADMIN_EMAIL": "you@example.com"
        }
      }
 
@@ -74,7 +75,24 @@ In the Azure Portal (Function App -> Configuration -> Application settings) or v
     SMTP_PORT="587" \
     SMTP_USERNAME="your-smtp-user" \
     SMTP_PASSWORD="your-smtp-password" \
-    SMTP_FROM="notifications@imperial2030.com"
+    SMTP_FROM="notifications@imperial2030.com" \
+    ADMIN_EMAIL="you@example.com"
+
+  ADMIN_EMAIL receives a copy of every game-started / game-finished notification. It used to be a
+  personal address compiled into the binary; it is now configuration like everything else here. Leave
+  it unset to disable the admin copy entirely - players are still notified, and the function logs a
+  warning rather than failing.
+
+  IMPORTANT: `local.settings.json` is NEVER deployed - it is git-ignored and used only by
+  `func start` on your machine. Every value above must be set separately as an Azure Application
+  Setting, or the deployed function will run without it. Adding a key to the local file does not
+  put it in Azure.
+
+  Verify what the deployed app actually has:
+    az functionapp config appsettings list --name <FUNCTION_APP_NAME> --resource-group <RESOURCE_GROUP> --output table
+
+  Application settings apply immediately (the app restarts on change), so they can be set before or
+  after `func azure functionapp publish` - order does not matter.
 
 In Server App Settings (e.g. on Azure App Service or Linux VPS):
   "AzureFunctionNotificationUrl": "https://<FUNCTION_APP_NAME>.azurewebsites.net",

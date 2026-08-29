@@ -86,9 +86,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<ActionResult<GameDto>> CreateGame([FromBody] CreateGameRequest req)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -140,9 +140,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("{gameId}/join")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> JoinGame(Guid gameId, [FromBody] JoinGameRequest? req)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -182,9 +182,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("{gameId}/leave")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> LeaveGame(Guid gameId)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -273,9 +273,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpDelete("{gameId}")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> DeleteGame(Guid gameId)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
@@ -554,9 +554,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("import")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<ActionResult<GameDto>> ImportGame([FromBody] GameExportDto import)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -781,7 +781,36 @@ public class GamesController : ControllerBase
     /// attacker a fresh budget per request. Same trade-off and the same reverse-proxy caveat as the auth
     /// rate limiter; see AuthSecurity.
     /// </summary>
-    private string ReplayOwnerKey() => HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    private string ReplayOwnerKey() =>
+        ResolveReplayOwnerKey(User, HttpContext?.Connection.RemoteIpAddress?.ToString());
+
+    /// <summary>
+    /// Identifies a caller for per-caller replay capacity.
+    ///
+    /// Prefers the authenticated identity, falling back to the transport-level remote address only when
+    /// there is none. Keying on the address alone was wrong in deployment: behind a reverse proxy that
+    /// does not rewrite the connection address (nginx on the VPS), every caller collapses into ONE owner
+    /// and shares a single five-session budget — a signed-in user was refused with "You already have the
+    /// maximum number of replay sessions open" because unrelated traffic had consumed it.
+    ///
+    /// An identity is safe to trust here in a way a header is not: the server minted and signature-checked
+    /// the token it came from, whereas X-Forwarded-For is attacker-controlled and honouring it would hand
+    /// out a fresh budget per request. Guests carry a token too, so they are keyed per guest rather than
+    /// lumped together.
+    ///
+    /// Genuinely anonymous callers (the Vue viewer, which sends no token) still share one bucket per
+    /// address, and therefore one bucket in total behind a proxy. That is deliberate: an unauthenticated
+    /// flood is precisely what the per-caller cap exists to blunt, and ReplaySessionManager's global
+    /// MaxConcurrentSessions is the backstop that actually protects the process. The prefixes keep the two
+    /// namespaces distinct so a user id shaped like an address cannot land in that address's bucket.
+    /// </summary>
+    internal static string ResolveReplayOwnerKey(System.Security.Claims.ClaimsPrincipal? user, string? remoteAddress)
+    {
+        var userId = user?.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!string.IsNullOrEmpty(userId)) return $"user:{userId}";
+
+        return $"ip:{remoteAddress ?? "unknown"}";
+    }
 
     private ObjectResult ReplayCapacityResponse(Imperial2030.Server.Services.ReplayAdmission admission)
     {
@@ -877,9 +906,9 @@ public class GamesController : ControllerBase
     private IReadOnlyList<string> GetAvailableBotTypes() => _botTypeCatalog.Available;
 
     [HttpPost("{gameId}/add-bot")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> AddBot(Guid gameId, [FromQuery] string? botType = null)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -923,9 +952,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("{gameId}/remove-bot/{playerId}")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> RemoveBot(Guid gameId, Guid playerId)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -946,9 +975,9 @@ public class GamesController : ControllerBase
     }
 
     [HttpPost("{gameId}/start")]
+    [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> StartGame(Guid gameId)
     {
-        if (User.IsInRole(GameConstants.GuestRole)) return Forbid();
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -1058,14 +1087,19 @@ public class GamesController : ControllerBase
             if (nationState.Treasury >= owedToOthers)
             {
                 nationState.Treasury -= owedToOthers;
-                // Distribute to others
-                foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+                // Distribute to others, one entry per HOLDER rather than per bond. Paying per bond made a
+                // player holding two bonds in this nation show up as two consecutive "paid Nm interest to
+                // X" lines while everyone else got one, which read as though they were being treated
+                // differently — the controller's own payment below has always been logged as a single
+                // combined total. Cash is identical either way; only the reporting changes.
+                foreach (var holderBonds in bonds.Where(b => b.HolderId != controller.Id).GroupBy(b => b.HolderId))
                 {
-                    var holder = game.Players.First(p => p.Id == bond.HolderId);
-                    holder.Cash += bond.Interest;
+                    var holder = game.Players.First(p => p.Id == holderBonds.Key);
+                    int owedToHolder = holderBonds.Sum(b => b.Interest);
+                    holder.Cash += owedToHolder;
                     if (context != null) context.Entry(holder).State = EntityState.Modified;
                     var holderName = holder.GetPlayerName(context);
-                    GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, bond.Interest, holderName);
+                    GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, owedToHolder, holderName);
                 }
 
                 // Pay Controller
@@ -1109,14 +1143,15 @@ public class GamesController : ControllerBase
                 // Distribute to others
                 if (totalForOthers >= owedToOthers)
                 {
-                    // Full payment possible
-                    foreach (var bond in bonds.Where(b => b.HolderId != controller.Id))
+                    // Full payment possible — grouped per holder for the same reason as the branch above.
+                    foreach (var holderBonds in bonds.Where(b => b.HolderId != controller.Id).GroupBy(b => b.HolderId))
                     {
-                        var holder = game.Players.First(p => p.Id == bond.HolderId);
-                        holder.Cash += bond.Interest;
+                        var holder = game.Players.First(p => p.Id == holderBonds.Key);
+                        int owedToHolder = holderBonds.Sum(b => b.Interest);
+                        holder.Cash += owedToHolder;
                         if (context != null) context.Entry(holder).State = EntityState.Modified;
                         var holderName = holder.GetPlayerName(context);
-                        GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, bond.Interest, holderName);
+                        GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, owedToHolder, holderName);
                     }
                 }
                 else
@@ -1324,7 +1359,6 @@ public class GamesController : ControllerBase
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
-        if (game == null) return NotFound();
         if (game == null) return NotFound();
         if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
         if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");

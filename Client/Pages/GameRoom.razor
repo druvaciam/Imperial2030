@@ -132,7 +132,16 @@ else
                         }
                         else
                         {
-                            var respondersNames = game.Players.Where(p => game.PendingSwissBankResponders.Contains(p.Id)).Select(p => p.UserName);
+                            @* HTML-encoded because the result is rendered as a MarkupString below, which
+                               bypasses Blazor's own encoding. The resource string legitimately contains
+                               markup; these names do not. Identity's default AllowedUserNameCharacters
+                               happens to exclude < and >, but nothing here should depend on a default set
+                               in Program.cs - loosening it (to allow spaces or non-Latin names) must not
+                               silently turn this into stored XSS. Nation names above are enum-driven and
+                               need no encoding. *@
+                            var respondersNames = game.Players
+                                .Where(p => game.PendingSwissBankResponders.Contains(p.Id))
+                                .Select(p => System.Net.WebUtility.HtmlEncode(p.UserName));
                                         <p class="small mb-0">@((MarkupString)L["Swiss_Waiting", string.Join(", ", respondersNames)].Value)</p>
                                         <div class="spinner-border spinner-border-sm text-info mt-2" role="status">
                                             <span class="visually-hidden">@Shared["Common_Loading"]</span>
@@ -2706,7 +2715,13 @@ else
 
         if (hubConnection is not null)
         {
-            await hubConnection.InvokeAsync("LeaveGameGroup", GameId.ToString(), MyPlayer == null);
+            // Leaving the group is best-effort; disposing the connection is not. InvokeAsync throws when
+            // the connection has already dropped — the ordinary case when navigating away, and certain on
+            // network loss — and an unguarded throw here skipped DisposeAsync entirely, leaking the
+            // connection. Same reasoning as the replay-stop call above, which was already guarded.
+            try { await hubConnection.InvokeAsync("LeaveGameGroup", GameId.ToString(), MyPlayer == null); }
+            catch { /* already disconnected: OnDisconnectedAsync cleans up presence server-side */ }
+
             await hubConnection.DisposeAsync();
         }
     }
