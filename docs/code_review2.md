@@ -216,7 +216,7 @@ prototype already demonstrates the split.
 
 ## RL pipeline (`python_rl`)
 
-### P1 — Rule #17's append-only guarantee is enforced on the C# side only **[VERIFIED]**
+### P1 — Rule #17's append-only guarantee is enforced on the C# side only **[VERIFIED]** — ✅ FIXED
 
 `.agents/AGENTS.md` rule #17 requires state-vector changes to be *append-only*, with a size guard at
 ONNX inference so older models keep running real inference. That guard exists in `RLBotStrategy`. The
@@ -249,7 +249,7 @@ Better still, have the `reset` response carry `stateSize` and `actionSize` from 
 assert against those, removing the second source of truth entirely. Worth adding to rule #17 itself,
 since the rule as written only mentions the C#-side guard.
 
-### P2 — The reconnect retry re-sends a step for a session the server has already discarded **[INSPECTION]**
+### P2 — The reconnect retry re-sends a step for a session the server has already discarded **[INSPECTION]** — ✅ FIXED
 
 `ImperialEnv._send_receive` catches a dropped connection, reconnects, and replays the same payload:
 
@@ -281,7 +281,7 @@ guaranteed-useless work.
 
 ## Azure Functions (`Imperial2030.Functions`)
 
-### F1 — Game and player names are interpolated into HTML email without encoding **[INSPECTION]**
+### F1 — Game and player names are interpolated into HTML email without encoding **[INSPECTION]** — ✅ FIXED
 
 `GameNotifications` builds every email by string interpolation:
 
@@ -305,7 +305,7 @@ from your server.
 **Action:** `System.Net.WebUtility.HtmlEncode` every interpolated value. The surrounding markup is
 developer-authored; only the data needs encoding.
 
-### F2 — Full exception text returned to the caller
+### F2 — Full exception text returned to the caller — ✅ FIXED
 
 Both functions end with `response.WriteString(ex.ToString())` on the 500 path — full stack trace,
 including file paths. This is the same defect as round 1's M10, which has since been fixed in `Server/`
@@ -314,7 +314,7 @@ but not here. The Functions app is a separate deployment, so it did not inherit 
 **Action:** log via `_logger` and return a generic body, matching what `ErrorResponses.Internal` now
 does server-side.
 
-### F3 — Personal address hardcoded as the admin recipient
+### F3 — Personal address hardcoded as the admin recipient — ✅ FIXED
 
 `private const string AdminEmail = "druvaciam@protonmail.com";` — a personal address compiled into the
 binary and committed. Every SMTP setting beside it already comes from environment variables.
@@ -400,7 +400,10 @@ Recorded so they are not "tidied" later by someone who does not know why they lo
 
 **Do first — silent-failure risks**
 
-1. §P1 Assert the observation size in `imperial_env.py` (three lines; prevents silent training corruption).
+1. ~~§P1 Assert the observation size in `imperial_env.py`~~ — ✅ **done**. Went further than proposed:
+   the server now reports `stateSize`/`actionSize` in the reset response, so `RLBotStrategy` is the
+   single source of truth and the Python constants are a fallback the guard checks rather than a second
+   authority. §P2 fixed alongside it.
 2. ~~§C1 Give `GameMap` a `CancellationTokenSource` and `IDisposable`~~ — ✅ **done**, via a shared
    `ScheduleExpiry` helper that replaced all five copies of the pattern.
 3. ~~§C2 Guard the `InvokeAsync` in `GameRoom.DisposeAsync`~~ — ✅ **done**.
@@ -408,8 +411,10 @@ Recorded so they are not "tidied" later by someone who does not know why they lo
 
 **Then — correctness and hygiene**
 
-5. §F1 HTML-encode interpolated values in the notification emails.
-6. §F2 / §F3 Stop returning `ex.ToString()`; move the admin address to configuration.
+5. ~~§F1 HTML-encode interpolated values in the notification emails~~ — ✅ **done** (10 body
+   interpolations; subjects deliberately left as plain text).
+6. ~~§F2 / §F3~~ — ✅ **done**; `ADMIN_EMAIL` is documented in `Imperial2030.Functions/info.txt` and
+   unset now disables the admin copy instead of failing the notification.
 7. ~~§C4 Encode the name arguments at the `MarkupString` site~~ — ✅ **done**.
 8. ~~§S1 Move `GamesController` onto `NotGuestPolicy`~~ — ✅ **done**, with 17 tests pinning both halves.
 9. ~~§S2 Extract the startup maintenance block from `Program.cs`~~ — ✅ **done** (`StartupMaintenance`).

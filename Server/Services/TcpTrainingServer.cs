@@ -115,6 +115,17 @@ public class TcpTrainingServer : BackgroundService
 
         [JsonPropertyName("actionMask")]
         public bool[] ActionMask { get; set; } = Array.Empty<bool>();
+
+        // The shapes the Python env should declare, sent so it does not have to hardcode them a second
+        // time. Rule #17 encourages APPENDING to the state vector, which silently invalidates any figure
+        // duplicated on the far side of the socket: the env would keep declaring the old width while the
+        // server sent the new one, and SB3 would either throw somewhere unhelpful or train on misaligned
+        // feature indices. Reporting them here makes RLBotStrategy the single source of truth.
+        [JsonPropertyName("stateSize")]
+        public int StateSize { get; set; } = RLBotStrategy.StateSize;
+
+        [JsonPropertyName("actionSize")]
+        public int ActionSize { get; set; } = RLBotStrategy.TotalActionSize;
     }
 
     public class StepResponse
