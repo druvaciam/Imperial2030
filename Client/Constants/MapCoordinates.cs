@@ -29,7 +29,6 @@ public static class MapCoordinates
         // --- EUROPE ---
         { "London", (537, 160) },
         { "Paris", (550, 188) },
-        { "Switzerland", (567, 205) },
         { "Rome", (588, 235) },
         { "Berlin", (588, 172) },
         { "Ukraine", (641, 177) },

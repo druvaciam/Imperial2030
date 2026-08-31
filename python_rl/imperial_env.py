@@ -29,6 +29,12 @@ class ImperialEnv(gym.Env):
         self.opponents = opponents if opponents is not None else []
         self.session_id = None
 
+        # Curriculum scales pushed in by the trainer via VecEnv.env_method("set_curriculum", ...) and sent
+        # to the C# server on every reset. 1.0/1.0 is the historical reward function exactly, so an env
+        # nobody ever calls set_curriculum on behaves as it always did.
+        self.shaping_scale = 1.0
+        self.factory_penalty_scale = 1.0
+
         self._connect_socket()
 
         # Actions: 0-6=Rondel, 7=Fight, 8=Retreat, 9-62=BuyBond, 63=Pass, 64-125=Maneuver Select, 126=Maneuver DoNotMove,
@@ -124,12 +130,22 @@ class ImperialEnv(gym.Env):
         info = {"action_mask": self.current_action_mask}
         return obs, reward, done, False, info
 
+    def set_curriculum(self, shaping_scale, factory_penalty_scale):
+        """Called through VecEnv.env_method, so it must work across SubprocVecEnv process boundaries -
+        hence plain floats and no shared state. Takes effect on the NEXT reset, which is the right
+        granularity: changing the reward function underneath a half-played episode would make that
+        episode's returns incomparable to both the ones before and after it."""
+        self.shaping_scale = float(shaping_scale)
+        self.factory_penalty_scale = float(factory_penalty_scale)
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         res = self._send_receive({
             "command": "reset",
             "botType": self.bot_type,
-            "opponents": self.opponents
+            "opponents": self.opponents,
+            "shapingScale": self.shaping_scale,
+            "factoryPenaltyScale": self.factory_penalty_scale
         })
         self.session_id = res.get("sessionId")
         obs = np.array(res.get("state", []), dtype=np.float32)

@@ -113,4 +113,29 @@ public class LocalizationResourceTests
         Assert.True(missing.Count == 0,
             $"ToastCodes with no entry in GameRoom.resx: {string.Join(", ", missing)}");
     }
+
+    /// <summary>
+    /// Territory_* keys whose territory is deliberately NOT in TerritoryData, and which must survive a
+    /// tidy-up that prunes "orphan" resource keys.
+    ///
+    /// Switzerland is drawn on the map but is not a playable space, so it has no TerritoryData entry.
+    /// GameMap.razor still labels it via DisplayNameLocalizer.Territory("Switzerland"), which falls back
+    /// to the raw territory id when TerritoryData has no definition and then looks up
+    /// "Territory_Switzerland". If that key were removed as unused, Lookup would report ResourceNotFound
+    /// and the tooltip would silently render the English id in every language - the exact class of
+    /// invisible regression the rest of this file exists to prevent.
+    /// </summary>
+    [Theory]
+    [InlineData("Territory_Switzerland")]
+    public void MapOnlyTerritoryLabelsAreTranslatedInEveryCulture(string key)
+    {
+        var root = ResourcesDirectory();
+
+        foreach (var resx in Directory.GetFiles(root, "SharedResource*.resx").OrderBy(f => f))
+        {
+            Assert.True(ReadKeys(resx).Contains(key),
+                $"{key} is missing from {Path.GetFileName(resx)}. It has no TerritoryData entry by design, " +
+                "but GameMap.razor still renders it as a tooltip - see this test's remarks before deleting it.");
+        }
+    }
 }

@@ -23,23 +23,127 @@ def linear_schedule(initial_value, final_value=1e-5):
         return final_value + progress_remaining * (initial_value - final_value)
     return func
 
+class RunRelativeSchedule:
+    """Progress within THIS run, 0.0 -> 1.0.
+
+    Every schedule below used to divide the *cumulative* num_timesteps by a fixed constant. With
+    reset_num_timesteps=False that fraction never restarts, so once cumulative steps pass the constant
+    every schedule is pinned at its final value forever. RL-3 reached 68.5M against a TOTAL_TIMESTEPS of
+    20M, which means ent_coef had been clamped to its 0.015 floor since step 20M - 48 million steps with
+    the exploration term at its minimum. A policy cannot unlearn an aversion it never explores away from,
+    so this is a prerequisite for the factory-aversion work rather than a tidy-up.
+
+    Anchoring on num_timesteps at training start makes each resumed run get its own full schedule, which
+    is what "resume and keep training" is supposed to mean.
+    """
+
+    def __init__(self, run_timesteps):
+        self.run_timesteps = max(1, run_timesteps)
+        self._start = None
+
+    def start(self, num_timesteps):
+        self._start = num_timesteps
+
+    def progress(self, num_timesteps):
+        if self._start is None:
+            return 0.0
+        return min(1.0, max(0.0, (num_timesteps - self._start) / self.run_timesteps))
+
+
 class EntCoefScheduleCallback(BaseCallback):
-    """
-    Custom callback to linearly decay the entropy coefficient during training.
-    """
-    def __init__(self, initial_ent_coef, final_ent_coef, total_timesteps, verbose=0):
+    """Linearly decays the entropy coefficient over the current run (see RunRelativeSchedule)."""
+
+    def __init__(self, initial_ent_coef, final_ent_coef, run_timesteps, verbose=0):
         super().__init__(verbose)
         self.initial_ent_coef = initial_ent_coef
         self.final_ent_coef = final_ent_coef
-        self.total_timesteps = total_timesteps
+        self.schedule = RunRelativeSchedule(run_timesteps)
+
+    def _on_training_start(self) -> None:
+        self.schedule.start(self.num_timesteps)
 
     def _on_step(self) -> bool:
-        progress = self.num_timesteps / self.total_timesteps
-        progress = min(1.0, max(0.0, progress))
+        progress = self.schedule.progress(self.num_timesteps)
         new_ent_coef = self.initial_ent_coef - progress * (self.initial_ent_coef - self.final_ent_coef)
         self.model.ent_coef = new_ent_coef
         self.logger.record("train/current_ent_coef", new_ent_coef)
         return True
+
+
+# --- Reward curriculum -------------------------------------------------------------------------
+# Both scales are sent to the C# training server on each episode reset and multiply its shaping terms.
+
+# The wasted-Factory and avoidable-skip penalties are held OFF for this fraction of the run, then ramped
+# back to full by FACTORY_PENALTY_FULL_AT. A nation normally gets only two builds per game - four home
+# cities holding one factory each (Imperial-2030-Rules.pdf p.7), two already built at setup (p.4) - so
+# after the second build the Factory slot is usually dead for the rest of the episode and every further
+# landing on it is penalised. (Not always: three armies can destroy a factory (p.11) and the freed city
+# can be rebuilt, but that is rare.) An agent that has not yet seen the payoff learns to avoid the slot
+# entirely, which is what RL-3 did (0.30 factories built per nation-stint vs 1.54 for the heuristic bots).
+# Letting it find the payoff first, then restoring the penalty, teaches "build when you can" instead of
+# "never go there".
+FACTORY_PENALTY_OFF_UNTIL = 0.15
+FACTORY_PENALTY_FULL_AT = 0.40
+
+# Shaping magnitude decays over the back half of the run so the terminal win/loss signal ends up dominant.
+# The shaping terms are dense, immediate and large (up to -80) while the terminal bonus is +/-100 arriving
+# once per ~61-step episode; an agent optimising the sum learns "never get penalised" ahead of "win".
+# Floored rather than driven to zero - the shaping still encodes genuinely correct play, it just should
+# not outweigh the objective by the end.
+SHAPING_DECAY_START = 0.50
+SHAPING_SCALE_FINAL = 0.30
+
+# env_method is an IPC round trip per worker under SubprocVecEnv, so pushing every step would cost more
+# than the training it is shaping. The schedules move slowly enough that this granularity is invisible.
+CURRICULUM_PUSH_EVERY = 10_000
+
+
+class CurriculumCallback(BaseCallback):
+    """Pushes the reward-shaping curriculum into the envs, which forward it to the C# server on reset."""
+
+    def __init__(self, run_timesteps, verbose=0):
+        super().__init__(verbose)
+        self.schedule = RunRelativeSchedule(run_timesteps)
+        self._last_push = None
+
+    def _scales(self, progress):
+        if progress <= FACTORY_PENALTY_OFF_UNTIL:
+            factory = 0.0
+        elif progress >= FACTORY_PENALTY_FULL_AT:
+            factory = 1.0
+        else:
+            span = FACTORY_PENALTY_FULL_AT - FACTORY_PENALTY_OFF_UNTIL
+            factory = (progress - FACTORY_PENALTY_OFF_UNTIL) / span
+
+        if progress <= SHAPING_DECAY_START:
+            shaping = 1.0
+        else:
+            span = 1.0 - SHAPING_DECAY_START
+            t = (progress - SHAPING_DECAY_START) / span
+            shaping = 1.0 - t * (1.0 - SHAPING_SCALE_FINAL)
+
+        return shaping, factory
+
+    def _push(self):
+        shaping, factory = self._scales(self.schedule.progress(self.num_timesteps))
+        self.training_env.env_method("set_curriculum", shaping, factory)
+        self.logger.record("curriculum/shaping_scale", shaping)
+        self.logger.record("curriculum/factory_penalty_scale", factory)
+        if self.verbose > 0:
+            print(f"[curriculum] step {self.num_timesteps:,}: "
+                  f"shaping_scale={shaping:.2f} factory_penalty_scale={factory:.2f}")
+
+    def _on_training_start(self) -> None:
+        self.schedule.start(self.num_timesteps)
+        self._push()
+        self._last_push = self.num_timesteps
+
+    def _on_step(self) -> bool:
+        if self._last_push is None or self.num_timesteps - self._last_push >= CURRICULUM_PUSH_EVERY:
+            self._push()
+            self._last_push = self.num_timesteps
+        return True
+
 
 if __name__ == "__main__":
     import os
@@ -106,6 +210,11 @@ if __name__ == "__main__":
             "batch_size": 512,
             "clip_range": 0.2,
             "ent_coef": INITIAL_ENT_COEF,
+            # MEASURED, do not "fix": episodes are ~61 agent steps (rollout/ep_len_mean over RL-3's
+            # 8,646 logged samples: min 44, max 70, mean 58). gamma=0.995 has a 138-step half-life, so the
+            # terminal win/loss reward still arrives with 73% of its value intact. The horizon is NOT
+            # shorter than the game, and annealing gamma upward (0.999 would take that 73% to 94%) is not
+            # the lever - the shaping-vs-terminal imbalance handled by CurriculumCallback is.
             "gamma": 0.995,
             "n_epochs": 6,
             "max_grad_norm": 0.5,
@@ -133,6 +242,11 @@ if __name__ == "__main__":
             batch_size=512,
             clip_range=0.2,
             ent_coef=INITIAL_ENT_COEF,  # See comment above: bumped up for the larger, more heterogeneous action space
+            # MEASURED, do not "fix": episodes are ~61 agent steps (rollout/ep_len_mean over RL-3's
+            # 8,646 logged samples: min 44, max 70, mean 58). gamma=0.995 has a 138-step half-life, so the
+            # terminal win/loss reward still arrives with 73% of its value intact. The horizon is NOT
+            # shorter than the game, and annealing gamma upward (0.999 would take that 73% to 94%) is not
+            # the lever - the shaping-vs-terminal imbalance handled by CurriculumCallback is.
             gamma=0.995,
             n_epochs=6,
             max_grad_norm=0.5,
@@ -199,9 +313,12 @@ if __name__ == "__main__":
     TOTAL_TIMESTEPS = 20_000_000
 
     save_callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
-    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=INITIAL_ENT_COEF, final_ent_coef=FINAL_ENT_COEF, total_timesteps=TOTAL_TIMESTEPS)
-    
-    callback = CallbackList([save_callback, ent_coef_callback])
+    # run_timesteps, not a cumulative total: TOTAL_TIMESTEPS is this run's budget (model.learn adds it to
+    # num_timesteps internally when reset_num_timesteps=False), so both schedules span exactly this run.
+    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=INITIAL_ENT_COEF, final_ent_coef=FINAL_ENT_COEF, run_timesteps=TOTAL_TIMESTEPS)
+    curriculum_callback = CurriculumCallback(run_timesteps=TOTAL_TIMESTEPS)
+
+    callback = CallbackList([save_callback, ent_coef_callback, curriculum_callback])
     
     model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=False, callback=callback, tb_log_name=args.bot_type)
 

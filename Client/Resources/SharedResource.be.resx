@@ -174,7 +174,7 @@
   <data name="Territory_Rome" xml:space="preserve"><value>Рым</value></data>
 
   <!-- Territories: neutral land -->
-  <data name="Territory_Switzerland" xml:space="preserve"><value>Швейцарыя</value></data>
+  <data name="Territory_Switzerland" xml:space="preserve"><value>Швайцарыя</value></data>
   <data name="Territory_Ukraine" xml:space="preserve"><value>Украіна</value></data>
   <data name="Territory_Korea" xml:space="preserve"><value>Карэя</value></data>
   <data name="Territory_Mongolia" xml:space="preserve"><value>Манголія</value></data>

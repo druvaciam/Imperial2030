@@ -44,6 +44,33 @@ public class TcpTrainingServer : BackgroundService
         // oscillation land in different maneuver turns, so per-turn state cannot see it.
         public Dictionary<Guid, string> PreviousMoveOrigin { get; set; } = new();
 
+        /// <summary>
+        /// Multiplier applied to every shaping term before it is folded into the reward, set per episode
+        /// by the trainer (see train.py's CurriculumCallback). 1.0 reproduces the historical behaviour, so
+        /// a client that never sends it - including any older imperial_env.py - is unaffected.
+        /// </summary>
+        public float ShapingScale { get; set; } = 1.0f;
+
+        /// <summary>
+        /// An ADDITIONAL multiplier on the two Factory penalties only (the wasted-Factory rondel penalty
+        /// and the avoidable-skip penalty), on top of <see cref="ShapingScale"/>.
+        ///
+        /// Exists because the Factory slot is uniquely trap-shaped. A nation has four home cities and can
+        /// hold at most one factory in each (Imperial-2030-Rules.pdf p.7, "Only one factory may be built in
+        /// each city"), two of which are already built at setup (p.4) - so the USUAL number of builds
+        /// available across a game is two, after which landing on the slot does nothing and is penalised.
+        /// Not a hard cap: three armies can destroy a foreign factory (p.11), which frees that city to be
+        /// built in again - GetFactoryBuildOptions gates only on !HasFactory, so the engine allows the
+        /// rebuild. It is rare rather than impossible (one destruction across the 260-move exported game),
+        /// which is enough to make the slot mostly-dead late without ever being reliably dead.
+        ///
+        /// An agent that has not yet discovered what a factory pays back sees only the dead landings and
+        /// learns to avoid the slot outright - measured at 0.30 factories built per nation-stint for RL-3
+        /// against the 1.54 the heuristic bots manage (Tests/RLPerNationBehaviourTests). Holding this at 0
+        /// early lets the payoff be discovered first, then ramps it back to 1.
+        /// </summary>
+        public float FactoryPenaltyScale { get; set; } = 1.0f;
+
         public int TotalSessionSteps { get; set; } = 0;
         public int LastTurnCount { get; set; } = -1;
         public int ConsecutiveSameTurnSteps { get; set; } = 0;
@@ -103,6 +130,14 @@ public class TcpTrainingServer : BackgroundService
 
         [JsonPropertyName("opponents")]
         public List<string>? Opponents { get; set; }
+
+        // Curriculum knobs, sent on "reset". Nullable on purpose: absent means "keep the default of 1.0",
+        // so an older Python client that does not know about them trains exactly as it did before.
+        [JsonPropertyName("shapingScale")]
+        public float? ShapingScale { get; set; }
+
+        [JsonPropertyName("factoryPenaltyScale")]
+        public float? FactoryPenaltyScale { get; set; }
     }
 
     public class ResetResponse
@@ -427,7 +462,16 @@ public class TcpTrainingServer : BackgroundService
 
 
         var sessionId = Guid.NewGuid().ToString();
-        _sessions[sessionId] = new TrainingSession { Game = game, RLPlayerId = rlPlayer.Id };
+        // Curriculum values arrive per episode rather than once per connection, so a schedule can move
+        // while a long-lived SubprocVecEnv worker keeps the same socket open. Clamped because they come
+        // off the wire: a negative scale would invert every penalty into a reward.
+        _sessions[sessionId] = new TrainingSession
+        {
+            Game = game,
+            RLPlayerId = rlPlayer.Id,
+            ShapingScale = Math.Clamp(req.ShapingScale ?? 1.0f, 0f, 10f),
+            FactoryPenaltyScale = Math.Clamp(req.FactoryPenaltyScale ?? 1.0f, 0f, 10f),
+        };
 
         var state = GetStateVector(game, rlPlayer.Id);
         var mask = GetActionMask(game, _sessions[sessionId]);
@@ -634,9 +678,9 @@ public class TcpTrainingServer : BackgroundService
                     // every single opponent bot built at least one in all 6 (see the RL-3 worst-loss export
                     // investigation). The goal here is a fair expected value for attempting under uncertainty, not
                     // eliminating the penalty for genuinely wasted attempts.
-                    explicitBonusReward += 10.0f;
+                    explicitBonusReward += FactoryBuildReward;
                     built = true;
-                    _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +10");
+                    _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +{FactoryBuildReward}");
                 }
             }
 
@@ -650,7 +694,7 @@ public class TcpTrainingServer : BackgroundService
             // Import — there the skip may be the agent saving for imports rather than wasting the turn.
             if (!built && skipPenalty > 0f)
             {
-                explicitBonusReward -= skipPenalty;
+                explicitBonusReward -= skipPenalty * session.FactoryPenaltyScale;
                 bool savingForImport = skipPenalty == ReducedFactorySkipPenalty;
                 _logger.LogWarning(
                     $"[RL PENALTY] {ns.Nation} skipped an available factory build (treasury {ns.Treasury}M" +
@@ -1084,7 +1128,11 @@ public class TcpTrainingServer : BackgroundService
         bool done = await AdvanceUntilRLTurn(game, session.RLPlayerId);
 
         float newVP = CalculateRelativeVP(game, session.RLPlayerId);
-        float reward = newVP - prevVP + explicitBonusReward;
+        // Shaping is accumulated in explicitBonusReward and folded in ONCE, at the single point below,
+        // after every shaping term has been computed. It used to be added here instead, which silently
+        // discarded the two Investor penalties further down (they subtract from explicitBonusReward
+        // after this line, so they never reached the agent despite being logged as [RL PENALTY]).
+        float reward = newVP - prevVP;
 
         if (preNs != null && preNs.ControllerId == session.RLPlayerId)
         {
@@ -1094,12 +1142,12 @@ public class TcpTrainingServer : BackgroundService
 
             if (postFlags > preFlags)
             {
-                reward += (postFlags - preFlags) * 1.0f; // Small reward for placing flag
+                explicitBonusReward += (postFlags - preFlags) * 1.0f; // Small reward for placing flag
                 //_logger.LogInformation($"[RL REWARD] Flag placed by {preNs.Nation}. +{(postFlags - preFlags) * 1.0f}");
             }
             if (postHostilesInHome < preHostilesInHome)
             {
-                reward += (preHostilesInHome - postHostilesInHome) * 5.0f; // Nice reward for clearing home territory
+                explicitBonusReward += (preHostilesInHome - postHostilesInHome) * 5.0f; // Nice reward for clearing home territory
                 //_logger.LogInformation($"[RL REWARD] Hostiles cleared from home by {preNs.Nation}. +{(preHostilesInHome - postHostilesInHome) * 5.0f}");
             }
 
@@ -1107,20 +1155,20 @@ public class TcpTrainingServer : BackgroundService
             {
                 if (expectedTaxBonus > 0)
                 {
-                    reward += 2.0f; // Reward if personal bonus > 0
+                    explicitBonusReward += 2.0f; // Reward if personal bonus > 0
                 }
                 if (expectedTaxRevenue > expectedTaxCosts)
                 {
-                    reward += 2.0f; // Reward if revenue > costs
+                    explicitBonusReward += 2.0f; // Reward if revenue > costs
                 }
                 if (expectedTaxPowerGain > 5)
                 {
-                    reward += 5.0f; // Reward if power gain > 5
+                    explicitBonusReward += 5.0f; // Reward if power gain > 5
                 }
 
                 if (expectedTaxTreasuryGain <= 0 && expectedTaxPowerGain == 0)
                 {
-                    reward -= 5.0f; // Penalty for a fully wasted Taxation turn: no treasury gain, no power gain
+                    explicitBonusReward -= 5.0f; // Penalty for a fully wasted Taxation turn: no treasury gain, no power gain
                 }
             }
         }
@@ -1170,7 +1218,7 @@ public class TcpTrainingServer : BackgroundService
             {
                 string targetName = targetSlot == RondelData.ProductionSlot1 ? "Production" : "Maneuver";
                 _logger.LogWarning($"[RL PENALTY] {preNs?.Nation} paid for long move ({dist} steps) to {targetName} 1, skipping a closer {targetName} 2. Cost: {moveCost}M");
-                reward -= 40.0f; // Heavy penalty
+                explicitBonusReward -= 40.0f; // Heavy penalty
             }
 
             // Factory (slot 1) wasted: not enough treasury OR no valid cities to build in
@@ -1203,16 +1251,19 @@ public class TcpTrainingServer : BackgroundService
                     // just avoid the Factory slot outright rather than learn when it's actually worth the risk.
                     // moveCost's own penalty is untouched: that reflects real in-game money lost on the move, not
                     // an RL-specific shaping choice, so it stays proportional to the actual waste.
-                    reward -= 8.0f;
-                    reward -= allBuilt ? 5.0f : 0;
-                    reward -= moveCost * 10.0f; // Extra penalty for wasting money on useless move
+                    // Scaled by the session curriculum (see TrainingSession.FactoryPenaltyScale): early in a
+                    // run this is held at 0 so the agent can discover what a factory pays back before it
+                    // learns to fear the slot. Both halves scale together - they punish the same decision.
+                    explicitBonusReward -= (WastedFactoryActionPenalty + (allBuilt ? AllFactoriesBuiltPenalty : 0f))
+                                           * session.FactoryPenaltyScale;
+                    explicitBonusReward -= moveCost * 10.0f; // Extra penalty for wasting money on useless move
                 }
             }
             if (targetSlot == RondelData.ImportSlot && preTreasury.HasValue && preTreasury < 1)
             {
                 _logger.LogWarning($"[RL PENALTY] Wasted Import action by {preNs?.Nation}. Treasury < 1, Cost: {moveCost}M");
-                reward -= 7.0f;
-                reward -= moveCost * 10.0f;
+                explicitBonusReward -= 7.0f;
+                explicitBonusReward -= moveCost * 10.0f;
             }
             // Production (slot 2 or 6) wasted: no existing factory can currently produce. Note that
             // blockade alone can NEVER fully explain this: the game engine forbids hostile entry into a
@@ -1242,8 +1293,8 @@ public class TcpTrainingServer : BackgroundService
                 if (!canProduceAnything)
                 {
                     _logger.LogWarning($"[RL PENALTY] Wasted Production action by {preNs.Nation}. No factory can produce (blockaded or at max unit cap). Cost: {moveCost}M");
-                    reward -= 10.0f;
-                    reward -= moveCost * 10.0f;
+                    explicitBonusReward -= 10.0f;
+                    explicitBonusReward -= moveCost * 10.0f;
                 }
             }
             // Maneuver (slot 3 or 7) with 0 units = wasted turn
@@ -1255,17 +1306,22 @@ public class TcpTrainingServer : BackgroundService
                     if (targetSlot == RondelData.ManeuverSlot2 && dist >= 3)
                     {
                         _logger.LogWarning($"[RL PENALTY] Strategic positioning to Maneuver 2 by {preNs.Nation}. No units, but getting closer to Tax. Cost: {moveCost}M");
-                        reward -= 2.0f;
+                        explicitBonusReward -= 2.0f;
                     }
                     else
                     {
                         _logger.LogWarning($"[RL PENALTY] Wasted Maneuver action by {preNs.Nation}. No units to move, Cost: {moveCost}M");
-                        reward -= 10.0f;
+                        explicitBonusReward -= 10.0f;
                     }
-                    reward -= moveCost * 10.0f;
+                    explicitBonusReward -= moveCost * 10.0f;
                 }
             }
         }
+
+        // The single fold point. Everything above this line is shaping; everything below (the final VP
+        // margin and the flat win/loss bonus) is the actual objective and is deliberately NOT scaled -
+        // decaying shaping must make the terminal signal relatively STRONGER, not weaker.
+        reward += explicitBonusReward * session.ShapingScale;
 
         var allScores = game.Players.Select(p => new { p.Id, Score = game.CalculateScore(p.Id) }).ToList();
         float maxOfOthersScore = allScores.Where(s => s.Id != session.RLPlayerId).Max(s => s.Score);
@@ -2063,6 +2119,29 @@ public class TcpTrainingServer : BackgroundService
     /// the behaviour being trained. Skipping in that position is never forced.
     /// </summary>
     public const float AvoidableFactorySkipPenalty = 30.0f;
+
+    /// <summary>
+    /// Paid for a successful factory build.
+    ///
+    /// Raised from 10 because the expected value of even *visiting* the Factory slot was negative. A
+    /// nation normally gets just two builds per game - four home cities, one factory each
+    /// (Imperial-2030-Rules.pdf p.7), two of them already built at setup (p.4) - plus any it rebuilds
+    /// after an enemy destroys one (p.11), which is uncommon. So across a ~20-move nation-stint the agent
+    /// gets roughly two payoffs and a long tail of dead landings. Landing on
+    /// Factory unable to build costs <see cref="WastedFactoryActionPenalty"/>, plus
+    /// <see cref="AllFactoriesBuiltPenalty"/> once both are up - so at +10 a landing needed better than a
+    /// 57% chance of being buildable just to break even, and after the second build that chance is zero.
+    /// At 16 the break-even is ~45%, which makes attempting under uncertainty rational rather than a
+    /// mistake the agent has to be lucky to survive.
+    /// </summary>
+    public const float FactoryBuildReward = 16.0f;
+
+    /// <summary>Landing on Factory when no build was possible. Was an inline -8.</summary>
+    public const float WastedFactoryActionPenalty = 8.0f;
+
+    /// <summary>Charged on top of <see cref="WastedFactoryActionPenalty"/> when every home city already
+    /// has its factory - the one wasted landing the agent could always have foreseen.</summary>
+    public const float AllFactoriesBuiltPenalty = 5.0f;
 
     /// <summary>
     /// Charged instead when the nation can afford the factory but not the factory AND a full Import.

@@ -550,7 +550,7 @@ namespace Imperial2030.Tests
             {
                 var (gameId, _, _) = await SetupGame(context, rondelPosition: 1);
                 var wrongUserId = "wrong-user";
-                
+
                 var controller = GetController(context, wrongUserId);
                 var result = await controller.BuildFactory(gameId, "Moscow");
 
@@ -634,7 +634,7 @@ namespace Imperial2030.Tests
             using (var context = GetDbContext(dbName))
             {
                 var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
-                
+
                 var tMoscow = new TerritoryState { TerritoryId = "Moscow", GameId = gameId, HasFactory = true };
                 context.TerritoryStates.Add(tMoscow);
                 await context.SaveChangesAsync();
@@ -688,7 +688,7 @@ namespace Imperial2030.Tests
                 var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
                 var ns = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
                 ns.Treasury = 4; // Less than 5
-                
+
                 var tMoscow = new TerritoryState { TerritoryId = "Moscow", GameId = gameId, HasFactory = false };
                 context.TerritoryStates.Add(tMoscow);
                 await context.SaveChangesAsync();
@@ -710,7 +710,7 @@ namespace Imperial2030.Tests
                 var (gameId, userId, _) = await SetupGame(context, rondelPosition: 1);
                 var ns = await context.NationStates.FirstAsync(n => n.Nation == Nation.Russia);
                 ns.Treasury = 10; // Enough for 5M cost
-                
+
                 var tMoscow = new TerritoryState { TerritoryId = "Moscow", GameId = gameId, HasFactory = false };
                 context.TerritoryStates.Add(tMoscow);
                 await context.SaveChangesAsync();
@@ -764,19 +764,19 @@ namespace Imperial2030.Tests
                     if (ts != null) ts.HasFactory = true;
                 }
 
-                var controlledTerritories = new[] { 
-                    "Switzerland", "Ukraine", "Korea", "Mongolia", "Kazakhstan",
+                var controlledTerritories = new[] {
+                    "Ukraine", "Korea", "Mongolia", "Kazakhstan",
                     "Japan", "Turkey", "Guinea", "Quebec", "Mexico",
                     "Colombia", "Afghanistan", "Alaska", "Canada",
                     "NorthAtlantic", "SouthAtlantic", "IndianOcean", "MediterraneanSea", "PacificOcean"
                 };
-                
+
                 foreach (var territory in controlledTerritories)
                 {
                     var ts = tsList.FirstOrDefault(t => t.TerritoryId == territory);
                     if (ts != null) ts.Controller = Nation.Russia;
                 }
-                
+
                 await context.SaveChangesAsync();
             }
 
@@ -786,7 +786,7 @@ namespace Imperial2030.Tests
                 var controller = GetController(verifyContext, uId);
                 var result = await controller.ExecuteTaxation(gId);
                 Assert.IsType<OkObjectResult>(result);
-                
+
                 var updatedRussia = await verifyContext.NationStates.FirstAsync(n => n.GameId == gId && n.Nation == Nation.Russia);
                 Assert.Equal(expectedTax, updatedRussia.TaxRevenue);
             }
@@ -809,7 +809,7 @@ namespace Imperial2030.Tests
                 };
                 var p1 = new Player { Id = Guid.NewGuid(), GameId = gameId, UserId = hostUserId, IsHost = true };
                 var p2 = new Player { Id = Guid.NewGuid(), GameId = gameId, UserId = "other-user", IsHost = false };
-                
+
                 context.Games.Add(game);
                 context.Players.AddRange(p1, p2);
                 await context.SaveChangesAsync();
