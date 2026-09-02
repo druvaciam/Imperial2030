@@ -396,6 +396,86 @@ namespace Imperial2030.Tests
             Assert.Equal(expected, ReplaySpeed.Normalize(requested));
         }
 
+        /// <summary>
+        /// Every preset must survive Normalize untouched. The speed control displays the multiplier it
+        /// asked for, but the server snaps the request onto the StepMs grid and clamps it to range — so a
+        /// preset that is not already on that grid would apply a different pace than the one the button
+        /// showed, silently, with nothing failing.
+        /// </summary>
+        [Fact]
+        public void ReplaySpeed_EveryPresetSurvivesNormalizeUnchanged()
+        {
+            Assert.NotEmpty(ReplaySpeed.PresetPacingsMs);
+
+            foreach (var preset in ReplaySpeed.PresetPacingsMs)
+            {
+                Assert.Equal(preset, ReplaySpeed.Normalize(preset));
+            }
+        }
+
+        /// <summary>Presets are ordered slowest-first, which is what makes Step's comparisons a ladder.</summary>
+        [Fact]
+        public void ReplaySpeed_PresetsAreOrderedSlowestFirst()
+        {
+            var presets = ReplaySpeed.PresetPacingsMs;
+
+            for (int i = 1; i < presets.Length; i++)
+            {
+                Assert.True(presets[i] < presets[i - 1],
+                    $"Presets must descend in pacing (ascend in speed); {presets[i - 1]} is followed by {presets[i]}.");
+            }
+        }
+
+        /// <summary>The multipliers a viewer reads on the button. Whole-ish numbers, not 1.6666x.</summary>
+        [Theory]
+        [InlineData(10_000, 0.5)]
+        [InlineData(5_000, 1.0)]
+        [InlineData(2_500, 2.0)]
+        [InlineData(1_000, 5.0)]
+        [InlineData(500, 10.0)]
+        public void ReplaySpeed_MultiplierIsRelativeToDefaultPace(int pacingMs, double expected)
+        {
+            Assert.Equal(expected, ReplaySpeed.MultiplierFor(pacingMs));
+        }
+
+        /// <summary>Default pace must itself be a preset, or the control opens showing an off-ladder speed.</summary>
+        [Fact]
+        public void ReplaySpeed_DefaultPaceIsOnTheLadder()
+        {
+            Assert.Contains(ReplaySpeed.DefaultPacingMs, ReplaySpeed.PresetPacingsMs);
+            Assert.Equal(1.0, ReplaySpeed.MultiplierFor(ReplaySpeed.DefaultPacingMs));
+        }
+
+        [Theory]
+        [InlineData(5_000, 1, 2_500)]   // faster = shorter delay
+        [InlineData(5_000, -1, 10_000)] // slower = longer delay
+        [InlineData(500, 1, 500)]       // already fastest: unchanged, which disables the button
+        [InlineData(10_000, -1, 10_000)]// already slowest: unchanged
+        [InlineData(3_000, 1, 2_500)]   // between rungs: steps onto the neighbouring one, not past it
+        [InlineData(3_000, -1, 5_000)]
+        public void ReplaySpeed_StepMovesOneRung(int from, int direction, int expected)
+        {
+            Assert.Equal(expected, ReplaySpeed.Step(from, direction));
+        }
+
+        /// <summary>Stepping repeatedly must traverse the whole ladder and stop, never oscillate or skip.</summary>
+        [Fact]
+        public void ReplaySpeed_SteppingTraversesTheLadderAndStops()
+        {
+            var pace = ReplaySpeed.PresetPacingsMs[0];
+            var visited = new List<int> { pace };
+
+            for (int i = 0; i < ReplaySpeed.PresetPacingsMs.Length + 3; i++)
+            {
+                var next = ReplaySpeed.Step(pace, 1);
+                if (next == pace) break;
+                pace = next;
+                visited.Add(pace);
+            }
+
+            Assert.Equal(ReplaySpeed.PresetPacingsMs, visited);
+        }
+
         [Fact]
         public async Task ReplaySpeed_IsPerSession_AndNormalizedServerSide()
         {
