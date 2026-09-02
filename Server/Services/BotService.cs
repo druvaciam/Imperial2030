@@ -600,7 +600,9 @@ public class BotService
         await Task.Delay(delayMs);
     }
 
-    private async Task BotManeuver(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
+    // internal, not private, so Tests can drive a single maneuver phase directly (InternalsVisibleTo
+    // in the csproj) instead of steering a whole bot turn through rondel scoring to reach it.
+    internal async Task BotManeuver(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
     {
         var strategy = GetStrategy(controller);
         if (strategy is RLBotStrategy && RLBotStrategy.TrainingActionOverride.Value.HasValue)
@@ -668,6 +670,8 @@ public class BotService
                             {
                                 fleet.IsHostile = true;
                                 GameLogger.LogHostilityToggle(ctx, game, fleet.UnitType, target, fleet.IsHostile, nation, controller.BotName ?? "Bot");
+
+                                if (TryResolveStationaryBattle(ctx, game, fleet, friendlyNations, nation, controller)) return;
                             }
                         }
                         else
@@ -819,11 +823,27 @@ public class BotService
                         }
                         else if (!isFriendlyHome && !army.IsHostile)
                         {
+                            // Standing an army upright where it already is has the same end state as walking
+                            // in hostilely, so it needs the same p.10 protection: "If a nation has only one
+                            // factory left that is not occupied by hostile armies (standing upright), the
+                            // province of this factory may not be entered by hostile armies." Without this the
+                            // entry rule is walked around in two steps - enter peacefully (which is what the
+                            // rule forces), then stand up. ManeuverController.ToggleHostility already refuses
+                            // this for a human; this is the bot's equivalent of that call site.
+                            bool wouldBlockadeLastFactory =
+                                ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, best, army.Id);
+
                             bool isEnemyPresent = game.Units.Any(u => u.TerritoryId == best && u.Id != army.Id && !friendlyNations.Contains(u.Nation));
-                            if (GetStrategy(controller).DetermineHostility(isEnemyPresent, true))
+                            if (!wouldBlockadeLastFactory && GetStrategy(controller).DetermineHostility(isEnemyPresent, true))
                             {
                                 army.IsHostile = true;
                                 GameLogger.LogHostilityToggle(ctx, game, army.UnitType, best, army.IsHostile, nation, controller.BotName ?? "Bot");
+
+                                if (TryResolveStationaryBattle(ctx, game, army, friendlyNations, nation, controller)) return;
+                            }
+                            else
+                            {
+                                GameLogger.LogUnitStay(ctx, game, UnitType.Army, sourceWasHostile, best, nation, controller.BotName ?? "Bot");
                             }
                         }
                         else
@@ -961,6 +981,65 @@ public class BotService
 
         GameLogger.LogAutoEndManeuverPhase(ctx, game, "Armies", nation, controller.BotName ?? "Bot");
         game.CurrentManeuverPhase = ManeuverPhase.None;
+    }
+
+    /// <summary>
+    /// Battle resolution for a unit that turned hostile where it already stood, rather than by moving in.
+    ///
+    /// Standing an army upright in a foreign home province is the same act of aggression as walking in
+    /// hostilely, and Imperial-2030-Rules.pdf p.10 lets the defender answer it: "Armies of foreign nations
+    /// can call for a battle if their land region has been invaded", and "Fleets and armies can battle
+    /// against each other only if the fleet is still in the harbor. In this case, an invading army can
+    /// attack the fleet or the fleet can call for a battle." Without this the conversion silently occupied
+    /// the province with the defender's units still sitting in it — observed live as a Brazilian army
+    /// turning hostile in Mumbai alongside an Indian fleet, with no battle.
+    ///
+    /// Deliberately mirrors the hostile-MOVE path rather than inventing a second set of rules: one
+    /// defending nation resolves 1:1 on the spot, several open the negotiation phase. Humans reach the
+    /// same outcome through the stationary Battle endpoint, which bots have no equivalent of.
+    ///
+    /// Returns true when the maneuver must pause for battle negotiation.
+    /// </summary>
+    private bool TryResolveStationaryBattle(ApplicationDbContext? ctx, Game game, Unit unit, HashSet<Nation> friendlyNations, Nation nation, Player controller)
+    {
+        var territoryId = unit.TerritoryId;
+        var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
+        bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
+
+        // Same shape as the move path's defender filter: like fights like, plus the home nation's other
+        // unit types once we are standing hostile in their home — which is what makes an army able to
+        // reach a fleet still in its harbour.
+        bool IsReachableDefender(Unit u) =>
+            u.UnitType == unit.UnitType || (isForeignHome && u.Nation == def!.Nation!.Value);
+
+        var foreignDefenders = game.Units
+            .Where(u => u.TerritoryId == territoryId && u.Id != unit.Id && !friendlyNations.Contains(u.Nation))
+            .Where(IsReachableDefender)
+            .Select(u => u.Nation)
+            .Distinct()
+            .ToList();
+
+        if (foreignDefenders.Count == 0) return false;
+
+        if (foreignDefenders.Count == 1)
+        {
+            var targetNation = foreignDefenders[0];
+            var enemyUnit = game.Units.FirstOrDefault(u =>
+                u.TerritoryId == territoryId && u.Nation == targetNation && IsReachableDefender(u));
+
+            if (enemyUnit == null) return false;
+
+            RemoveUnit(ctx, game, unit);
+            RemoveUnit(ctx, game, enemyUnit);
+            GameLogger.LogBattleDestruction(ctx, game, unit.UnitType, targetNation, enemyUnit.UnitType, territoryId, nation, controller.BotName ?? "Bot");
+            return false;
+        }
+
+        game.PendingBattleTerritoryId = territoryId;
+        game.PendingBattleAggressorNation = nation;
+        game.PendingBattleAggressorUnitId = unit.Id;
+        game.PendingBattleDefenders = foreignDefenders.ToList();
+        return true;
     }
 
     public async Task BotTryDestroyFactories(ApplicationDbContext? ctx, Game game, Nation nation, Player controller)

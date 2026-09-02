@@ -554,20 +554,22 @@ else
 
                 <span class="replay-speed-divider" aria-hidden="true"></span>
 
-                @* Slower/Faster step through ReplaySpeed's range rather than a free-text box, so the
-                   value is always on the allowed grid. The server normalizes anyway and returns what it
-                   applied, which is what gets displayed. *@
+                @* Transport-style speed control: rewind/fast-forward step through ReplaySpeed.PresetPacingsMs
+                   and the readout is a multiplier, which is what a viewer actually wants to express. Buttons
+                   disable by asking Step whether the ladder can move, so the ends can never be reached by a
+                   comparison that disagrees with what the step would actually do. The server normalizes
+                   regardless and returns what it applied, which is what gets displayed. *@
                 <div class="replay-speed" role="group" aria-label="@L["Replay_Speed"]">
                     <button class="btn btn-sm btn-outline-light replay-speed-step" title="@L["Replay_Slower"]" aria-label="@L["Replay_Slower"]"
-                            @onclick="() => ChangeReplaySpeed(ReplaySpeed.StepMs)"
-                            disabled="@(CurrentPacingMs >= ReplaySpeed.MaxPacingMs)">
-                        <i class="bi bi-dash-lg"></i>
+                            @onclick="() => StepReplaySpeed(-1)"
+                            disabled="@(ReplaySpeed.Step(CurrentPacingMs, -1) == CurrentPacingMs)">
+                        <i class="bi bi-rewind-fill"></i>
                     </button>
-                    <span class="replay-speed-value" title="@L["Replay_Speed"]">@L["Replay_SpeedValue", FormatSeconds(CurrentPacingMs)]</span>
+                    <span class="replay-speed-value" title="@L["Replay_Speed"]">@L["Replay_SpeedMultiplier", FormatMultiplier(CurrentPacingMs)]</span>
                     <button class="btn btn-sm btn-outline-light replay-speed-step" title="@L["Replay_Faster"]" aria-label="@L["Replay_Faster"]"
-                            @onclick="() => ChangeReplaySpeed(-ReplaySpeed.StepMs)"
-                            disabled="@(CurrentPacingMs <= ReplaySpeed.MinPacingMs)">
-                        <i class="bi bi-plus-lg"></i>
+                            @onclick="() => StepReplaySpeed(1)"
+                            disabled="@(ReplaySpeed.Step(CurrentPacingMs, 1) == CurrentPacingMs)">
+                        <i class="bi bi-fast-forward-fill"></i>
                     </button>
                 </div>
             </div>
@@ -981,7 +983,7 @@ else
     }
 
     .replay-speed-value {
-        min-width: 3.1rem; /* fixed so the toolbar doesn't shift as the value goes 0.5s -> 10s */
+        min-width: 3.1rem; /* fixed so the toolbar doesn't shift as the value goes 0.5x -> 10x */
         text-align: center;
         font-variant-numeric: tabular-nums;
         font-weight: 600;
@@ -1537,20 +1539,30 @@ else
     private int? _pendingPacingMs;
     private int CurrentPacingMs => _pendingPacingMs ?? replayState?.PacingMs ?? ReplaySpeed.DefaultPacingMs;
 
-    /// <summary>Renders a pacing value as seconds, dropping the decimal for whole seconds ("5", "0.5").</summary>
-    private static string FormatSeconds(int pacingMs) =>
-        (pacingMs / 1000.0).ToString(pacingMs % 1000 == 0 ? "0" : "0.0", CultureInfo.CurrentCulture);
+    /// <summary>
+    /// Renders the playback multiplier, dropping the decimal for whole speeds ("1", "0.5", "10").
+    /// Two decimals are allowed because a session sitting between presets (an older session, or a
+    /// hand-crafted speed) still has a real speed worth showing honestly rather than rounding to a
+    /// preset it is not actually running at.
+    /// </summary>
+    private static string FormatMultiplier(int pacingMs)
+    {
+        var multiplier = ReplaySpeed.MultiplierFor(pacingMs);
+        return multiplier.ToString(multiplier % 1 == 0 ? "0" : "0.##", CultureInfo.CurrentCulture);
+    }
 
     /// <summary>
-    /// Steps the replay delay by <paramref name="deltaMs"/> (positive = slower). The server normalizes
-    /// onto the allowed range and reports what it applied, which is what gets shown — so clamping at
-    /// either end can never leave the UI displaying a value the session isn't actually using.
+    /// Moves one rung along <see cref="ReplaySpeed.PresetPacingsMs"/>: <paramref name="direction"/>
+    /// above zero is faster, at or below zero is slower. The server normalizes onto the allowed range
+    /// and reports what it applied, which is what gets shown — so clamping at either end can never
+    /// leave the UI displaying a speed the session isn't actually running at.
     /// </summary>
-    private async Task ChangeReplaySpeed(int deltaMs)
+    private async Task StepReplaySpeed(int direction)
     {
         if (replaySessionId == null) return;
 
-        var requested = ReplaySpeed.Normalize(CurrentPacingMs + deltaMs);
+        var requested = ReplaySpeed.Step(CurrentPacingMs, direction);
+        if (requested == CurrentPacingMs) return;
         _pendingPacingMs = requested;
 
         try

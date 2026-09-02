@@ -199,8 +199,8 @@
   <data name="Toast_BattlePeace" xml:space="preserve"><value>{0} пагадзіўся на МІР.</value></data>
 
   <!-- Replay playback speed -->
-  <data name="Replay_Speed" xml:space="preserve"><value>Хуткасць прайгравання (затрымка паміж дзеяннямі)</value></data>
+  <data name="Replay_Speed" xml:space="preserve"><value>Хуткасць прайгравання</value></data>
   <data name="Replay_Slower" xml:space="preserve"><value>Павольней</value></data>
   <data name="Replay_Faster" xml:space="preserve"><value>Хутчэй</value></data>
-  <data name="Replay_SpeedValue" xml:space="preserve"><value>{0} с</value></data>
+  <data name="Replay_SpeedMultiplier" xml:space="preserve"><value>{0}×</value></data>
 </root>
