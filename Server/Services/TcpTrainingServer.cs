@@ -843,8 +843,8 @@ public class TcpTrainingServer : BackgroundService
                         // off one of the nation's own home provinces.
                         if (IsRecklessFactoryCityVacation(game, unit, session.ManeuverSelectedTerritoryId!, target, isHostileMove))
                         {
-                            _logger.LogWarning($"[RL PENALTY] {unit.Nation} emptied its factory city '{session.ManeuverSelectedTerritoryId}' of army defenders by moving to '{target}', with an enemy army able to reach it.");
-                            explicitBonusReward -= 5.0f;
+                            //_logger.LogWarning($"[RL PENALTY] {unit.Nation} emptied its factory city '{session.ManeuverSelectedTerritoryId}' of army defenders by moving to '{target}', with an enemy army able to reach it.");
+                            //explicitBonusReward -= 5.0f;
                         }
 
                         // Penalize walking a unit straight back where it came from when the round trip
@@ -2193,7 +2193,7 @@ public class TcpTrainingServer : BackgroundService
     }
 
     /// <summary>The rulebook's factory price (Imperial-2030-Rules.pdf p.7: "The nation pays 5 million").</summary>
-    private const int FactoryCost = 5;
+    private const int FactoryCost = GameConstants.FactoryCost;
 
     /// <summary>
     /// True when <paramref name="unit"/> leaving <paramref name="vacatedTerritoryId"/> for

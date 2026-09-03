@@ -564,10 +564,20 @@ namespace Imperial2030.Tests
             // Turn should have advanced to China (the human)
             Assert.Equal(Nation.China, updatedGame.CurrentTurnNation);
 
-            // Only ONE action (Move/EndTurn) should have been logged for Russia.
-            // A typical turn produces exactly 2 actions: Move and EndTurn.
-            // If the lock failed, there would be many more actions or a DbUpdateConcurrencyException.
-            Assert.Equal(2, updatedGame.Actions.Count);
+            // The turn must have been played exactly ONCE, asserted as a single rondel Move.
+            //
+            // This used to assert a total of 2 actions, which passed by coincidence: which slot the bot
+            // picks is not fixed, and the two observed outcomes both happened to total 2 -
+            // "Move, Taxation" (Taxation auto-advances, so there is no EndTurn) and "Move, EndTurn" back
+            // when a slot that could do nothing passed silently. Now that such a slot says so, the Import
+            // path logs "Move, ImportNoFunds, EndTurn" and the count assertion started failing roughly
+            // half of runs.
+            //
+            // Move is the one entry every bot turn produces exactly once, whatever slot it lands on, so
+            // it is both stable and the sharper test of the lock: a double-play would log two of them.
+            Assert.Equal(1, updatedGame.Actions.Count(a => a.ActionType == "Move"));
+            Assert.True(updatedGame.Actions.Count(a => a.ActionType == "EndTurn") <= 1,
+                "A turn ends at most once; more than one EndTurn means the lock let the turn play twice.");
         }
 
         [Theory]

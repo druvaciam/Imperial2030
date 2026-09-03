@@ -64,6 +64,16 @@
   <data name="TookControlOfTerritory" xml:space="preserve"><value>took control of {0}</value></data>
   <data name="TookControlOfTerritoryFrom" xml:space="preserve"><value>took control of {0} from {1}</value></data>
   <data name="BuiltFactory" xml:space="preserve"><value>built a factory in {0}</value></data>
+  <data name="FactoryNoFunds" xml:space="preserve"><value>could not afford a factory and passed</value></data>
+  <data name="FactoryAllBuilt" xml:space="preserve"><value>already had a factory in every city and passed</value></data>
+  <data name="FactoryBlockaded" xml:space="preserve"><value>could not build a factory: every free city is occupied by hostile armies</value></data>
+  <data name="FactoryDeclined" xml:space="preserve"><value>chose not to build a factory</value></data>
+  <data name="ImportNoFunds" xml:space="preserve"><value>could not afford to import and passed</value></data>
+  <data name="ImportNothing" xml:space="preserve"><value>imported nothing</value></data>
+  <data name="ProductionNoFactories" xml:space="preserve"><value>produced nothing: has no factories</value></data>
+  <data name="ProductionBlockaded" xml:space="preserve"><value>produced nothing: every factory is occupied by hostile armies</value></data>
+  <data name="ProductionAtUnitCap" xml:space="preserve"><value>produced nothing: already at the unit limit</value></data>
+  <data name="ManeuverNoUnits" xml:space="preserve"><value>had no units to maneuver</value></data>
   <data name="DestroyedFactory" xml:space="preserve"><value>destroyed {0} factory in {1}</value></data>
 
   <!-- Hostility toggle -->

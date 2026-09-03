@@ -17,6 +17,23 @@ public static class GameConstants
     // the Game / End of the Game"), and it is also the top of the scoring track, so power is clamped here.
     public const int MaxPowerPoints = 25;
 
+    /// <summary>
+    /// What one factory costs to build, in millions. Imperial-2030-Rules.pdf p.7: "The nation pays 5
+    /// million into the bank and the appropriate factory is placed on the game board in the chosen city."
+    ///
+    /// Shared because it was previously written out three times - a local const in GamesController, a
+    /// private const in TcpTrainingServer (where the RL reward tiers are derived from it), and a bare 5
+    /// in BotService's affordability check. Three copies of a rulebook number is three chances to change
+    /// two of them.
+    /// </summary>
+    public const int FactoryCost = 5;
+
+    /// <summary>
+    /// What one imported unit costs, in millions. Imperial-2030-Rules.pdf p.8: a nation may buy up to
+    /// three units at 1 million each on the Import space.
+    /// </summary>
+    public const int ImportUnitCost = 1;
+
     // Role claim carried by tokens from AuthController.GuestLogin. A guest is a throwaway identity with no
     // backing ApplicationUser row, so it may browse and spectate but not create or join games.
     //

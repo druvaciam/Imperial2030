@@ -18,6 +18,9 @@ public class BotService
     private readonly IEnumerable<Bots.IBotStrategy> _botStrategies;
     private readonly ILogger<BotService> _logger;
     public const int BotDelayMs = 5000;
+
+    private const int FactoryCost = GameConstants.FactoryCost;
+    private const int ImportUnitCost = GameConstants.ImportUnitCost;
     public bool SkipDelays { get; set; } = false;
 
     public BotService(IServiceScopeFactory scopeFactory, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, IEnumerable<Bots.IBotStrategy> botStrategies, ILogger<BotService> logger)
@@ -404,6 +407,12 @@ public class BotService
 
         // Step 2: Execute slot action
 
+        // Watched so the pause below can be skipped when the slot did nothing worth reading. A bot that
+        // landed on Factory it could not afford used to sit silent for BotDelayMs before "ended their
+        // turn", so the gap between two log lines was 10s with nothing in between - see the Factory
+        // no-funds / no-site entries, which now fill that middle beat.
+        int actionCountBeforeSlot = game.Actions.Count;
+
         switch (targetSlot)
         {
             case RondelData.TaxationSlot: await BotTaxation(ctx, game, nationState, controller); break;
@@ -422,9 +431,14 @@ public class BotService
         // If not taxation (which auto-advances), not in maneuver, and not mid-Import/Build decision, end turn
         bool importPending = targetSlot == RondelData.ImportSlot && !nationState.HasImportedThisTurn;
         bool buildPending = targetSlot == RondelData.FactorySlot && !nationState.HasBuiltThisTurn;
+        bool slotActionWasLogged = game.Actions.Count > actionCountBeforeSlot;
+
         if (targetSlot != RondelData.TaxationSlot && game.Status == GameStatus.InProgress && game.CurrentManeuverPhase == ManeuverPhase.None && !importPending && !buildPending)
         {
-            if (!SkipDelays) await Task.Delay(BotDelayMs);
+            // Only wait if there is something on screen to have read. The delay exists to let a viewer
+            // take in what the bot just did; with no log entry it is dead time, and it stacked with the
+            // post-rondel delay above to make a single silent turn take twice as long as a busy one.
+            if (!SkipDelays && slotActionWasLogged) await Task.Delay(BotDelayMs);
             game = await ReloadGameAsync(ctx, game);
             if (game == null) return;
             nationState = game.NationStates.First(ns => ns.Nation == nation);
@@ -520,7 +534,8 @@ public class BotService
 
     // --- Slot Action Implementations ---
 
-    private async Task BotBuildFactory(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
+    // internal for the same reason as BotManeuver: Tests drives this one slot action directly.
+    internal async Task BotBuildFactory(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
     {
         var strategy = GetStrategy(controller);
         if (strategy is RLBotStrategy && RLBotStrategy.TrainingActionOverride.Value.HasValue)
@@ -529,8 +544,9 @@ public class BotService
             return;
         }
 
-        if (ns.Treasury < 5)
+        if (ns.Treasury < FactoryCost)
         {
+            GameLogger.LogFactoryNotAfforded(ctx, game, ns.Nation, controller.BotName ?? "Bot");
             ns.HasBuiltThisTurn = true; // Nothing to build; nothing left to decide
             return;
         }
@@ -546,7 +562,27 @@ public class BotService
         }).ToList();
 
         var chosenCityId = validCities.Any() ? strategy.ChooseCityForFactory(game, ns.Nation, validCities) : null;
-        if (chosenCityId != null)
+        if (chosenCityId == null)
+        {
+            // Same three-way split TcpTrainingServer's wasted-Factory penalty already makes (NoMoney /
+            // AllBuilt / Blocked), so the game log and the RL log describe a turn the same way.
+            string botName = controller.BotName ?? "Bot";
+            if (validCities.Any())
+            {
+                GameLogger.LogFactoryDeclined(ctx, game, ns.Nation, botName);
+            }
+            else if (homeCities.All(city => game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id)?.HasFactory == true))
+            {
+                GameLogger.LogFactoryAllCitiesBuilt(ctx, game, ns.Nation, botName);
+            }
+            else
+            {
+                // Something buildable remains, so the only thing stopping it is a hostile army standing
+                // in it - which is what the validCities filter just rejected.
+                GameLogger.LogFactoryCitiesBlockaded(ctx, game, ns.Nation, botName);
+            }
+        }
+        else
         {
             var city = validCities.First(c => c.Id == chosenCityId);
             var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
@@ -555,14 +591,14 @@ public class BotService
                 ts = new TerritoryState { TerritoryId = city.Id, GameId = game.Id };
                 AddTerritoryState(ctx, game, ts);
             }
-            ns.Treasury -= 5;
+            ns.Treasury -= FactoryCost;
             ts.HasFactory = true;
             GameLogger.LogFactoryBuild(ctx, game, city.Name, ns.Nation, controller.BotName ?? "Bot");
         }
         ns.HasBuiltThisTurn = true; // Resolved either way (built, or explicitly/implicitly skipped)
     }
 
-    private async Task BotProduction(ApplicationDbContext? ctx, Game game, NationState ns)
+    internal async Task BotProduction(ApplicationDbContext? ctx, Game game, NationState ns)
     {
         var nation = ns.Nation;
         int produced = 0;
@@ -589,7 +625,36 @@ public class BotService
         }
         ns.HasProducedThisTurn = true;
         var botName = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId)?.BotName ?? "Bot";
-        GameLogger.LogProduction(ctx, game, produced, locationNames, nation, botName);
+
+        if (produced > 0)
+        {
+            GameLogger.LogProduction(ctx, game, produced, locationNames, nation, botName);
+        }
+        else
+        {
+            // Same treatment as a wasted Factory turn: say which of the three things stopped it, rather
+            // than logging "produced 0 units ()".
+            var ownFactories = game.TerritoryStates
+                .Where(ts => ts.HasFactory && TerritoryData.AllTerritories.Any(t => t.Id == ts.TerritoryId && t.Nation == nation))
+                .ToList();
+
+            bool AllBlockaded(TerritoryState ts) => game.Units.Any(u =>
+                u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
+
+            if (ownFactories.Count == 0)
+            {
+                GameLogger.LogProductionNoFactories(ctx, game, nation, botName);
+            }
+            else if (ownFactories.All(AllBlockaded))
+            {
+                GameLogger.LogProductionBlockaded(ctx, game, nation, botName);
+            }
+            else
+            {
+                // Something was unblockaded and still produced nothing, so its unit type is at the cap.
+                GameLogger.LogProductionAtUnitCap(ctx, game, nation, botName);
+            }
+        }
     }
 
     private async Task BotUnitActionDelay(ApplicationDbContext? ctx, Game game, int delayMs = 2000)
@@ -614,6 +679,13 @@ public class BotService
         var nation = ns.Nation;
         // Find nations controlled by same bot player
         var friendlyNations = game.NationStates.Where(n => n.ControllerId == controller.Id).Select(n => n.Nation).ToHashSet();
+
+        // The phase still auto-ends below, but two "auto-ended ... maneuver phase" lines do not say why
+        // nothing moved. Logged once here rather than per phase, since the answer is the same for both.
+        if (!game.Units.Any(u => u.Nation == nation))
+        {
+            GameLogger.LogManeuverNoUnits(ctx, game, nation, controller.BotName ?? "Bot");
+        }
 
         // Move fleets first
         var fleets = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved).ToList();
@@ -1223,7 +1295,7 @@ public class BotService
         game.AdvanceTurn();
     }
 
-    private async Task BotImport(ApplicationDbContext? ctx, Game game, NationState ns)
+    internal async Task BotImport(ApplicationDbContext? ctx, Game game, NationState ns)
     {
         var nation = ns.Nation;
         var controller = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId);
@@ -1240,8 +1312,9 @@ public class BotService
             return;
         }
 
-        if (ns.Treasury < 1)
+        if (ns.Treasury < ImportUnitCost)
         {
+            GameLogger.LogImportNotAfforded(ctx, game, ns.Nation, controller.BotName ?? "Bot");
             ns.HasImportedThisTurn = true; // Nothing to import; nothing left to decide
             return;
         }
@@ -1263,7 +1336,15 @@ public class BotService
         ns.Treasury -= imported;
         ns.HasImportedThisTurn = true;
         var botName = controller.BotName ?? "Bot";
-        GameLogger.LogImport(ctx, game, imported, locationNames, nation, botName);
+        if (imported == 0)
+        {
+            // "imported 0 units ()" says nothing and reads as a rendering fault.
+            GameLogger.LogImportedNothing(ctx, game, nation, botName);
+        }
+        else
+        {
+            GameLogger.LogImport(ctx, game, imported, locationNames, nation, botName);
+        }
     }
 
     public async Task BotInvestorAction(ApplicationDbContext? ctx, Game game, Player actor)

@@ -2075,11 +2075,20 @@ else
             }
             else
             {
-                var homeProvinces = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.Where(t => t.Nation == nation);
+                var homeProvinces = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.Where(t => t.Nation == nation).ToList();
                 int builtFactoriesCount = game.Territories.Count(ts => homeProvinces.Any(hp => hp.Id == ts.TerritoryId) && ts.HasFactory);
-                if (builtFactoriesCount >= homeProvinces.Count())
+                if (builtFactoriesCount >= homeProvinces.Count)
                 {
                     warningMessage = L["Warn_AllFactoriesBuilt"];
+                }
+                else if (!homeProvinces.Any(hp =>
+                             !game.Territories.Any(ts => ts.TerritoryId == hp.Id && ts.HasFactory) &&
+                             !game.Units.Any(u => u.TerritoryId == hp.Id && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile)))
+                {
+                    // Money and an empty city, but a hostile army stands in every empty one.
+                    // Imperial-2030-Rules.pdf p.7: "A factory may be built only in one of the nation's own
+                    // cities if there are no hostile armies (standing upright) in its home province."
+                    warningMessage = L["Warn_FactoryCitiesBlockaded"];
                 }
             }
         }
@@ -2108,6 +2117,33 @@ else
             else if (!hasUnblockadedFactory)
             {
                 warningMessage = L["Warn_FactoriesBlockaded"];
+            }
+            else
+            {
+                // A factory that is free to work can still have nothing to make, because that unit type
+                // is already at the nation's cap. This is the case that actually happens: the engine
+                // forbids hostile entry into a nation's last unoccupied factory, so at least one factory
+                // is always unblockaded and the branch above is close to unreachable, while this one was
+                // silent. Mirrors BotService.BotProduction's per-factory test exactly - a brown city
+                // makes an army, a light blue one a fleet, and each has its own cap.
+                int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
+                int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
+                int maxArmies = Imperial2030.Shared.Constants.NationData.GetMaxArmies(nation);
+                int maxFleets = Imperial2030.Shared.Constants.NationData.GetMaxFleets(nation);
+
+                bool canProduceAnything = myFactories.Any(factory =>
+                {
+                    bool isBlockaded = game.Units.Any(u => u.TerritoryId == factory.TerritoryId && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile);
+                    if (isBlockaded) return false;
+
+                    var def = Imperial2030.Shared.Constants.TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == factory.TerritoryId);
+                    return def?.CityType == CityType.LightBlue ? currentFleets < maxFleets : currentArmies < maxArmies;
+                });
+
+                if (!canProduceAnything)
+                {
+                    warningMessage = L["Warn_ProductionAtUnitCap"];
+                }
             }
         }
         // 3 & 7. Maneuver
