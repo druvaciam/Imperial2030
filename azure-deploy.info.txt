@@ -1,0 +1,86 @@
+================================================================================
+Imperial 2030 - Azure App Service (Deployment Notes)
+================================================================================
+
+Deployed by .github/workflows/main_imperial2030.yml on every push to main.
+See Imperial2030.Functions/info.txt for the separate notification Functions app,
+and linux-deploy.info.txt for the VPS target.
+
+
+1. REQUIRED APPLICATION SETTINGS
+--------------------------------------------------------------------------------
+Portal: App Service -> Settings -> Environment variables -> App settings.
+
+  Jwt__Key                    A base64 secret of at least 32 bytes.
+                              The server HARD-FAILS at startup outside Development
+                              if this is missing, and rejects the key that was once
+                              committed to the repo (it is compromised; its SHA-256
+                              is blocklisted in Server/Configuration/JwtOptions.cs).
+
+  ConnectionStrings__DefaultConnection
+                              SQL Server connection string. A value containing
+                              ".db" selects SQLite instead - see Program.cs.
+
+  WEBSITE_RUN_FROM_PACKAGE    1  (already set)
+                              Mounts the deployed zip read-only instead of
+                              extracting it over the running site.
+
+  LOG_DIRECTORY               D:\home\LogFiles     <-- SET THIS, see section 2
+
+  AzureFunctionNotificationUrl / AzureFunctionNotificationKey
+                              Optional; enables game-started / game-finished mail.
+
+
+2. LOG_DIRECTORY - FILE LOGGING IS CURRENTLY DEAD ON AZURE
+--------------------------------------------------------------------------------
+Not a deployment fix. A separate bug that WEBSITE_RUN_FROM_PACKAGE has been
+causing quietly for as long as it has been enabled.
+
+Server/nlog.config used to write to ${basedir}/logs. ${basedir} is inside the
+read-only package mount, so the target has never been able to create that
+directory on Azure - and an NLog file target that cannot write does NOT fail
+startup. It simply produces nothing, which is why this went unnoticed.
+
+nlog.config now reads LOG_DIRECTORY and falls back to ${basedir}/logs when it is
+unset, so local development and the VPS are unchanged and need no setting. On
+Azure, set:
+
+  LOG_DIRECTORY               D:\home\LogFiles
+
+D:\home is the persistent writable share on Windows App Service, and LogFiles is
+what the portal's log stream reads.
+
+Also read-only under run-from-package: the SQLite fallback in Program.cs writes
+imperial2030.db into ContentRootPath. It is only selected when the connection
+string is empty or contains ".db", so Azure (SQL Server) never takes that path -
+but a deploy without ConnectionStrings__DefaultConnection would fail there.
+
+
+3. INTERMITTENT DEPLOY FAILURE
+--------------------------------------------------------------------------------
+  Error: Failed to deploy web package using OneDeploy to App Service.
+  Internal Server Error (CODE: 500)
+
+The workflow now retries once and fails the job only if both attempts fail, so a
+single transient 500 no longer breaks the build.
+
+Because the site already runs from package, this is NOT the usual "extracting over
+files locked by the running process" failure - the zip is uploaded and the mount is
+swapped. If failures become consistent rather than intermittent, check in this
+order:
+
+  a) SitePackages quota. Run-from-package stores one zip per deployment under
+     D:\home\data\SitePackages. At ~100MB per deploy this fills the plan's file
+     share quota surprisingly fast, and a full share produces exactly this 500.
+     Check quota under App Service plan -> Quotas, and prune old zips via Kudu
+     (https://<app>.scm.azurewebsites.net -> Debug console -> data/SitePackages),
+     keeping packagename.txt and the zip it names.
+
+  b) Package size. Server/Imperial2030.Server.csproj globs *.onnx and *.onnx.data,
+     so EVERY model ever trained ships on every deploy (imperial_ppo_bot, RL-2,
+     RL-3, RL-4 = 4 x 14.8MB, ~59MB) on top of a 15MB onnxruntime.dll. These are
+     kept deliberately: a saved game whose bot has BotType "RL-2" loses real
+     inference if RL-2.onnx is not deployed, so trimming means retiring those bot
+     types, not just deleting files.
+
+  c) Kudu/SCM health. A restart of the SCM site clears some persistent 500s.

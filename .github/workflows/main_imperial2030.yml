@@ -55,11 +55,35 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_4CCECBE558AE4E978A6CCC0B28709748 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_923684076B4A4CF8B6CFE04227BABC8E }}
 
+      # OneDeploy returns an intermittent 500 on this app. The site already runs with
+      # WEBSITE_RUN_FROM_PACKAGE=1, so this is NOT the classic "extracting over locked files" failure -
+      # each deploy uploads a fresh ~100MB zip (of which ~59MB is ONNX model weights) and swaps the mount.
+      #
+      # A single retry clears the transient ones, which is all this step claims to do. If failures become
+      # consistent rather than intermittent, see azure-deploy.info.txt - the leading suspect is the
+      # SitePackages share filling up, since run-from-package keeps a zip per deployment.
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
+        continue-on-error: true
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'Imperial2030'
           slot-name: 'Production'
           package: .
+
+      - name: Retry deploy to Azure Web App
+        id: retry-deploy-to-webapp
+        if: steps.deploy-to-webapp.outcome == 'failure'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'Imperial2030'
+          slot-name: 'Production'
+          package: .
+
+      # continue-on-error above hides a first-attempt failure from the job status, so a genuine failure
+      # would otherwise report success when the retry was skipped. It never is skipped when the first
+      # attempt failed, but this makes the job fail loudly rather than depending on that reasoning.
+      - name: Fail if both deploy attempts failed
+        if: steps.deploy-to-webapp.outcome == 'failure' && steps.retry-deploy-to-webapp.outcome != 'success'
+        run: exit 1
           
