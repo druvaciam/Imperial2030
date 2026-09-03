@@ -25,30 +25,35 @@ Portal: App Service -> Settings -> Environment variables -> App settings.
                               Mounts the deployed zip read-only instead of
                               extracting it over the running site.
 
-  LOG_DIRECTORY               D:\home\LogFiles     <-- SET THIS, see section 2
-
   AzureFunctionNotificationUrl / AzureFunctionNotificationKey
                               Optional; enables game-started / game-finished mail.
 
+  LOG_DIRECTORY               NOT required. Optional override only - see below.
 
-2. LOG_DIRECTORY - FILE LOGGING IS CURRENTLY DEAD ON AZURE
+
+2. FILE LOGGING ON AZURE - FIXED IN CODE, NO SETTING NEEDED
 --------------------------------------------------------------------------------
-Not a deployment fix. A separate bug that WEBSITE_RUN_FROM_PACKAGE has been
-causing quietly for as long as it has been enabled.
+Not a deployment fix. A separate bug that WEBSITE_RUN_FROM_PACKAGE has been causing
+quietly for as long as it has been enabled.
 
 Server/nlog.config used to write to ${basedir}/logs. ${basedir} is inside the
-read-only package mount, so the target has never been able to create that
-directory on Azure - and an NLog file target that cannot write does NOT fail
-startup. It simply produces nothing, which is why this went unnoticed.
+read-only package mount, so the target could never create that directory on Azure -
+and an NLog file target that cannot write does NOT fail startup. It silently
+produces nothing, which is why this went unnoticed.
 
-nlog.config now reads LOG_DIRECTORY and falls back to ${basedir}/logs when it is
-unset, so local development and the VPS are unchanged and need no setting. On
-Azure, set:
+Program.cs now calls LogPaths.ApplyToEnvironment() before AddNLog, and
+Server/Configuration/LogPaths.cs derives the directory:
 
-  LOG_DIRECTORY               D:\home\LogFiles
+  1. LOG_DIRECTORY, if set          -> used as-is (explicit override)
+  2. else WEBSITE_SITE_NAME is set  -> %HOME%/LogFiles
+  3. else                           -> <application directory>/logs
 
-D:\home is the persistent writable share on Windows App Service, and LogFiles is
-what the portal's log stream reads.
+Nothing is hardcoded. HOME is whatever App Service exposes - "/home" on Linux, a
+drive-rooted path on Windows - so this works on either without anyone having to
+know which. WEBSITE_SITE_NAME is set by App Service and nowhere else; gating on it
+matters because HOME is also set on Linux desktops and in Git Bash, where it is the
+developer's home directory and would otherwise hijack local logs. Covered by
+Tests/LogPathsTests.cs.
 
 Also read-only under run-from-package: the SQLite fallback in Program.cs writes
 imperial2030.db into ContentRootPath. It is only selected when the connection
@@ -70,7 +75,7 @@ swapped. If failures become consistent rather than intermittent, check in this
 order:
 
   a) SitePackages quota. Run-from-package stores one zip per deployment under
-     D:\home\data\SitePackages. At ~100MB per deploy this fills the plan's file
+     %HOME%\data\SitePackages (see section 2 on why the path is not written out). At ~100MB per deploy this fills the plan's file
      share quota surprisingly fast, and a full share produces exactly this 500.
      Check quota under App Service plan -> Quotas, and prune old zips via Kudu
      (https://<app>.scm.azurewebsites.net -> Debug console -> data/SitePackages),
