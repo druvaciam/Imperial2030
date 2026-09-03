@@ -164,6 +164,8 @@
   <data name="Warn_AllFactoriesBuilt" xml:space="preserve"><value>Ва ўсіх вашых родных правінцыях ужо пабудаваныя фабрыкі. Больш будаваць няма дзе.</value></data>
   <data name="Warn_NoFactories" xml:space="preserve"><value>У вас няма фабрыкаў. Вы не вырабіце ніводнай адзінкі.</value></data>
   <data name="Warn_FactoriesBlockaded" xml:space="preserve"><value>Усе вашы фабрыкі заблакаваныя варожымі арміямі. Вы не зможаце нічога вырабіць.</value></data>
+  <data name="Warn_FactoryCitiesBlockaded" xml:space="preserve"><value>Усе гарады, дзе вы яшчэ маглі б будаваць, занятыя ворожымі арміямі. Вы не зможаце пабудаваць фабрыку.</value></data>
+  <data name="Warn_ProductionAtUnitCap" xml:space="preserve"><value>Вашы фабрыкі ўжо дасягнулі ліміту атрадаў. Вы не вырабіце ніводнага атрада.</value></data>
   <data name="Warn_NoUnitsToManeuver" xml:space="preserve"><value>У вас няма арміяў ці флотаў на дошцы для манеўру.</value></data>
   <data name="Warn_InterestShortfall" xml:space="preserve"><value>Гэта нацыя мае толькі {0}M, але вінна {1}M іншым гульцам. Вы атрымаеце 0M з вашых {2}M адсоткаў.</value></data>
   <data name="Warn_NoTreasuryForImport" xml:space="preserve"><value>У вашай казне 0M. Вы не зможаце імпартаваць адзінкі.</value></data>

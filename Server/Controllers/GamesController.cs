@@ -1839,7 +1839,7 @@ public class GamesController : ControllerBase
         if (hasHostileForeignArmy) return BadRequest("Cannot build factory: hostile foreign armies are present in the city.");
 
         // 5. Validate Cost (5M from Nation Treasury - per User Request "The nation pays 5 million into the bank")
-        const int FactoryCost = 5;
+        const int FactoryCost = GameConstants.FactoryCost;
         if (nationState.Treasury < FactoryCost) return BadRequest($"Nation treasury insufficient. Need {FactoryCost}M.");
 
         // 6. Execute Build

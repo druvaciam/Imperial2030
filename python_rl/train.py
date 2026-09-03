@@ -50,6 +50,43 @@ class RunRelativeSchedule:
         return min(1.0, max(0.0, (num_timesteps - self._start) / self.run_timesteps))
 
 
+class CumulativeSchedule:
+    """Progress across the agent's ENTIRE training history, 0.0 -> 1.0, and never backwards.
+
+    The opposite anchoring to RunRelativeSchedule, and deliberately so - the two schedules want opposite
+    things and sharing one anchor is what broke RL-4.
+
+    Exploration is a property of the CURRENT run: a resume should restore it, which is why ent_coef is
+    run-relative. Reward shaping is a property of what the agent has already LEARNED: holding the
+    wasted-Factory penalty off early only makes sense once, at the very start of the agent's life, so it
+    can discover what a factory pays back before being punished for reaching for one.
+
+    Anchoring the curriculum per-run instead meant every restart switched that penalty off again for
+    another 3M steps. RL-4's training was restarted six times, and its tb_logs show the result:
+
+        run 1 (   65k steps)  factory_penalty_scale max 0.000
+        run 2 (13.7M steps)                         max 1.000
+        run 3 (   24k steps)  --reset               max 0.000
+        run 4 (17.0M steps)                         max 1.000
+        run 5 ( 7.4M steps)                         max 0.874
+        run 6 (  966k steps)                        max 0.000   <- the final million steps
+
+    RL-4_best.zip, the checkpoint RL-4.onnx was exported from, sits at 22.35M cumulative but only 26% of
+    the way through run 5 - so it was saved with the wasted-Factory penalty running at 45% strength.
+    That is the reward term that is supposed to teach "do not move to Factory with no money or nothing
+    left to build", which is exactly the behaviour that came back.
+
+    Clamped at 1.0, so once the curriculum has finished it stays finished no matter how often training
+    is resumed.
+    """
+
+    def __init__(self, total_timesteps):
+        self.total_timesteps = max(1, total_timesteps)
+
+    def progress(self, num_timesteps):
+        return min(1.0, max(0.0, num_timesteps / self.total_timesteps))
+
+
 class EntCoefScheduleCallback(BaseCallback):
     """Linearly decays the entropy coefficient over the current run (see RunRelativeSchedule)."""
 
@@ -101,9 +138,10 @@ CURRICULUM_PUSH_EVERY = 10_000
 class CurriculumCallback(BaseCallback):
     """Pushes the reward-shaping curriculum into the envs, which forward it to the C# server on reset."""
 
-    def __init__(self, run_timesteps, verbose=0):
+    def __init__(self, total_timesteps, verbose=1):
         super().__init__(verbose)
-        self.schedule = RunRelativeSchedule(run_timesteps)
+        # Cumulative, NOT run-relative - see CumulativeSchedule for why they differ.
+        self.schedule = CumulativeSchedule(total_timesteps)
         self._last_push = None
 
     def _scales(self, progress):
@@ -134,7 +172,9 @@ class CurriculumCallback(BaseCallback):
                   f"shaping_scale={shaping:.2f} factory_penalty_scale={factory:.2f}")
 
     def _on_training_start(self) -> None:
-        self.schedule.start(self.num_timesteps)
+        progress = self.schedule.progress(self.num_timesteps)
+        print(f"[curriculum] resuming at {self.num_timesteps:,} cumulative steps "
+              f"({progress:.0%} of the curriculum budget); scales {self._scales(progress)}")
         self._push()
         self._last_push = self.num_timesteps
 
@@ -316,7 +356,12 @@ if __name__ == "__main__":
     # run_timesteps, not a cumulative total: TOTAL_TIMESTEPS is this run's budget (model.learn adds it to
     # num_timesteps internally when reset_num_timesteps=False), so both schedules span exactly this run.
     ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=INITIAL_ENT_COEF, final_ent_coef=FINAL_ENT_COEF, run_timesteps=TOTAL_TIMESTEPS)
-    curriculum_callback = CurriculumCallback(run_timesteps=TOTAL_TIMESTEPS)
+    # CURRICULUM_TIMESTEPS is a cumulative milestone, not this run's budget: it is the point in the
+    # agent's whole training history by which shaping should have finished decaying and the Factory
+    # penalty should be at full strength. Separate from TOTAL_TIMESTEPS so changing how long a single
+    # session runs cannot silently move the curriculum.
+    CURRICULUM_TIMESTEPS = 20_000_000
+    curriculum_callback = CurriculumCallback(total_timesteps=CURRICULUM_TIMESTEPS)
 
     callback = CallbackList([save_callback, ent_coef_callback, curriculum_callback])
     

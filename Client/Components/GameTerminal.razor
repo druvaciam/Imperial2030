@@ -268,6 +268,33 @@
                             <span class="message text-warning">@DescribeUnreadableEntry(action, ex)</span>
                         }
                     }
+                    @* Landed on Factory and built nothing. The reason is the action type itself, so
+                       there is no metadata to read and nothing that can fail to deserialize. *@
+                    @* Slot turns that did nothing. The reason is the action type, so there is no
+                       metadata to read and nothing that can fail to deserialize. *@
+                    @foreach (var noop in EmptyTurnMessages)
+                    {
+                        if (action.ActionType == noop.Key)
+                        {
+                            <span class="message">@L[noop.Value]</span>
+                        }
+                    }
+                    @if (action.ActionType == "FactoryNoFunds")
+                    {
+                        <span class="message">@L["FactoryNoFunds"]</span>
+                    }
+                    @if (action.ActionType == "FactoryAllBuilt")
+                    {
+                        <span class="message">@L["FactoryAllBuilt"]</span>
+                    }
+                    @if (action.ActionType == "FactoryBlockaded")
+                    {
+                        <span class="message">@L["FactoryBlockaded"]</span>
+                    }
+                    @if (action.ActionType == "FactoryDeclined")
+                    {
+                        <span class="message">@L["FactoryDeclined"]</span>
+                    }
                     @if (action.ActionType == "Factory" && !string.IsNullOrEmpty(action.Metadata) && string.IsNullOrEmpty(action.Message))
                     {
                         try
@@ -448,6 +475,21 @@
 </div>
 
 @code {
+    /// <summary>
+    /// Action types for a rondel turn that produced no game effect, and the resource key explaining why.
+    /// A table rather than a chain of @if blocks: they are all rendered identically, and every one of
+    /// these was at some point a silent turn that showed the player nothing at all.
+    /// </summary>
+    private static readonly Dictionary<string, string> EmptyTurnMessages = new()
+    {
+        ["ImportNoFunds"] = "ImportNoFunds",
+        ["ImportNothing"] = "ImportNothing",
+        ["ProductionNoFactories"] = "ProductionNoFactories",
+        ["ProductionBlockaded"] = "ProductionBlockaded",
+        ["ProductionAtUnitCap"] = "ProductionAtUnitCap",
+        ["ManeuverNoUnits"] = "ManeuverNoUnits",
+    };
+
     [Parameter]
     public List<GameActionDto> Actions { get; set; } = new();
 

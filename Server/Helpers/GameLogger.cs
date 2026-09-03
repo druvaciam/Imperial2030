@@ -105,6 +105,106 @@ public static class GameLogger
         LogAction(context, game, "Factory", nation, playerName, new ActionMetadata { TerritoryId = territoryId });
     }
 
+    /// <summary>
+    /// Landed on Factory and built nothing.
+    ///
+    /// Previously silent: BotBuildFactory just returned, so the log jumped straight from "moved to
+    /// Factory" to "ended their turn" with a ten-second gap and no explanation. The reason is carried by
+    /// the action type rather than a new metadata field - there are exactly two ways to be unable to
+    /// build (no money, or no city left to build in), and the terminal already switches on ActionType
+    /// everywhere, so this needs no schema change and old logs still deserialize.
+    /// </summary>
+    public static void LogFactoryNotAfforded(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "FactoryNoFunds", nation, playerName, new ActionMetadata());
+    }
+
+    /// <summary>
+    /// Landed on Factory with the money, but every home city already has one.
+    ///
+    /// The ceiling is four - one factory per home city (Imperial-2030-Rules.pdf p.7, "Only one factory
+    /// may be built in each city"), two of which are on the board at setup (p.4).
+    /// </summary>
+    public static void LogFactoryAllCitiesBuilt(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "FactoryAllBuilt", nation, playerName, new ActionMetadata());
+    }
+
+    /// <summary>
+    /// Landed on Factory with the money and an empty city, but hostile armies are standing in every city
+    /// that could still take one. p.7: "A factory may be built only in one of the nation's own cities if
+    /// there are no hostile armies (standing upright) in its home province."
+    /// </summary>
+    public static void LogFactoryCitiesBlockaded(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "FactoryBlockaded", nation, playerName, new ActionMetadata());
+    }
+
+    /// <summary>
+    /// Could have built and chose not to. Distinct from the three "could not" entries above because it is
+    /// a decision rather than a constraint - it is the case TcpTrainingServer penalises as an avoidable
+    /// factory skip, and the only remaining way for a Factory turn to produce no log line at all.
+    /// </summary>
+    public static void LogFactoryDeclined(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "FactoryDeclined", nation, playerName, new ActionMetadata());
+    }
+
+    /// <summary>
+    /// Landed on Import with less than the 1M a single unit costs (Imperial-2030-Rules.pdf p.8).
+    /// Previously a silent return, exactly like the Factory no-funds case.
+    /// </summary>
+    public static void LogImportNotAfforded(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "ImportNoFunds", nation, playerName, new ActionMetadata());
+    }
+
+    /// <summary>
+    /// Landed on Import with the money and placed nothing. Logged instead of an "imported 0 units ()"
+    /// entry, which said nothing and read as a rendering fault.
+    /// </summary>
+    public static void LogImportedNothing(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "ImportNothing", nation, playerName, new ActionMetadata());
+    }
+
+    /// <summary>Landed on Production owning no factory at all.</summary>
+    public static void LogProductionNoFactories(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "ProductionNoFactories", nation, playerName, new ActionMetadata());
+    }
+
+    /// <summary>
+    /// Landed on Production with every factory blockaded. p.7: "Factories in a home province in which
+    /// hostile armies (standing upright) are present cannot produce."
+    /// </summary>
+    public static void LogProductionBlockaded(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "ProductionBlockaded", nation, playerName, new ActionMetadata());
+    }
+
+    /// <summary>
+    /// Landed on Production with a working factory that has nothing left to make, because that unit type
+    /// is already at the nation's cap (NationData.GetMaxArmies/GetMaxFleets).
+    ///
+    /// This is the normal reason a Production turn produces nothing: the engine forbids hostile entry
+    /// into a nation's last unoccupied factory, so at least one factory is always unblockaded, and a
+    /// fully wasted Production turn therefore always involves the unit cap rather than blockade alone.
+    /// </summary>
+    public static void LogProductionAtUnitCap(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "ProductionAtUnitCap", nation, playerName, new ActionMetadata());
+    }
+
+    /// <summary>
+    /// Landed on Maneuver owning no units. The phase still auto-ends, but "auto-ended Fleets maneuver
+    /// phase" twice in a row does not say why nothing moved.
+    /// </summary>
+    public static void LogManeuverNoUnits(ApplicationDbContext? context, Game game, Nation nation, string playerName)
+    {
+        LogAction(context, game, "ManeuverNoUnits", nation, playerName, new ActionMetadata());
+    }
+
     public static void LogFactoryDestruction(ApplicationDbContext? context, Game game, string territoryId, Nation nation, string playerName)
     {
         LogAction(context, game, "DestroyFactory", nation, playerName, new ActionMetadata { TerritoryId = territoryId });

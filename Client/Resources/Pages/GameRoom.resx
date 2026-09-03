@@ -164,6 +164,8 @@
   <data name="Warn_AllFactoriesBuilt" xml:space="preserve"><value>All of your home provinces already have factories built. You cannot build any more.</value></data>
   <data name="Warn_NoFactories" xml:space="preserve"><value>You do not have any factories. You will not produce any units.</value></data>
   <data name="Warn_FactoriesBlockaded" xml:space="preserve"><value>All of your factories are blockaded by hostile armies. You cannot produce any units.</value></data>
+  <data name="Warn_FactoryCitiesBlockaded" xml:space="preserve"><value>Every home city you could still build in is occupied by hostile armies. You will not be able to build a factory.</value></data>
+  <data name="Warn_ProductionAtUnitCap" xml:space="preserve"><value>Your factories are already at their unit limit. You will not produce any units.</value></data>
   <data name="Warn_NoUnitsToManeuver" xml:space="preserve"><value>You have no armies or fleets on the board to maneuver.</value></data>
   <data name="Warn_InterestShortfall" xml:space="preserve"><value>This nation only has {0}M, but owes {1}M to other players. You will earn 0M from your {2}M interest.</value></data>
   <data name="Warn_NoTreasuryForImport" xml:space="preserve"><value>You have 0M in your treasury. You will not be able to import any units.</value></data>

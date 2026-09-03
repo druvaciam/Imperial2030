@@ -64,6 +64,16 @@
   <data name="TookControlOfTerritory" xml:space="preserve"><value>узяў кантроль над {0}</value></data>
   <data name="TookControlOfTerritoryFrom" xml:space="preserve"><value>адабраў кантроль над {0} у {1}</value></data>
   <data name="BuiltFactory" xml:space="preserve"><value>пабудаваў фабрыку ў {0}</value></data>
+  <data name="FactoryNoFunds" xml:space="preserve"><value>не змог аплаціць фабрыку і прапусціў ход</value></data>
+  <data name="FactoryAllBuilt" xml:space="preserve"><value>ужо меў фабрыку ў кожным горадзе і прапусціў ход</value></data>
+  <data name="FactoryBlockaded" xml:space="preserve"><value>не змог пабудаваць фабрыку: усе вольныя гарады занятыя ворожымі арміямі</value></data>
+  <data name="FactoryDeclined" xml:space="preserve"><value>вырашыў не будаваць фабрыку</value></data>
+  <data name="ImportNoFunds" xml:space="preserve"><value>не змог аплаціць імпарт і прапусціў ход</value></data>
+  <data name="ImportNothing" xml:space="preserve"><value>нічога не імпартаваў</value></data>
+  <data name="ProductionNoFactories" xml:space="preserve"><value>нічога не вырабіў: няма фабрык</value></data>
+  <data name="ProductionBlockaded" xml:space="preserve"><value>нічога не вырабіў: усе фабрыкі занятыя ворожымі арміямі</value></data>
+  <data name="ProductionAtUnitCap" xml:space="preserve"><value>нічога не вырабіў: ужо дасягнуты ліміт атрадаў</value></data>
+  <data name="ManeuverNoUnits" xml:space="preserve"><value>не меў атрадаў для манёўра</value></data>
   <data name="DestroyedFactory" xml:space="preserve"><value>знішчыў фабрыку {0} у {1}</value></data>
 
   <!-- Hostility toggle -->
