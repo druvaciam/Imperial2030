@@ -794,6 +794,43 @@ public class TcpTrainingServer : BackgroundService
             if (unit != null)
             {
                 unit.HasMoved = true;
+
+                // Evaluated here, before the move resolves: the unit is still standing at its origin, which
+                // is where reachability has to be measured from. Covers "Do Not Move" too - declining is
+                // exactly the case this exists for.
+                string? chosenDestinationId = null;
+                if (req.Action != 126)
+                {
+                    int chosenIdx = req.Action - 127;
+                    if (chosenIdx >= 0 && chosenIdx < RLBotStrategy.AllManeuverTerritories.Length)
+                    {
+                        chosenDestinationId = RLBotStrategy.AllManeuverTerritories[chosenIdx];
+                    }
+                }
+
+                var rlControlledNations = game.NationStates
+                    .Where(n => n.ControllerId == session.RLPlayerId)
+                    .Select(n => n.Nation)
+                    .ToHashSet();
+
+                if (chosenDestinationId != null && IsRedundantStackMove(game, unit, chosenDestinationId, rlControlledNations))
+                {
+                    _logger.LogWarning(
+                        $"[RL PENALTY] {unit.Nation} stacked another army onto '{chosenDestinationId}', which a " +
+                        $"friendly army already holds and nothing contests - no flag, no battle. Penalty: -{RedundantStackPenalty}");
+                    explicitBonusReward -= RedundantStackPenalty;
+                }
+
+                float declinedRelief = DeclinedHomeReliefPenaltyFor(game, unit, chosenDestinationId);
+                if (declinedRelief > 0f)
+                {
+                    _logger.LogWarning(
+                        $"[RL PENALTY] {unit.Nation} left '{ReachableBlockadedHomeProvince(game, unit)}' blockaded: " +
+                        $"the army in '{unit.TerritoryId}' could have relieved it and went to " +
+                        $"'{chosenDestinationId ?? "nowhere"}' instead. Penalty: -{declinedRelief}");
+                    explicitBonusReward -= declinedRelief;
+                }
+
                 if (req.Action != 126) // Not "Do Not Move"
                 {
                     int destIdx = req.Action - 127;
@@ -1147,7 +1184,7 @@ public class TcpTrainingServer : BackgroundService
             }
             if (postHostilesInHome < preHostilesInHome)
             {
-                explicitBonusReward += (preHostilesInHome - postHostilesInHome) * 5.0f; // Nice reward for clearing home territory
+                explicitBonusReward += (preHostilesInHome - postHostilesInHome) * HomeReliefReward;
                 //_logger.LogInformation($"[RL REWARD] Hostiles cleared from home by {preNs.Nation}. +{(preHostilesInHome - postHostilesInHome) * 5.0f}");
             }
 
@@ -2118,6 +2155,159 @@ public class TcpTrainingServer : BackgroundService
     /// already standing on Factory AND could build, so the agent's way out is simply to build, which is
     /// the behaviour being trained. Skipping in that position is never forced.
     /// </summary>
+    /// <summary>
+    /// Charged for marching an army into a neutral region a friendly army of the same nation already
+    /// holds, when nothing hostile is there to fight.
+    ///
+    /// A flag goes to the first army: p.10, "A nation's flag is placed in newly occupied land or sea
+    /// regions that don't contain foreign military units." The second and third gain no flag, no battle
+    /// and no blockade - they are a spent maneuver. Observed live as "Bot Charlie (RL-4) USA army moved
+    /// to Alaska from Chicago" three times in a row, claiming one flag with three armies.
+    ///
+    /// The reward function only ever paid +1 per flag gained, which prices the good move but never the
+    /// wasted one, and the agent never sees the counterfactual three flags it did not take.
+    ///
+    /// Deliberately narrow, because stacking is often correct and the rules say why:
+    ///   - foreign home provinces are exempt - three armies destroy a factory (p.11), and armies
+    ///     blockade (p.10), both of which need numbers;
+    ///   - a destination holding any foreign unit is exempt - that is reinforcement for a fight;
+    ///   - the nation's own home provinces are exempt - massing to defend a factory city is sound.
+    /// Sized like PointlessReversalPenalty, for the same reason given there: above the small
+    /// flag/positioning rewards so the waste cannot be farmed, well below the wasted-Rondel-turn
+    /// penalties, because the move is pointless rather than actively damaging.
+    /// </summary>
+    public const float RedundantStackPenalty = 4.0f;
+
+    /// <summary>
+    /// True when moving <paramref name="unit"/> to <paramref name="targetTerritoryId"/> piles it onto a
+    /// neutral region that friendly armies already hold in sufficient strength.
+    ///
+    /// "Sufficient" is decided by the combat rule, not by a count of one. Battles destroy 1:1 (p.10,
+    /// "the active nation may destroy armies in land regions 1:1"), so an attacker arriving with A armies
+    /// trades away A defenders and A of its own.
+    ///
+    /// MATCHING the reachable threat is therefore enough, not exceeding it: with equal numbers both sides
+    /// are wiped out and the region ends up empty, and p.10 says "A flag remains in a region until the
+    /// region is occupied EXCLUSIVELY by another nation" - an empty region is occupied exclusively by
+    /// nobody, so the flag stays with its owner. The engine agrees: BotUpdateTerritoryControl skips any
+    /// territory with no units in it (`if (!unitsInTerritory.Any()) continue;`), leaving the controller
+    /// untouched. So two enemies one hop away justify a second defender, and no more.
+    ///
+    /// The move is redundant once the armies already present match or beat the reachable threat.
+    /// With no enemy able to reach, one defender is already enough and every further army is spent for
+    /// nothing - which is the observed case, three armies walking into an uncontested Alaska for one flag.
+    ///
+    /// The threat count is deliberately the LAST check: it walks reachability for every enemy army, so it
+    /// only runs once the cheap structural conditions have already established the move looks redundant.
+    /// </summary>
+    public static bool IsRedundantStackMove(Game game, Unit unit, string targetTerritoryId, ISet<Nation>? friendlyNations = null)
+    {
+        if (unit.UnitType != UnitType.Army) return false;
+        if (targetTerritoryId == unit.TerritoryId) return false;
+
+        var target = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == targetTerritoryId);
+
+        // Neutral land only: home provinces (anyone's) have their own reasons to be stacked.
+        if (target == null || target.Nation.HasValue || target.Type != TerritoryType.Land) return false;
+
+        bool IsFriendly(Nation n) => friendlyNations?.Contains(n) ?? (n == unit.Nation);
+
+        var occupants = game.Units.Where(u => u.TerritoryId == targetTerritoryId && u.Id != unit.Id).ToList();
+
+        // Anything foreign there makes this reinforcement, not waste.
+        if (occupants.Any(u => !IsFriendly(u.Nation))) return false;
+
+        int defendersAlreadyThere = occupants.Count(u => u.UnitType == UnitType.Army);
+        if (defendersAlreadyThere == 0) return false;
+
+        return defendersAlreadyThere >= EnemyArmiesAbleToReach(game, targetTerritoryId, IsFriendly, unit.Id);
+    }
+
+    /// <summary>
+    /// How many enemy armies could move into <paramref name="territoryId"/> on their own next maneuver,
+    /// measured with the same reachability the engine grants them (adjacency, their rail, their convoys).
+    /// </summary>
+    private static int EnemyArmiesAbleToReach(Game game, string territoryId, Func<Nation, bool> isFriendly, Guid excludeUnitId)
+    {
+        return game.Units.Count(u =>
+            u.Id != excludeUnitId &&
+            u.UnitType == UnitType.Army &&
+            !isFriendly(u.Nation) &&
+            Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, u.TerritoryId, u.Nation)
+                .Any(d => d.TerritoryId == territoryId));
+    }
+
+    /// <summary>
+    /// Paid when a maneuver clears a hostile army out of the acting nation's own home province.
+    ///
+    /// Raised from 5. A hostile army standing in a home province blocks production, import, factory
+    /// building, taxation AND rail there (Imperial-2030-Rules.pdf p.10), so relieving one is worth far
+    /// more than the -40 this same function charges for a merely inefficient rondel move. At 5 it was
+    /// the smallest term in the reward function, describing one of the largest swings on the board.
+    /// </summary>
+    public const float HomeReliefReward = 15.0f;
+
+    /// <summary>
+    /// Charged when the army being maneuvered could have moved into a blockaded home province of its own
+    /// nation and went somewhere else - or nowhere at all.
+    ///
+    /// <see cref="HomeReliefReward"/> only ever pays for acting; nothing cost anything for declining, and
+    /// "Do Not Move" is unconditionally legal at every maneuver step. Observed live as "Bot Delta (RL-4)
+    /// China army stayed in Korea" twice in a row while a hostile army sat in Beijing, which Korea
+    /// borders. That choice was free.
+    ///
+    /// Deliberately the same magnitude as the reward rather than larger: this is the symmetric half of an
+    /// existing term, not a new deterrent, and rule #25's warning about stacking penalties for one
+    /// outcome applies - the two are mutually exclusive, since a step either relieved the province or did
+    /// not.
+    /// </summary>
+    public const float DeclinedHomeReliefPenalty = 15.0f;
+
+    /// <summary>
+    /// The blockaded home province this army could relieve this step, or null if there is none.
+    ///
+    /// "Relieve" is exact rather than hopeful: moving an army into its own home province while foreign
+    /// units are there is forced hostile by the engine, which resolves as a battle and removes an
+    /// occupier. Armies only - p.7's blockade is caused by "hostile armies (standing upright)", and a
+    /// fleet cannot enter a land province to contest one.
+    ///
+    /// Reachability comes from ManeuverHelper.GetAllReachableArmyDestinations, the same call the action
+    /// mask uses to decide which destinations to unmask, so the penalty can never fire for a move the
+    /// agent was not actually offered.
+    /// </summary>
+    public static string? ReachableBlockadedHomeProvince(Game game, Unit unit)
+    {
+        if (unit.UnitType != UnitType.Army) return null;
+
+        var homeProvinceIds = TerritoryData.AllTerritories
+            .Where(t => t.Nation == unit.Nation)
+            .Select(t => t.Id)
+            .ToHashSet();
+
+        if (homeProvinceIds.Count == 0) return null;
+
+        bool IsBlockaded(string territoryId) => game.Units.Any(u =>
+            u.TerritoryId == territoryId && u.UnitType == UnitType.Army && u.Nation != unit.Nation && u.IsHostile);
+
+        return Helpers.ManeuverHelper
+            .GetAllReachableArmyDestinations(game, unit.TerritoryId, unit.Nation)
+            .Select(d => d.TerritoryId)
+            .FirstOrDefault(id => homeProvinceIds.Contains(id) && IsBlockaded(id));
+    }
+
+    /// <summary>
+    /// The penalty owed for this maneuver decision: <see cref="DeclinedHomeReliefPenalty"/> when relief
+    /// was available and not taken, otherwise zero. <paramref name="chosenDestinationId"/> is null when
+    /// the agent chose "Do Not Move", which is the case that prompted this.
+    /// </summary>
+    public static float DeclinedHomeReliefPenaltyFor(Game game, Unit unit, string? chosenDestinationId)
+    {
+        var relief = ReachableBlockadedHomeProvince(game, unit);
+        if (relief == null) return 0f;
+
+        return chosenDestinationId == relief ? 0f : DeclinedHomeReliefPenalty;
+    }
+
     public const float AvoidableFactorySkipPenalty = 30.0f;
 
     /// <summary>

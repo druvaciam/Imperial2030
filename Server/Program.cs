@@ -19,6 +19,11 @@ var builder = WebApplication.CreateBuilder(args);
 // so this doesn't produce duplicate console lines in a different format).
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
+// Must run before AddNLog, which is when nlog.config is read: nlog.config resolves its directory from
+// LOG_DIRECTORY, and this publishes the derived value into the environment. See LogPaths for why the
+// path is derived rather than hardcoded (the app directory is read-only under run-from-package, and the
+// writable location differs by host OS).
+Imperial2030.Server.Configuration.LogPaths.ApplyToEnvironment();
 builder.Logging.AddNLog();
 
 // Only register Windows Service hosting on Windows (skipped on Linux VPS deployments)

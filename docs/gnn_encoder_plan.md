@@ -20,10 +20,34 @@ all**. `GetStateVector` never references `MapConnectivity`. Territories enter as
 (per-nation home-city blocks, then aggregates like flag counts and unit totals).
 
 So the network is never told that Kolkata borders Chongqing — a direct border between an Indian and a
-Chinese home city. It can only recover spatial structure as statistical correlation between fixed
-feature indices, re-learned independently for every position, from tens of millions of games. Every
-strategically central concept in this game — threat, reachability, blockade, convoy range, "which of my
-factories can be reached next turn" — is a statement about the graph.
+Chinese home city.
+
+**What that does NOT mean.** An earlier draft of this section claimed the agent therefore cannot act on
+reachability. That was wrong, and worth stating plainly because it is the obvious inference and it
+overstates the case. The action mask already supplies legality at the moment of choice: at maneuver
+stage 2 only reachable destinations are unmasked, so the agent can never make an illegal move and never
+has to learn adjacency in order to avoid one. Verified in the installed library —
+`sb3_contrib/common/maskable/policies.py` applies the mask to the distribution *after* the forward pass
+(`distribution.apply_masking(action_masks)`), so the mask is not a network input, but that only means the
+network cannot condition its *preferences* on it. Ranking one legal destination above another needs
+nothing more than the state, which does carry both the selected unit (a one-hot over 62 territories) and
+per-territory occupancy.
+
+**What it does mean**, and this is the actual argument for a graph encoder:
+
+**No generalisation across territory pairs.** Because reachability is a mask rather than a feature, every
+association has to be memorised separately for each (origin, destination) pair — learning "relieve my
+blockaded home city from Korea" transfers nothing to the identical situation one province over, though it
+is the same concept. That is 62 origins with no weight sharing between them, which makes such behaviour
+slow to learn rather than impossible.
+
+**No derived spatial features at all.** This is the sharper half. Anything that is a property of the
+*board* rather than of action legality is simply absent, and the mask offers nothing there: how many
+enemy armies can reach this territory next turn, whether a factory is defensible, how far a convoy
+extends. Concretely, `TcpTrainingServer.IsRedundantStackMove` has to compute "enemy armies able to reach
+this region" by walking `GetAllReachableArmyDestinations` for every enemy army on the board, because the
+policy cannot see it — a hand-written feature standing in for something message passing would produce for
+free, and only for the one case somebody noticed.
 
 A CNN is the wrong tool: it is foundational in the AlphaZero lineage because Go/chess/shogi are played on
 regular grids where a kernel can slide. This map is an irregular graph with sea regions and canals. Message
@@ -46,10 +70,36 @@ From `Shared/Constants/TerritoryData.cs` and `Shared/Constants/MapConnectivity.c
 | Max degree | 15 (`IndianOcean`) |
 | Mean degree | 5.13 |
 
-**Use `N = 62` and a fixed node ordering.** The ordering must be stable and shared by both sides of the
-socket. Derive it once — `MapConnectivity.Adjacency.Keys.OrderBy(id => id, StringComparer.Ordinal)` — and
-expose it from a single constant so C# and the exporter cannot disagree. Do not order by declaration
-order in `TerritoryData`; that is not stable against edits to the file.
+**Use `N = 62` and reuse the ordering that already exists.** Node row *k* must be
+`RLBotStrategy.AllManeuverTerritories[k]` — do not invent a fresh ordering, and in particular do not sort
+alphabetically.
+
+That array is `HomeProvinceIds.Concat(NeutralLandIds).Concat(SeaZoneIds)` (`RLBotStrategy.cs:88`), and
+three things already line up with it:
+
+- **The action space.** Maneuver destination action `127 + k` is `AllManeuverTerritories[k]`. Adopting the
+  same order makes node row *k* and destination action `127 + k` the same territory, so the encoder's
+  per-node output sits directly opposite the action it informs. A separate ordering would require a
+  permutation table between them, which is a silent-corruption bug waiting to happen.
+- **The existing state vector.** `GetStateVector`'s map encoding emits those same three arrays in that
+  same order, so a node-feature block can be transcribed from the current per-territory code without
+  re-deriving which territory is which.
+- **The maneuver-selected one-hot**, which already indexes `AllManeuverTerritories` directly.
+
+None of this buys anything for the current MLP — a fully-connected network has no positional inductive
+bias, so aligned indices are just unrelated parameters and shuffling the order would train identically.
+It is precisely the graph encoder that turns the alignment into something real, because a GNN applies the
+*same* weights to every node: territory identity becomes a row rather than a position in a flat vector.
+
+Two properties to preserve. The array is a hand-written literal, so it is stable against edits to
+`TerritoryData` in a way a declaration-order scan would not be — but it is also not automatically in sync
+with the map. Assert both in `MapGraph`'s tests: that its contents equal `MapConnectivity.Adjacency.Keys`
+as a set, and that its length is `NodeCount`. That way a territory added to the map without being added
+here fails loudly instead of producing a graph with a hole in it.
+
+Note also that the current layout could not be reused as-is even with matching order: per-territory
+stride is 54 floats for home provinces and 31 for neutral land and seas, so there is no uniform "row" to
+slice. `[1, 62, F_node]` is what supplies that.
 
 ### Why this makes ONNX export easy
 
@@ -364,7 +414,7 @@ Each step ends with a green `dotnet test`.
 1. **Extract `NeuralBotStrategyBase`.** Pure refactor, zero behaviour change. Move `TrainingActionOverride`
    and the action constants up; repoint the five `BotService` sites. Full suite green **before** anything
    else. Own commit.
-2. **`Shared/Constants/MapGraph.cs`** — the canonical node ordering, `NodeCount` (62 today, derived),
+2. **`Shared/Constants/MapGraph.cs`** — `NodeCount` and the dense normalised adjacency, with node order taken from `RLBotStrategy.AllManeuverTerritories`,
    and the dense normalised adjacency. Generated from `MapConnectivity` at static-init, not hand-typed.
 3. **`GetGraphStateVector`** in the training server + `ResetResponse` fields. Testable with no model present.
 4. **`GnnBotStrategy`** with `BuildInputs` / `IsCompatibleWith`. With no `RL-G.onnx` on disk it logs and
@@ -379,8 +429,12 @@ Each step ends with a green `dotnet test`.
 
 ## 10. Tests to write
 
-- `MapGraph` census: 62 nodes, 159 undirected edges, symmetric, ordering stable and deterministic across
-  two calls, and every node present in `MapConnectivity.Adjacency`.
+- `MapGraph` census: 62 nodes, 159 undirected edges, symmetric, and every node present in
+  `MapConnectivity.Adjacency`.
+- **Ordering identity:** `MapGraph`'s node order is exactly `RLBotStrategy.AllManeuverTerritories`, and
+  its contents equal `MapConnectivity.Adjacency.Keys` as a set. The first keeps node row *k* and
+  destination action `127 + k` the same territory; the second catches a territory added to the map but
+  not to the hand-written array, which would otherwise leave a hole in the graph rather than fail.
 - Adjacency normalisation: rows of `A_hat` sum to ~1 under the chosen scheme, and **no node has degree
   zero** — assert that explicitly, so a future map edit introducing an isolated node fails loudly here
   rather than producing NaN logits at inference time.
