@@ -55,13 +55,11 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_4CCECBE558AE4E978A6CCC0B28709748 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_923684076B4A4CF8B6CFE04227BABC8E }}
 
-      # OneDeploy returns an intermittent 500 on this app. The site already runs with
-      # WEBSITE_RUN_FROM_PACKAGE=1, so this is NOT the classic "extracting over locked files" failure -
-      # each deploy uploads a fresh ~100MB zip (of which ~59MB is ONNX model weights) and swaps the mount.
-      #
-      # A single retry clears the transient ones, which is all this step claims to do. If failures become
-      # consistent rather than intermittent, see azure-deploy.info.txt - the leading suspect is the
-      # SitePackages share filling up, since run-from-package keeps a zip per deployment.
+      # OneDeploy returns an intermittent 500 on this app. Kudu's deployment history contains only
+      # successes - no failed run is recorded there at all - so the failure happens BEFORE Kudu, in the
+      # ARM/upload handoff, rather than in the app or its deployment pipeline. A single retry is the
+      # right mitigation for a transient upload fault, and is all this repo can do about it.
+      # See azure-deploy.info.txt section 3.
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
         continue-on-error: true

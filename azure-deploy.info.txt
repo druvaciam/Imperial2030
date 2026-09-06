@@ -66,26 +66,24 @@ but a deploy without ConnectionStrings__DefaultConnection would fail there.
   Error: Failed to deploy web package using OneDeploy to App Service.
   Internal Server Error (CODE: 500)
 
-The workflow now retries once and fails the job only if both attempts fail, so a
-single transient 500 no longer breaks the build.
+MEASURED 2026-09-04. Kudu's deployment history (/api/deployments on the SCM site)
+contains ONLY successes - no status:3 entry exists for any failed run. A deploy
+that had reached Kudu and failed would be recorded there.
 
-Because the site already runs from package, this is NOT the usual "extracting over
-files locked by the running process" failure - the zip is uploaded and the mount is
-swapped. If failures become consistent rather than intermittent, check in this
-order:
+So the failure happens BEFORE Kudu: in the ARM/upload handoff, not in the app, not
+in its storage, and not in the deployment pipeline. Nothing on the app side of that
+boundary can explain it, and nothing on the app side needs changing to fix it.
 
-  a) SitePackages quota. Run-from-package stores one zip per deployment under
-     %HOME%\data\SitePackages (see section 2 on why the path is not written out). At ~100MB per deploy this fills the plan's file
-     share quota surprisingly fast, and a full share produces exactly this 500.
-     Check quota under App Service plan -> Quotas, and prune old zips via Kudu
-     (https://<app>.scm.azurewebsites.net -> Debug console -> data/SitePackages),
-     keeping packagename.txt and the zip it names.
+That also matches the failure being intermittent - a transient fault in the upload,
+rather than a resource that has run out.
 
-  b) Package size. Server/Imperial2030.Server.csproj globs *.onnx and *.onnx.data,
-     so EVERY model ever trained ships on every deploy (imperial_ppo_bot, RL-2,
-     RL-3, RL-4 = 4 x 14.8MB, ~59MB) on top of a 15MB onnxruntime.dll. These are
-     kept deliberately: a saved game whose bot has BotType "RL-2" loses real
-     inference if RL-2.onnx is not deployed, so trimming means retiring those bot
-     types, not just deleting files.
+Mitigation: the workflow retries the deploy once and fails the job only if both
+attempts fail. That is the right shape of fix for a transient upload fault. It is
+the only thing this repo can do about it.
 
-  c) Kudu/SCM health. A restart of the SCM site clears some persistent 500s.
+For reference, storage was checked and ruled out: the F1 plan holds this app alone
+against a 1 GiB limit and read 455.49 MiB (~44%). Run-from-package does keep a zip
+per deployment under %HOME%\data\SitePackages and that does grow - roughly five
+more deploys of headroom at ~100MB each - so it is worth pruning via Kudu eventually
+(Debug console -> data/SitePackages, keep packagename.txt and the zip it names).
+It is a future capacity note, not a cause.
