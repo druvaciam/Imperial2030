@@ -36,6 +36,18 @@ public class TcpTrainingServer : BackgroundService
         // the agent chooses Keep, so re-scanning for candidates without this would re-offer the exact same
         // territory forever — this cap ensures each qualifying stack is asked at most once per turn.
         public HashSet<string> DecidedFactoryDestructionTerritoriesThisTurn { get; set; } = new();
+        /// <summary>
+        /// The nation that landed on the Factory slot THIS TURN and still owes a build/skip decision, or
+        /// null. Armed by the rondel move, cleared the moment the decision resolves.
+        ///
+        /// This has to be session state, exactly like <see cref="PendingImportRemaining"/> below, and
+        /// cannot be re-derived from the nation itself: RondelPosition persists across turns by design and
+        /// Game.AdvanceTurn clears HasBuiltThisTurn every turn, so a gate built from those two re-arms on
+        /// the nation's every later turn and traps it on the slot for the rest of the game. See
+        /// Tests/TrainingFactorySlotTrapTests.cs.
+        /// </summary>
+        public Nation? FactoryDecisionOwedBy { get; set; }
+
         public int? PendingImportRemaining { get; set; } // Non-null while stepping through an Import decision sequence
         public int ImportUnitsPlacedThisSequence { get; set; } = 0; // Tracks whether the current Import sequence placed anything, for the wasted-import-with-money penalty
 
@@ -461,6 +473,26 @@ public class TcpTrainingServer : BackgroundService
         }
 
 
+        // Log the roster/setup snapshot the same way a real StartGame does. Training games are built here
+        // rather than through GamesController.StartGame, so they never carried one - which made a halted
+        // session's export unimportable ("missing its StartGame roster/setup metadata") and therefore
+        // unreplayable, exactly when someone most wants to watch it back.
+        GameLogger.LogStartGame(
+            null,
+            game,
+            GameConstants.SystemPlayerName,
+            distribution.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Id),
+            game.Players.Select(pl => new Imperial2030.Shared.Models.PlayerRosterEntry
+            {
+                PlayerId = pl.Id,
+                UserId = pl.UserId,
+                IsHost = pl.IsHost,
+                IsBot = pl.IsBot,
+                BotName = pl.BotName,
+                BotType = pl.BotType,
+                DisplayName = pl.BotName ?? GameConstants.SystemPlayerName
+            }).ToList());
+
         var sessionId = Guid.NewGuid().ToString();
         // Curriculum values arrive per episode rather than once per connection, so a schedule can move
         // while a long-lived SubprocVecEnv worker keeps the same socket open. Clamped because they come
@@ -555,23 +587,58 @@ public class TcpTrainingServer : BackgroundService
         if (game == null) return null;
 
         session.TotalSessionSteps++;
-        if (session.TotalSessionSteps > 2000)
-        {
-            throw new InvalidOperationException($"Game session {req.SessionId} exceeded 2000 steps without finishing. Halting stuck session.");
-        }
-
         if (session.LastTurnCount == game.TurnCount)
         {
             session.ConsecutiveSameTurnSteps++;
-            if (session.ConsecutiveSameTurnSteps > 50)
-            {
-                throw new InvalidOperationException($"Game session {req.SessionId} stalled on turn #{game.TurnCount} ({game.CurrentTurnNation}) for {session.ConsecutiveSameTurnSteps} consecutive steps without advancing turn. Halting stuck session.");
-            }
         }
         else
         {
             session.LastTurnCount = game.TurnCount;
             session.ConsecutiveSameTurnSteps = 0;
+        }
+
+        // Halting throws on purpose. A session that hits either limit is a BUG whose cause is not yet
+        // known, and swallowing it - ending the episode quietly so training carries on - would hide the
+        // thing that needs fixing. It stays loud until somebody explains why a game ran 30x its normal
+        // length. The state dumped below is what that explanation will be built from.
+        var haltReason = SessionHaltReason(session.TotalSessionSteps, session.ConsecutiveSameTurnSteps);
+        if (haltReason != null)
+        {
+            // Dump enough state to identify the CAUSE. The first occurrence logged only the step count,
+            // which said a game ran long and nothing about why - no power points, no phase, no pending
+            // battle. A game ends when a nation reaches 25 power (Imperial-2030-Rules.pdf p.12), so the
+            // power column is the first thing to read: all six sitting low means nobody is taxing, which
+            // is a very different bug from one nation stuck mid-phase.
+            var powers = string.Join(", ", game.NationStates
+                .OrderBy(n => n.Nation)
+                .Select(n => $"{n.Nation}={n.Power}pp/{n.Treasury}M/{game.Units.Count(u => u.Nation == n.Nation)}u"));
+
+            // Player CASH, not just nation treasuries. Those are different things and only one of them is
+            // the player's: p.7 says treasuries are "held in trust" and may not be spent personally, while
+            // cash buys bonds and is half the final score. Dumping only treasuries made it impossible to
+            // answer "did the agent run out of money?" from a halt - it had to be reconstructed from the
+            // action log afterwards, which showed the opposite of what the treasury column suggested.
+            var cash = string.Join(", ", game.Players
+                .OrderByDescending(pl => pl.Cash)
+                .Select(pl => $"{pl.BotName ?? GameConstants.SystemPlayerName}={pl.Cash}M/{game.Bonds.Count(b => b.HolderId == pl.Id)}bonds"));
+
+            _logger.LogError(
+                $"[RL DIAGNOSTIC] Session {req.SessionId} {haltReason}. " +
+                $"STATE: turn #{game.TurnCount} {game.CurrentTurnNation}, " +
+                $"phase={game.CurrentManeuverPhase}, investorTurn={game.IsInvestorTurn}, " +
+                $"pendingBattle={(game.PendingBattleDefenders.Any() ? $"{game.PendingBattleTerritoryId} vs {string.Join("/", game.PendingBattleDefenders)}" : "none")}, " +
+                $"pendingSwissBank={game.PendingSwissBankForceNation?.ToString() ?? "none"}, " +
+                $"consecutiveSameTurn={session.ConsecutiveSameTurnSteps}, factories={game.TerritoryStates.Count(t => t.HasFactory)}. " +
+                $"NATIONS: {powers}. PLAYERS: {cash}");
+
+            // The state line above is ONE FRAME. It cannot say whether power was still climbing or had
+            // plateaued hundreds of turns earlier, and reading a trajectory out of a single snapshot is
+            // how the first analysis of this went wrong. Export the whole game so it can be replayed and
+            // the trajectory actually looked at - same GameExportDto shape ExportGame produces, so it
+            // imports through the existing endpoint with no special handling.
+            TryExportStuckGame(game, req.SessionId);
+
+            throw new InvalidOperationException($"Game session {req.SessionId} {haltReason}. Halting stuck session.");
         }
 
         var player = game.Players.First(p => p.Id == session.RLPlayerId);
@@ -633,9 +700,16 @@ public class TcpTrainingServer : BackgroundService
         bool wasImportAction = false;
         bool wasFactoryBuildAction = false;
 
+        // The flag is scoped to one turn of one nation. If the turn has moved on without it resolving
+        // (a bot turn played inside AdvanceUntilRLTurn, a battle interposing, an episode reset), drop it
+        // rather than let it fire on some later turn of that nation.
+        if (session.FactoryDecisionOwedBy.HasValue && session.FactoryDecisionOwedBy != game.CurrentTurnNation)
+        {
+            session.FactoryDecisionOwedBy = null;
+        }
+
         var factoryBuildNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        bool isFactoryBuildPending = factoryBuildNs != null && factoryBuildNs.ControllerId == session.RLPlayerId
-            && factoryBuildNs.RondelPosition == RondelData.FactorySlot && !factoryBuildNs.HasBuiltThisTurn;
+        bool isFactoryBuildPending = IsFactoryDecisionPending(session, factoryBuildNs, session.RLPlayerId);
 
         if (isFactoryBuildPending)
         {
@@ -703,6 +777,7 @@ public class TcpTrainingServer : BackgroundService
             }
 
             ns.HasBuiltThisTurn = true; // Resolved either way (built, or explicitly/implicitly skipped)
+            session.FactoryDecisionOwedBy = null;
         }
         else if (session.PendingImportRemaining.HasValue)
         {
@@ -977,6 +1052,16 @@ public class TcpTrainingServer : BackgroundService
             _botService.SkipDelays = true;
             await TryPlayBotTurnAsync(game);
             RLBotStrategy.TrainingActionOverride.Value = null;
+
+            // A rondel move that landed on Factory owes a build/skip decision on the NEXT step, for this
+            // turn only. Armed here rather than re-derived from RondelPosition later - see
+            // IsFactoryDecisionPending for why that difference is the whole bug.
+            var postFactoryNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+            if (postFactoryNs != null && postFactoryNs.ControllerId == session.RLPlayerId
+                && postFactoryNs.RondelPosition == RondelData.FactorySlot && !postFactoryNs.HasBuiltThisTurn)
+            {
+                session.FactoryDecisionOwedBy = postFactoryNs.Nation;
+            }
 
             // A rondel move that landed on Import starts the step-by-step Import decision sequence
             // (BotService.BotImport is a no-op for RL during training; see its early return).
@@ -1940,8 +2025,7 @@ public class TcpTrainingServer : BackgroundService
         }
 
         var factoryBuildNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-        if (factoryBuildNs != null && factoryBuildNs.ControllerId == rlPlayerId
-            && factoryBuildNs.RondelPosition == RondelData.FactorySlot && !factoryBuildNs.HasBuiltThisTurn)
+        if (IsFactoryDecisionPending(session, factoryBuildNs, rlPlayerId) && factoryBuildNs != null)
         {
             mask[RLBotStrategy.FactorySkipAction] = true;
 
@@ -2245,6 +2329,159 @@ public class TcpTrainingServer : BackgroundService
     /// more than the -40 this same function charges for a merely inefficient rondel move. At 5 it was
     /// the smallest term in the reward function, describing one of the largest swings on the board.
     /// </summary>
+    /// <summary>
+    /// Hard cap on how many agent steps one training episode may take. Measured ep_len_mean is ~61, so
+    /// this is roughly 30x a normal game - only a genuinely pathological session reaches it.
+    /// </summary>
+    public const int MaxSessionSteps = 2000;
+
+    /// <summary>
+    /// Hard cap on steps spent without the turn counter advancing. Catches a decision loop that re-derives
+    /// the same candidate forever, which is a different failure from a game that is merely long.
+    /// </summary>
+    public const int MaxConsecutiveSameTurnSteps = 50;
+
+    /// <summary>
+    /// Writes a halted session's game to JSON beside the other training artifacts, for replay.
+    ///
+    /// Best-effort by design: this runs on a path that is already failing, and an export problem must not
+    /// replace the halt reason with a serialization stack trace. A failure here is logged and swallowed -
+    /// the throw that follows is what matters.
+    /// </summary>
+    private void TryExportStuckGame(Game game, string sessionId)
+    {
+        try
+        {
+            var export = new Imperial2030.Shared.Models.GameExportDto
+            {
+                FormatVersion = 1,
+                OriginalGameId = game.Id,
+                OriginalGameName = game.Name,
+                ExportedAt = DateTime.UtcNow,
+                Actions = game.Actions
+                    .OrderBy(a => a.OrderIndex).ThenBy(a => a.Timestamp)
+                    .Select(a => new Imperial2030.Shared.Models.GameActionDto
+                    {
+                        Id = a.Id,
+                        OrderIndex = a.OrderIndex,
+                        Timestamp = a.Timestamp,
+                        PlayerName = a.PlayerName,
+                        Nation = a.Nation,
+                        ActionType = a.ActionType,
+                        Message = a.Message,
+                        Metadata = a.Metadata ?? string.Empty
+                    }).ToList()
+            };
+
+            var path = Path.Combine(AppContext.BaseDirectory, $"stuck_session_{sessionId}.json");
+            File.WriteAllText(path, JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true }));
+
+            // The action log alone cannot answer basic questions about the halted position - it carries no
+            // player cash, no bond holders, no unit positions, no per-nation power or treasury. Analysing
+            // the first halted export meant inferring all of that from action metadata, which produced
+            // several confidently wrong readings before the log was found to simply not contain the
+            // answers. Everything needed is dumped here instead, in a SEPARATE file so
+            // stuck_session_<id>.json stays a valid GameExportDto that imports and replays unchanged.
+            var state = new
+            {
+                SessionId = sessionId,
+                CapturedAt = DateTime.UtcNow,
+                Game = new
+                {
+                    game.Id,
+                    game.Name,
+                    Status = game.Status.ToString(),
+                    game.TurnCount,
+                    CurrentTurnNation = game.CurrentTurnNation.ToString(),
+                    CurrentManeuverPhase = game.CurrentManeuverPhase.ToString(),
+                    game.IsInvestorTurn,
+                    game.ActingPlayerId,
+                    game.InvestorCardHolderId,
+                    game.PendingBattleTerritoryId,
+                    PendingBattleAggressorNation = game.PendingBattleAggressorNation?.ToString(),
+                    game.PendingBattleAggressorUnitId,
+                    PendingBattleDefenders = game.PendingBattleDefenders.Select(n => n.ToString()).ToList(),
+                    PendingSwissBankForceNation = game.PendingSwissBankForceNation?.ToString(),
+                    game.VariantBonusOnlyForTaxIncreases
+                },
+                Players = game.Players.Select(pl => new
+                {
+                    pl.Id, pl.BotName, pl.BotType, pl.IsBot, pl.IsHost, pl.Cash,
+                    BondCount = game.Bonds.Count(b => b.HolderId == pl.Id),
+                    BondCredit = game.Bonds.Where(b => b.HolderId == pl.Id).Sum(b => b.Cost),
+                    Score = game.CalculateScore(pl.Id)
+                }).ToList(),
+                NationStates = game.NationStates.Select(ns => new
+                {
+                    Nation = ns.Nation.ToString(),
+                    ns.ControllerId, ns.Power, ns.Treasury, ns.RondelPosition,
+                    ns.HasMovedThisTurn, ns.HasBuiltThisTurn, ns.HasProducedThisTurn, ns.HasImportedThisTurn,
+                    ns.TaxRevenue, ns.PreviousTaxRevenue
+                }).ToList(),
+                Bonds = game.Bonds.Select(b => new
+                {
+                    Nation = b.Nation.ToString(), b.Cost, b.Interest, b.HolderId
+                }).ToList(),
+                Units = game.Units.Select(u => new
+                {
+                    Nation = u.Nation.ToString(), UnitType = u.UnitType.ToString(),
+                    u.TerritoryId, u.IsHostile, u.HasMoved, u.HasConvoyed
+                }).ToList(),
+                TerritoryStates = game.TerritoryStates
+                    .Where(t => t.HasFactory || t.Controller != null)
+                    .Select(t => new { t.TerritoryId, t.HasFactory, Controller = t.Controller?.ToString() })
+                    .ToList()
+            };
+
+            var statePath = Path.Combine(AppContext.BaseDirectory, $"stuck_session_{sessionId}_state.json");
+            File.WriteAllText(statePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+
+            _logger.LogWarning(
+                $"[RL DIAGNOSTIC] Exported the halted game to '{path}' ({export.Actions.Count} actions) - " +
+                $"import it to replay - and the full board state to '{statePath}'.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[RL DIAGNOSTIC] Could not export halted session {SessionId}; continuing to the halt.", sessionId);
+        }
+    }
+
+    /// <summary>
+    /// Why this session should be abandoned, or null to continue. Pure so the limits can be tested without
+    /// standing up a session and a socket.
+    /// </summary>
+    public static string? SessionHaltReason(int totalSteps, int consecutiveSameTurnSteps)
+    {
+        if (totalSteps > MaxSessionSteps)
+        {
+            return $"exceeded {MaxSessionSteps} steps without finishing";
+        }
+
+        if (consecutiveSameTurnSteps > MaxConsecutiveSameTurnSteps)
+        {
+            return $"stalled for {consecutiveSameTurnSteps} consecutive steps without advancing the turn";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether the RL trainee still owes a Factory build/skip decision for the nation whose turn it is.
+    /// </summary>
+    /// <remarks>
+    /// Gated on <see cref="TrainingSession.FactoryDecisionOwedBy"/> - armed by the rondel move that landed
+    /// here - and NOT on <c>RondelPosition == FactorySlot</c>. The rondel position persists across turns
+    /// while Game.AdvanceTurn clears HasBuiltThisTurn every turn, so the latter pair re-arms on the
+    /// nation's every subsequent turn and consumes each of them as a factory decision it already made,
+    /// leaving it unable to move off the slot for the rest of the game. That is the same shape
+    /// BotService uses (its <c>buildPending</c> reads the slot moved to on THIS turn) and the same shape
+    /// the Import sequence here already used (<see cref="TrainingSession.PendingImportRemaining"/>).
+    /// See Tests/TrainingFactorySlotTrapTests.cs.
+    /// </remarks>
+    public static bool IsFactoryDecisionPending(TrainingSession session, NationState? currentNs, Guid rlPlayerId)
+        => currentNs != null && currentNs.ControllerId == rlPlayerId
+           && session.FactoryDecisionOwedBy == currentNs.Nation && !currentNs.HasBuiltThisTurn;
+
     public const float HomeReliefReward = 15.0f;
 
     /// <summary>
