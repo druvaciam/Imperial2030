@@ -432,6 +432,48 @@ public class RLBotStrategy : BotStrategyBase
                 bool hasUnits = game.Units.Any(u => u.Nation == actingNs.Nation);
                 if (!hasUnits) isPenalized = true;
             }
+            else if (RondelData.IsProductionSlot(targetSlot))
+            {
+                // Keep this preview byte-for-byte equivalent to TcpTrainingServer.GetStateVector: the
+                // deployed model must receive the same penalty flags it learned from during training.
+                var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == actingNs.Nation);
+                int currentArmies = game.Units.Count(u => u.Nation == actingNs.Nation && u.UnitType == UnitType.Army);
+                int currentFleets = game.Units.Count(u => u.Nation == actingNs.Nation && u.UnitType == UnitType.Fleet);
+                int maxArmies = NationData.GetMaxArmies(actingNs.Nation);
+                int maxFleets = NationData.GetMaxFleets(actingNs.Nation);
+
+                bool canProduceAnything = homeCities.Any(city =>
+                {
+                    var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
+                    if (ts == null || !ts.HasFactory) return false;
+                    bool isBlockaded = game.Units.Any(u => u.TerritoryId == city.Id
+                        && u.Nation != actingNs.Nation && u.UnitType == UnitType.Army && u.IsHostile);
+                    if (isBlockaded) return false;
+                    return city.CityType == CityType.LightBlue
+                        ? currentFleets < maxFleets
+                        : currentArmies < maxArmies;
+                });
+
+                if (!canProduceAnything) isPenalized = true;
+            }
+            else if (targetSlot == RondelData.InvestorSlot)
+            {
+                var moveController = game.Players.FirstOrDefault(p => p.Id == actingNs.ControllerId);
+                if (moveController != null)
+                {
+                    var investorMovePreview = Imperial2030.Server.Helpers.InvestorHelper
+                        .PreviewInterestPayment(game, actingNs, moveController);
+                    if (investorMovePreview.NetControllerCashDelta <= 0) isPenalized = true;
+                }
+            }
+            else if (targetSlot == RondelData.TaxationSlot)
+            {
+                var taxMovePreview = Imperial2030.Server.Helpers.TaxationHelper.PreviewTaxation(game, actingNs);
+                if (taxMovePreview.ExpectedPowerGain == 0 && taxMovePreview.ExpectedTreasuryGain <= 0)
+                {
+                    isPenalized = true;
+                }
+            }
 
             state[i++] = isPenalized ? 1.0f : 0.0f;
         }

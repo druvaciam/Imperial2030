@@ -5,7 +5,7 @@
             "name": "Launch Imperial2030 in Chrome",
             "type": "chrome",
             "request": "launch",
-            "url": "https://localhost:7115",
+            "url": "https://localhost:7180",
             "webRoot": "${workspaceFolder}/Client/wwwroot",
             "preLaunchTask": "run-server"
         },
@@ -13,7 +13,7 @@
             "name": "Launch Imperial2030 in Edge",
             "type": "msedge",
             "request": "launch",
-            "url": "https://localhost:7115",
+            "url": "https://localhost:7180",
             "webRoot": "${workspaceFolder}/Client/wwwroot",
             "preLaunchTask": "run-server"
         },
