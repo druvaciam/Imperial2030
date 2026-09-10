@@ -88,6 +88,18 @@ public class Game
         }
     }
 
+    /// <summary>
+    /// Establishes the action phase belonging to a completed rondel move. This must be called by deferred
+    /// Swiss Bank moves as well as ordinary moves: <see cref="CurrentManeuverPhase"/> is game-wide state,
+    /// so leaving its previous value in place can attach another action's Fleet/Army phase to the new slot.
+    /// </summary>
+    public void InitializeRondelActionPhase(int targetSlot)
+    {
+        CurrentManeuverPhase = RondelData.IsManeuverSlot(targetSlot)
+            ? ManeuverPhase.Fleets
+            : ManeuverPhase.None;
+    }
+
     public void AdvanceTurn()
     {
         this.TurnCount++;

@@ -49,7 +49,7 @@ dotnet build
 
 # Run the server (serves the Blazor Client too), default port per launch settings
 dotnet run --project Server/Imperial2030.Server.csproj
-# HTTPS dev URL used by VueReplayViewer's proxy and .claude/launch.json: https://localhost:7115
+# HTTPS dev URL used by VueReplayViewer's proxy and local launch configs: https://localhost:7180
 
 # Run the server in RL training mode (starts TcpTrainingServer on port 5005, uses in-memory DB)
 dotnet run --project Server/Imperial2030.Server.csproj -c Release -- --training
@@ -76,7 +76,7 @@ to Azure Web App on push to `main`.
 
 ```bash
 cd VueReplayViewer
-npm run dev       # vite dev server on :5173, proxies /api to the Server on :7115
+npm run dev       # vite dev server on :5173, proxies /api to the Server on :7180
 npm run build      # vue-tsc -b && vite build
 npm run test       # vitest run
 ```

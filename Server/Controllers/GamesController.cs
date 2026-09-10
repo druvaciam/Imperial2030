@@ -1508,11 +1508,10 @@ public class GamesController : ControllerBase
             HandleInvestorPhase(_context, game, nationState, controller, landedOn);
         }
 
-        // Initialize Maneuver Phase
-        if (RondelData.IsManeuverSlot(targetSlot))
+        // Initialize the phase for the slot the move actually reached.
+        game.InitializeRondelActionPhase(targetSlot);
+        if (game.CurrentManeuverPhase == ManeuverPhase.Fleets)
         {
-            game.CurrentManeuverPhase = ManeuverPhase.Fleets;
-
             bool hasFleets = game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved);
             if (!hasFleets)
             {
@@ -1529,11 +1528,6 @@ public class GamesController : ControllerBase
                 }
             }
         }
-        else
-        {
-            game.CurrentManeuverPhase = ManeuverPhase.None;
-        }
-
         await _context.SaveChangesAsync();
 
         if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
@@ -2137,6 +2131,7 @@ public class GamesController : ControllerBase
             controller.Cash -= cost;
             nationState.RondelPosition = targetSlot;
             game.ResetStateForNewMove(nationState, u => _context.Entry(u).State = EntityState.Modified);
+            game.InitializeRondelActionPhase(targetSlot);
             _context.Entry(controller).State = EntityState.Modified;
             _context.Entry(nationState).State = EntityState.Modified;
 
@@ -2176,6 +2171,7 @@ public class GamesController : ControllerBase
                 controller.Cash -= cost;
                 nationState.RondelPosition = targetSlot;
                 game.ResetStateForNewMove(nationState, u => _context.Entry(u).State = EntityState.Modified);
+                game.InitializeRondelActionPhase(targetSlot);
                 _context.Entry(controller).State = EntityState.Modified;
                 _context.Entry(nationState).State = EntityState.Modified;
 

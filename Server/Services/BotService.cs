@@ -377,11 +377,8 @@ public class BotService
                 Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, landedOn);
             }
 
-            // Init maneuver phase
-            if (RondelData.IsManeuverSlot(targetSlot))
-                game.CurrentManeuverPhase = ManeuverPhase.Fleets;
-            else
-                game.CurrentManeuverPhase = ManeuverPhase.None;
+            // Initialize the phase for the slot the move actually reached.
+            game.InitializeRondelActionPhase(targetSlot);
 
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
@@ -1558,6 +1555,7 @@ public class BotService
                 controller.Cash -= cost;
                 nationState.RondelPosition = targetSlot;
                 game.ResetStateForNewMove(nationState);
+                game.InitializeRondelActionPhase(targetSlot);
 
                 string botName = bot.BotName ?? "Bot";
                 GameLogger.LogSwissBankForceStop(ctx, game, nationState.Nation, botName);
@@ -1596,6 +1594,7 @@ public class BotService
                     controller.Cash -= cost;
                     nationState.RondelPosition = targetSlot;
                     game.ResetStateForNewMove(nationState);
+                    game.InitializeRondelActionPhase(targetSlot);
 
                     string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (ctx != null ? (ctx.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human") : "Human");
                     GameLogger.LogRondelMove(ctx, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
