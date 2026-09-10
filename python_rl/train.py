@@ -6,6 +6,16 @@ from imperial_env import ImperialEnv
 
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from training_schedules import (
+    MutableValueSchedule,
+    SchedulePhase,
+    TrainingScheduleState,
+    infer_legacy_phase,
+    infer_legacy_learning_rate_phase,
+    load_schedule_state,
+    read_checkpoint_schedule_metadata,
+    save_schedule_state,
+)
 
 
 def make_env(bot_type, opponents_list):
@@ -16,50 +26,13 @@ def make_env(bot_type, opponents_list):
         return Monitor(ImperialEnv(bot_type=bot_type, opponents=opponents_list))
     return _init
 
-def linear_schedule(initial_value, final_value=1e-5):
-    """Linear decay from initial_value to final_value over training."""
-    def func(progress_remaining):
-        # progress_remaining goes from 1.0 -> 0.0
-        return final_value + progress_remaining * (initial_value - final_value)
-    return func
-
-class RunRelativeSchedule:
-    """Progress within THIS run, 0.0 -> 1.0.
-
-    Every schedule below used to divide the *cumulative* num_timesteps by a fixed constant. With
-    reset_num_timesteps=False that fraction never restarts, so once cumulative steps pass the constant
-    every schedule is pinned at its final value forever. RL-3 reached 68.5M against a TOTAL_TIMESTEPS of
-    20M, which means ent_coef had been clamped to its 0.015 floor since step 20M - 48 million steps with
-    the exploration term at its minimum. A policy cannot unlearn an aversion it never explores away from,
-    so this is a prerequisite for the factory-aversion work rather than a tidy-up.
-
-    Anchoring on num_timesteps at training start makes each resumed run get its own full schedule, which
-    is what "resume and keep training" is supposed to mean.
-    """
-
-    def __init__(self, run_timesteps):
-        self.run_timesteps = max(1, run_timesteps)
-        self._start = None
-
-    def start(self, num_timesteps):
-        self._start = num_timesteps
-
-    def progress(self, num_timesteps):
-        if self._start is None:
-            return 0.0
-        return min(1.0, max(0.0, (num_timesteps - self._start) / self.run_timesteps))
-
-
 class CumulativeSchedule:
     """Progress across the agent's ENTIRE training history, 0.0 -> 1.0, and never backwards.
 
-    The opposite anchoring to RunRelativeSchedule, and deliberately so - the two schedules want opposite
-    things and sharing one anchor is what broke RL-4.
-
-    Exploration is a property of the CURRENT run: a resume should restore it, which is why ent_coef is
-    run-relative. Reward shaping is a property of what the agent has already LEARNED: holding the
-    wasted-Factory penalty off early only makes sense once, at the very start of the agent's life, so it
-    can discover what a factory pays back before being punished for reaching for one.
+    Exploration schedules use an explicitly persisted SchedulePhase, which can be restarted for an
+    intentional fine-tune. Reward shaping is instead a property of what the agent has already LEARNED:
+    holding the wasted-Factory penalty off early only makes sense once, at the very start of the agent's
+    life, so it can discover what a factory pays back before being punished for reaching for one.
 
     Anchoring the curriculum per-run instead meant every restart switched that penalty off again for
     another 3M steps. RL-4's training was restarted six times, and its tb_logs show the result:
@@ -87,23 +60,65 @@ class CumulativeSchedule:
         return min(1.0, max(0.0, num_timesteps / self.total_timesteps))
 
 
-class EntCoefScheduleCallback(BaseCallback):
-    """Linearly decays the entropy coefficient over the current run (see RunRelativeSchedule)."""
+class HyperparameterScheduleCallback(BaseCallback):
+    """Advances learning rate and entropy from a phase tied to cumulative model timesteps."""
 
-    def __init__(self, initial_ent_coef, final_ent_coef, run_timesteps, verbose=0):
+    def __init__(
+        self,
+        schedule_state,
+        initial_learning_rate,
+        final_learning_rate,
+        initial_ent_coef,
+        final_ent_coef,
+        verbose=1,
+    ):
         super().__init__(verbose)
+        self.schedule_state = schedule_state
+        self.initial_learning_rate = initial_learning_rate
+        self.final_learning_rate = final_learning_rate
         self.initial_ent_coef = initial_ent_coef
         self.final_ent_coef = final_ent_coef
-        self.schedule = RunRelativeSchedule(run_timesteps)
+        self.learning_rate_schedule = MutableValueSchedule(initial_learning_rate)
+
+    def _values(self):
+        learning_rate = self.schedule_state.learning_rate_phase.value(
+            self.num_timesteps,
+            self.initial_learning_rate,
+            self.final_learning_rate,
+        )
+        ent_coef = self.schedule_state.entropy_phase.value(
+            self.num_timesteps,
+            self.initial_ent_coef,
+            self.final_ent_coef,
+        )
+        return learning_rate, ent_coef
+
+    def _apply(self, update_optimizer=False):
+        learning_rate, ent_coef = self._values()
+        self.learning_rate_schedule.value = learning_rate
+        self.model.learning_rate = learning_rate
+        self.model.ent_coef = ent_coef
+        if update_optimizer:
+            for parameter_group in self.model.policy.optimizer.param_groups:
+                parameter_group["lr"] = learning_rate
+        self.logger.record("train/current_learning_rate", learning_rate)
+        self.logger.record("train/current_ent_coef", ent_coef)
+        return learning_rate, ent_coef
 
     def _on_training_start(self) -> None:
-        self.schedule.start(self.num_timesteps)
+        # PPO asks lr_schedule for a value immediately before each optimization pass. Keeping this
+        # mutable callable on the model avoids relying on SB3's process-relative progress_remaining.
+        self.model.lr_schedule = self.learning_rate_schedule
+        learning_rate, ent_coef = self._apply(update_optimizer=True)
+        if self.verbose > 0:
+            lr_progress = self.schedule_state.learning_rate_phase.progress(self.num_timesteps)
+            entropy_progress = self.schedule_state.entropy_phase.progress(self.num_timesteps)
+            print(f"[schedule] step {self.num_timesteps:,}: lr phase {lr_progress:.1%}, "
+                  f"entropy phase {entropy_progress:.1%}, learning_rate={learning_rate:.8f}, "
+                  f"ent_coef={ent_coef:.6f}")
 
     def _on_step(self) -> bool:
-        progress = self.schedule.progress(self.num_timesteps)
-        new_ent_coef = self.initial_ent_coef - progress * (self.initial_ent_coef - self.final_ent_coef)
-        self.model.ent_coef = new_ent_coef
-        self.logger.record("train/current_ent_coef", new_ent_coef)
+        self._apply()
         return True
 
 
@@ -191,12 +206,28 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Train the Imperial 2030 RL Bot.")
     parser.add_argument("--reset", action="store_true", help="Start training from scratch, ignoring any existing saved model.")
+    parser.add_argument(
+        "--restart-schedules",
+        action="store_true",
+        help="Start a new learning-rate/entropy phase at the loaded checkpoint (intentional fine-tuning only).",
+    )
     parser.add_argument("--bot-type", type=str, default="RL", help="The name of the bot to train (e.g. RL, RL-2).")
     parser.add_argument("--opponents", type=str, help="Comma separated list of opponents to train against (e.g. Random,Default,RL).")
     parser.add_argument("--n-envs", type=int, default=4, help="Number of parallel training environments (separate OS processes, each with its own TCP session to the C# server). 1 falls back to a single in-process env.")
     args = parser.parse_args()
 
     opponents_list = args.opponents.split(",") if args.opponents else []
+
+    MODEL_BASENAME = args.bot_type
+    MODEL_PATH = f"{MODEL_BASENAME}.zip"
+    VEC_NORM_PATH = "vec_normalize.pkl"
+    BEST_VEC_NORM_PATH = "vec_normalize_best.pkl"
+    BEST_REWARD_PATH = "best_reward.txt"
+    SCHEDULE_STATE_PATH = f"{MODEL_BASENAME}_schedule_state.json"
+    is_resume = not args.reset and os.path.exists(MODEL_PATH) and os.path.exists(VEC_NORM_PATH)
+
+    if args.restart_schedules and not is_resume:
+        parser.error("--restart-schedules requires an existing model and VecNormalize checkpoint, without --reset")
 
     # Total experience collected per PPO update, independent of how many parallel envs collect it (SB3's
     # n_steps is PER env, so total buffer = n_steps * n_envs). Dividing by n_envs here keeps the update
@@ -210,12 +241,6 @@ if __name__ == "__main__":
     # DummyVecEnv would just interleave them on one core). Each worker opens its own socket to the training
     # server, which handles concurrent sessions independently (see the ConcurrentDictionary session store).
     vec_env = SubprocVecEnv(env_fns) if args.n_envs > 1 else DummyVecEnv(env_fns)
-
-    MODEL_BASENAME = args.bot_type
-    MODEL_PATH = f"{MODEL_BASENAME}.zip"
-    VEC_NORM_PATH = "vec_normalize.pkl"
-    BEST_VEC_NORM_PATH = "vec_normalize_best.pkl"
-    BEST_REWARD_PATH = "best_reward.txt"
 
     # Optional: TensorBoard logging for watching ep_rew_mean etc. trend over time. Degrades to plain console
     # logging (instead of hard-crashing training) if the `tensorboard` package isn't installed — install it
@@ -233,8 +258,92 @@ if __name__ == "__main__":
     # pressure for longer to collect enough samples, rather than collapsing onto the well-understood actions.
     INITIAL_ENT_COEF = 0.05
     FINAL_ENT_COEF = 0.015
+    INITIAL_LEARNING_RATE = 6e-5
+    FINAL_LEARNING_RATE = 2e-5
+    TOTAL_TIMESTEPS = 20_000_000
 
-    if not args.reset and os.path.exists(MODEL_PATH) and os.path.exists(VEC_NORM_PATH):
+    schedule_state_needs_write = False
+    if is_resume:
+        try:
+            checkpoint_metadata = read_checkpoint_schedule_metadata(MODEL_PATH)
+        except (OSError, KeyError, TypeError, ValueError) as error:
+            raise RuntimeError(f"Could not read schedule metadata from {MODEL_PATH}: {error}") from error
+        saved_model_timesteps = checkpoint_metadata.model_timesteps
+
+        if args.restart_schedules:
+            schedule_state = TrainingScheduleState(
+                learning_rate_phase=SchedulePhase(saved_model_timesteps, TOTAL_TIMESTEPS),
+                entropy_phase=SchedulePhase(saved_model_timesteps, TOTAL_TIMESTEPS),
+            )
+            schedule_state_needs_write = True
+            print(f"Restarting learning-rate/entropy schedules at checkpoint step "
+                  f"{saved_model_timesteps:,} (--restart-schedules).")
+        else:
+            schedule_state = load_schedule_state(SCHEDULE_STATE_PATH, saved_model_timesteps)
+            if schedule_state is not None:
+                lr_progress = schedule_state.learning_rate_phase.progress(saved_model_timesteps)
+                entropy_progress = schedule_state.entropy_phase.progress(saved_model_timesteps)
+                print(f"Continuing persisted schedules: LR {lr_progress:.1%}, "
+                      f"entropy {entropy_progress:.1%} complete.")
+            else:
+                learning_rate_phase = infer_legacy_learning_rate_phase(
+                    checkpoint_metadata,
+                    default_duration_timesteps=TOTAL_TIMESTEPS,
+                    initial_value=INITIAL_LEARNING_RATE,
+                    final_value=FINAL_LEARNING_RATE,
+                )
+                saved_ent_coef = checkpoint_metadata.saved_entropy
+                if (saved_ent_coef is not None
+                        and min(INITIAL_ENT_COEF, FINAL_ENT_COEF) <= saved_ent_coef
+                        <= max(INITIAL_ENT_COEF, FINAL_ENT_COEF)):
+                    entropy_phase = infer_legacy_phase(
+                        model_timesteps=saved_model_timesteps,
+                        duration_timesteps=TOTAL_TIMESTEPS,
+                        saved_value=saved_ent_coef,
+                        initial_value=INITIAL_ENT_COEF,
+                        final_value=FINAL_ENT_COEF,
+                    )
+                else:
+                    entropy_phase = SchedulePhase(saved_model_timesteps, TOTAL_TIMESTEPS)
+
+                schedule_state = TrainingScheduleState(
+                    learning_rate_phase=learning_rate_phase,
+                    entropy_phase=entropy_phase,
+                )
+                schedule_state_needs_write = True
+                migrated_learning_rate = learning_rate_phase.value(
+                    saved_model_timesteps,
+                    INITIAL_LEARNING_RATE,
+                    FINAL_LEARNING_RATE,
+                )
+                migrated_ent_coef = entropy_phase.value(
+                    saved_model_timesteps,
+                    INITIAL_ENT_COEF,
+                    FINAL_ENT_COEF,
+                )
+                print(f"Migrating independent legacy schedules: learning_rate={migrated_learning_rate:.8f} "
+                      f"({learning_rate_phase.progress(saved_model_timesteps):.1%}), "
+                      f"ent_coef={migrated_ent_coef:.6f} "
+                      f"({entropy_phase.progress(saved_model_timesteps):.1%}).")
+    else:
+        saved_model_timesteps = 0
+        schedule_state = TrainingScheduleState(
+            learning_rate_phase=SchedulePhase(0, TOTAL_TIMESTEPS),
+            entropy_phase=SchedulePhase(0, TOTAL_TIMESTEPS),
+        )
+
+    current_learning_rate = schedule_state.learning_rate_phase.value(
+        saved_model_timesteps,
+        INITIAL_LEARNING_RATE,
+        FINAL_LEARNING_RATE,
+    )
+    current_ent_coef = schedule_state.entropy_phase.value(
+        saved_model_timesteps,
+        INITIAL_ENT_COEF,
+        FINAL_ENT_COEF,
+    )
+
+    if is_resume:
         print("Found existing model, resuming training...")
         vec_env = VecNormalize.load(VEC_NORM_PATH, vec_env)
         # We must disable training mode when not training, but here we ARE training
@@ -245,11 +354,11 @@ if __name__ == "__main__":
         # an update for an already-partially-converged policy. Back to the last value that was stable
         # (plateaued, not regressing).
         custom_objects = {
-            "learning_rate": linear_schedule(6e-5, 2e-5),
+            "learning_rate": current_learning_rate,
             "n_steps": n_steps_per_env,
             "batch_size": 512,
             "clip_range": 0.2,
-            "ent_coef": INITIAL_ENT_COEF,
+            "ent_coef": current_ent_coef,
             # MEASURED, do not "fix": episodes are ~61 agent steps (rollout/ep_len_mean over RL-3's
             # 8,646 logged samples: min 44, max 70, mean 58). gamma=0.995 has a 138-step half-life, so the
             # terminal win/loss reward still arrives with 73% of its value intact. The horizon is NOT
@@ -261,6 +370,9 @@ if __name__ == "__main__":
             "tensorboard_log": TENSORBOARD_LOG_DIR,
         }
         model = MaskablePPO.load(MODEL_PATH, env=vec_env, custom_objects=custom_objects, verbose=1)
+        if schedule_state_needs_write:
+            # Commit an explicit restart or deterministic legacy migration only after the model loads.
+            save_schedule_state(SCHEDULE_STATE_PATH, schedule_state, model.num_timesteps)
     else:
         print("No existing model found. Initializing new MaskablePPO Model...")
         # CRITICAL: norm_obs=False because state is now manually normalized in C#
@@ -277,11 +389,11 @@ if __name__ == "__main__":
             "MlpPolicy",
             vec_env,
             policy_kwargs=policy_kwargs,
-            learning_rate=linear_schedule(6e-5, 2e-5),
+            learning_rate=current_learning_rate,
             n_steps=n_steps_per_env,
             batch_size=512,
             clip_range=0.2,
-            ent_coef=INITIAL_ENT_COEF,  # See comment above: bumped up for the larger, more heterogeneous action space
+            ent_coef=current_ent_coef,  # See comment above: bumped up for the larger, more heterogeneous action space
             # MEASURED, do not "fix": episodes are ~61 agent steps (rollout/ep_len_mean over RL-3's
             # 8,646 logged samples: min 44, max 70, mean 58). gamma=0.995 has a 138-step half-life, so the
             # terminal win/loss reward still arrives with 73% of its value intact. The horizon is NOT
@@ -295,10 +407,12 @@ if __name__ == "__main__":
         )
 
     class SaveOnStepCallback(BaseCallback):
-        def __init__(self, save_freq, save_path, reset=False, verbose=1):
+        def __init__(self, save_freq, save_path, schedule_state, schedule_state_path, reset=False, verbose=1):
             super().__init__(verbose)
             self.save_freq = save_freq
             self.save_path = save_path
+            self.schedule_state = schedule_state
+            self.schedule_state_path = schedule_state_path
             self.best_mean_reward = -np.inf
             self.best_reward_file = os.path.join(save_path, BEST_REWARD_PATH)
             
@@ -322,7 +436,13 @@ if __name__ == "__main__":
                 # Save the latest model (for resuming training)
                 self.model.save(os.path.join(self.save_path, MODEL_BASENAME))
                 self.training_env.save(os.path.join(self.save_path, VEC_NORM_PATH))
-                mean_reward = np.mean([ep_info["r"] for ep_info in self.model.ep_info_buffer])
+                save_schedule_state(
+                    os.path.join(self.save_path, self.schedule_state_path),
+                    self.schedule_state,
+                    self.num_timesteps,
+                )
+                mean_reward = (np.mean([ep_info["r"] for ep_info in self.model.ep_info_buffer])
+                               if len(self.model.ep_info_buffer) > 0 else float("nan"))
                 if self.verbose > 0:
                     print(f"Saved latest checkpoint at step {self.num_timesteps}, mean reward {mean_reward:.2f}")
 
@@ -342,20 +462,22 @@ if __name__ == "__main__":
     print("Starting Training...")
     # Train for a larger number of timesteps.
     # It will automatically save every 5,000 steps to the current directory
-    # Both the LR schedule above and EntCoefScheduleCallback below decay linearly as a fraction of this
-    # constant (num_timesteps / TOTAL_TIMESTEPS), and that fraction is CUMULATIVE across resumed runs
-    # (reset_num_timesteps=False). RL-3 hit ~84% of the original 10M here, meaning both LR and entropy
-    # were nearly fully decayed right around when RL-2 was added as an opponent (see tb_logs: ep_rew_mean
-    # regressed hard at step ~3M and never reclaimed its pre-regression peak over the following 5M+ steps).
-    # That's the schedules starving the agent of both step-size and exploration exactly when the harder
-    # opponent needed more of both. Raised to give real runway for both schedules to operate at
-    # meaningfully higher values again, rather than continuing to taper toward an already-reached floor.
-    TOTAL_TIMESTEPS = 20_000_000
-
-    save_callback = SaveOnStepCallback(save_freq=5000, save_path="./", reset=args.reset)
-    # run_timesteps, not a cumulative total: TOTAL_TIMESTEPS is this run's budget (model.learn adds it to
-    # num_timesteps internally when reset_num_timesteps=False), so both schedules span exactly this run.
-    ent_coef_callback = EntCoefScheduleCallback(initial_ent_coef=INITIAL_ENT_COEF, final_ent_coef=FINAL_ENT_COEF, run_timesteps=TOTAL_TIMESTEPS)
+    # Ordinary process restarts continue the persisted phase. Use --restart-schedules only when a new
+    # 20M-step fine-tuning phase (and the corresponding jump back to the initial values) is intentional.
+    schedule_callback = HyperparameterScheduleCallback(
+        schedule_state=schedule_state,
+        initial_learning_rate=INITIAL_LEARNING_RATE,
+        final_learning_rate=FINAL_LEARNING_RATE,
+        initial_ent_coef=INITIAL_ENT_COEF,
+        final_ent_coef=FINAL_ENT_COEF,
+    )
+    save_callback = SaveOnStepCallback(
+        save_freq=5000,
+        save_path="./",
+        schedule_state=schedule_state,
+        schedule_state_path=SCHEDULE_STATE_PATH,
+        reset=args.reset,
+    )
     # CURRICULUM_TIMESTEPS is a cumulative milestone, not this run's budget: it is the point in the
     # agent's whole training history by which shaping should have finished decaying and the Factory
     # penalty should be at full strength. Separate from TOTAL_TIMESTEPS so changing how long a single
@@ -363,11 +485,13 @@ if __name__ == "__main__":
     CURRICULUM_TIMESTEPS = 20_000_000
     curriculum_callback = CurriculumCallback(total_timesteps=CURRICULUM_TIMESTEPS)
 
-    callback = CallbackList([save_callback, ent_coef_callback, curriculum_callback])
+    # Apply the schedule before checkpointing so the model value and sidecar describe the same step.
+    callback = CallbackList([schedule_callback, curriculum_callback, save_callback])
     
     model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=False, callback=callback, tb_log_name=args.bot_type)
 
     print("Saving Final Model and VecNormalize statistics...")
     model.save(MODEL_BASENAME)
     vec_env.save(VEC_NORM_PATH)
+    save_schedule_state(SCHEDULE_STATE_PATH, schedule_state, model.num_timesteps)
     print("Training Complete!")

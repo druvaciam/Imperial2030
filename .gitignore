@@ -93,6 +93,7 @@ Properties/launchSettings.json
 python_rl/RL*.zip
 python_rl/vec_normalize*.pkl
 python_rl/best_reward.txt
+python_rl/*_schedule_state.json
 python_rl/*.onnx
 python_rl/*.onnx.data
 __pycache__/
