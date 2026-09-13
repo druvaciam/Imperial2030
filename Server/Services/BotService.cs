@@ -13,6 +13,8 @@ namespace Imperial2030.Server.Services;
 
 public class BotService
 {
+    private const double DefaultRondelSelectionTemperature = 10.0;
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
     private readonly IEnumerable<Bots.IBotStrategy> _botStrategies;
@@ -510,17 +512,39 @@ public class BotService
             .Select(g => g.OrderByDescending(c => c.Score).First())
             .ToList();
 
-        double totalScore = candidates.Sum(c => c.Score);
-        double roll = Random.Shared.NextDouble() * totalScore;
+        double highestCandidateScore = candidates.Max(candidate => candidate.Score);
+        var weightedCandidates = candidates
+            .Select(candidate => (
+                candidate.Slot,
+                Weight: GetRondelSelectionWeight(strategy, candidate.Score, highestCandidateScore)))
+            .ToList();
+
+        double totalWeight = weightedCandidates.Sum(candidate => candidate.Weight);
+        double roll = Random.Shared.NextDouble() * totalWeight;
 
         double current = 0;
-        foreach (var c in candidates)
+        foreach (var candidate in weightedCandidates)
         {
-            current += c.Score;
-            if (roll <= current) return c.Slot;
+            current += candidate.Weight;
+            if (roll <= current) return candidate.Slot;
         }
 
-        return candidates.Last().Slot;
+        return weightedCandidates.Last().Slot;
+    }
+
+    /// <summary>
+    /// Default remains random, but uses a softmax weight so a clearly superior move is overwhelmingly
+    /// likely and near-equal moves retain meaningful variety. Other personalities preserve their linear
+    /// score weighting.
+    /// </summary>
+    internal static double GetRondelSelectionWeight(
+        IBotStrategy strategy,
+        double candidateScore,
+        double highestCandidateScore)
+    {
+        return strategy is DefaultBotStrategy
+            ? Math.Exp((candidateScore - highestCandidateScore) / DefaultRondelSelectionTemperature)
+            : candidateScore;
     }
 
     private int CountFactories(Game game, Nation nation)
