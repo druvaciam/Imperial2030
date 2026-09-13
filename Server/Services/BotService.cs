@@ -14,6 +14,7 @@ namespace Imperial2030.Server.Services;
 public class BotService
 {
     private const double DefaultRondelSelectionTemperature = 10.0;
+    private const int RondelMoveCostScorePenalty = 2;
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
@@ -488,7 +489,14 @@ public class BotService
             // the RL bot's own trained policy should be free to judge this trade-off itself)
             if (slot == RondelData.InvestorSlot && ns.Treasury == 0 && !(strategy is RLBotStrategy)) continue;
 
-            double score = strategy.ScoreRondelSlot(slot, game, ns, controller, factoryCount, unitCount) - moveCost * 2;
+            double score = GetAdjustedRondelCandidateScore(
+                strategy,
+                slot,
+                game,
+                ns,
+                controller,
+                factoryCount,
+                unitCount);
 
             if (score > maxScore)
             {
@@ -545,6 +553,32 @@ public class BotService
         return strategy is DefaultBotStrategy
             ? Math.Exp((candidateScore - highestCandidateScore) / DefaultRondelSelectionTemperature)
             : candidateScore;
+    }
+
+    internal static double GetAdjustedRondelCandidateScore(
+        IBotStrategy strategy,
+        int slot,
+        Game game,
+        NationState nationState,
+        Player controller,
+        int factoryCount,
+        int unitCount)
+    {
+        double score = strategy.ScoreRondelSlot(
+            slot,
+            game,
+            nationState,
+            controller,
+            factoryCount,
+            unitCount);
+        int moveCost = RondelData.GetMoveCost(nationState.RondelPosition, slot, nationState.Power);
+
+        bool ignoreCost = moveCost > 0
+            && slot == RondelData.TaxationSlot
+            && strategy is DefaultBotStrategy
+            && DefaultBotStrategy.IsProjectedWinningGameEndingTaxation(game, nationState, controller);
+
+        return ignoreCost ? score : score - moveCost * RondelMoveCostScorePenalty;
     }
 
     private int CountFactories(Game game, Nation nation)

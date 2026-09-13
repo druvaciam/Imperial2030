@@ -155,5 +155,77 @@ namespace Imperial2030.Tests
             // Expect ~80% Army probability when having fewer army factories than fleet factories
             Assert.True(armyCount >= 65, $"Expected at least 65% armies chosen due to factory disparity, but got {armyCount}%");
         }
+
+        [Fact]
+        public void DefaultBot_LandDangerFavorsArmyInThreatenedProvince()
+        {
+            var controller = new Player();
+            var opponent = new Player();
+            var game = NewGame(controller, opponent, Nation.Europe);
+            game.Units.Add(new Unit { Nation = Nation.Russia, TerritoryId = "Murmansk", UnitType = UnitType.Army });
+            var ns = game.NationStates.First(state => state.Nation == Nation.Europe);
+            var homes = TerritoryData.AllTerritories.Where(t => t.Nation == Nation.Europe).ToList();
+            var strategy = new DefaultBotStrategy();
+
+            int correct = Enumerable.Range(0, 200)
+                .Select(_ => strategy.ChooseImports(game, ns, 1, homes).Single())
+                .Count(import => import == (UnitType.Army, "Berlin"));
+
+            Assert.True(correct >= 150, $"Expected at least 75% Berlin armies under land danger, got {correct}/200.");
+        }
+
+        [Fact]
+        public void DefaultBot_OccupiedProvinceFavorsArmyAtReachableSafeHome()
+        {
+            var controller = new Player();
+            var opponent = new Player();
+            var game = NewGame(controller, opponent, Nation.Europe);
+            game.Units.Add(new Unit
+            {
+                Nation = Nation.Russia,
+                TerritoryId = "Berlin",
+                UnitType = UnitType.Army,
+                IsHostile = true
+            });
+            var ns = game.NationStates.First(state => state.Nation == Nation.Europe);
+            var homes = TerritoryData.AllTerritories.Where(t => t.Nation == Nation.Europe).ToList();
+            var strategy = new DefaultBotStrategy();
+
+            int useful = Enumerable.Range(0, 200)
+                .Select(_ => strategy.ChooseImports(game, ns, 1, homes).Single())
+                .Count(import => import.Type == UnitType.Army && import.TerritoryId is "Paris" or "Rome");
+
+            Assert.True(useful >= 150, $"Expected at least 75% useful land reinforcements, got {useful}/200.");
+        }
+
+        [Fact]
+        public void DefaultBot_NavalDangerFavorsFleetAtRelevantHarbor()
+        {
+            var controller = new Player();
+            var opponent = new Player();
+            var game = NewGame(controller, opponent, Nation.Europe);
+            game.Units.Add(new Unit { Nation = Nation.Russia, TerritoryId = "NorthAtlantic", UnitType = UnitType.Fleet });
+            var ns = game.NationStates.First(state => state.Nation == Nation.Europe);
+            var homes = TerritoryData.AllTerritories.Where(t => t.Nation == Nation.Europe).ToList();
+            var strategy = new DefaultBotStrategy();
+
+            int correct = Enumerable.Range(0, 200)
+                .Select(_ => strategy.ChooseImports(game, ns, 1, homes).Single())
+                .Count(import => import == (UnitType.Fleet, "London"));
+
+            Assert.True(correct >= 150, $"Expected at least 75% London fleets under naval danger, got {correct}/200.");
+        }
+
+        private static Game NewGame(Player controller, Player opponent, Nation nation) => new()
+        {
+            Players = new List<Player> { controller, opponent },
+            NationStates = new List<NationState>
+            {
+                new() { Nation = nation, ControllerId = controller.Id, Treasury = 10 },
+                new() { Nation = Nation.Russia, ControllerId = opponent.Id }
+            },
+            Units = new List<Unit>(),
+            TerritoryStates = new List<TerritoryState>()
+        };
     }
 }
