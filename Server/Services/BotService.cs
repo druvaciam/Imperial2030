@@ -1213,14 +1213,10 @@ public class BotService
             bool hasDefenders = game.Units.Any(u => u.TerritoryId == territoryId && u.Nation == defenderNation);
             if (hasDefenders) continue;
 
-            // Check defender has > 1 factory (cannot destroy the last one)
-            var defenderFactoryCount = game.TerritoryStates.Count(s =>
-            {
-                if (!s.HasFactory) return false;
-                var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
-                return t != null && t.Nation == defenderNation;
-            });
-            if (defenderFactoryCount <= 1) continue;
+            // A blockaded factory does not count as an available factory for the p.10 protection.
+            // Use the same rule check as the human endpoint so bots cannot destroy the defender's
+            // last factory that is not already occupied by hostile armies.
+            if (ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, territoryId)) continue;
 
             candidates.Add(territoryId);
         }
