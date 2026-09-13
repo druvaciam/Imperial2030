@@ -389,8 +389,8 @@ public class GameReplayService
                 }
 
                 var actionNationStr = action.ActionType == "Move" ? (action.Nation?.ToString() ?? "Unknown") : "";
-                var traceMsg = $"Replaying action: {action.ActionType} by {action.PlayerName} {actionNationStr}";
-                _logger.LogDebug(traceMsg);
+                //var traceMsg = $"Replaying action: {action.ActionType} by {action.PlayerName} {actionNationStr}";
+                //_logger.LogTrace(traceMsg);
 
                 IActionResult? result = null;
                 try
@@ -484,14 +484,19 @@ public class GameReplayService
                                 maGame.CurrentManeuverPhase = ManeuverPhase.Armies;
                                 context.SaveChanges();
                             }
-                            if (armyUnit != null) {
+                            if (armyUnit != null)
+                            {
                                 // Snapshot immediately around the live endpoint call so any unit its auto-combat
                                 // destroys can be handed to the following logged "Battle" action (see that case).
                                 var unitsBeforeArmyMove = SnapshotUnits(context, replayGameId);
                                 var armyBattleTarget = FindAutoResolvedBattleTarget(actions, i, armyMeta.ToTerritoryId, action.Nation!.Value);
-                                result = await maneuverController.MoveArmy(replayGameId, new MoveUnitRequest {
-                                    UnitId = armyUnit.Id, DestinationId = armyMeta.ToTerritoryId, IsHostile = armyMeta.IsHostileMove ?? false,
-                                    BattleTargetNation = armyBattleTarget?.DefenderNation, BattleTargetUnitType = armyBattleTarget?.DefenderUnitType,
+                                result = await maneuverController.MoveArmy(replayGameId, new MoveUnitRequest
+                                {
+                                    UnitId = armyUnit.Id,
+                                    DestinationId = armyMeta.ToTerritoryId,
+                                    IsHostile = armyMeta.IsHostileMove ?? false,
+                                    BattleTargetNation = armyBattleTarget?.DefenderNation,
+                                    BattleTargetUnitType = armyBattleTarget?.DefenderUnitType,
                                     // Replay the journey the army actually made, not one the endpoint picks now.
                                     ConvoyFleetIds = ResolveLoggedConvoyFleets(context, replayGameId, action.Nation!.Value, armyMeta.RouteVia)
                                 });
@@ -504,8 +509,8 @@ public class GameReplayService
                                     context.SaveChanges();
                                     result = new OkResult();
                                 }
-                                var tr = context.Units.Where(u => u.GameId == replayGameId && u.TerritoryId == armyMeta.ToTerritoryId).ToList();
-                                _logger.LogDebug($"  -> MoveArmy {action.Nation} to {armyMeta.ToTerritoryId}. Units there now: {string.Join(", ", tr.Select(u => $"{u.UnitType} {u.Nation} {u.Id}"))}");
+                                //var tr = context.Units.Where(u => u.GameId == replayGameId && u.TerritoryId == armyMeta.ToTerritoryId).ToList();
+                                //_logger.LogTrace($"  -> MoveArmy {action.Nation} to {armyMeta.ToTerritoryId}. Units there now: {string.Join(", ", tr.Select(u => $"{u.UnitType} {u.Nation} {u.Id}"))}");
                                 var mg = context.Games.First(g => g.Id == replayGameId);
                                 if (mg.PendingBattleDefenders.Any())
                                 {
@@ -521,7 +526,9 @@ public class GameReplayService
                                         context.SaveChanges();
                                     }
                                 }
-                            } else {
+                            }
+                            else
+                            {
                                 // Silently continuing here (as this code used to) leaves `result` null, which
                                 // none of the post-switch BadRequest/Forbid/Unauthorized checks catch — replay
                                 // would carry on as if this action succeeded, quietly leaving the board short one
@@ -572,16 +579,21 @@ public class GameReplayService
                                 mfGame.CurrentManeuverPhase = ManeuverPhase.Fleets;
                                 context.SaveChanges();
                             }
-                            if (fleetUnit != null) {
-                                var allInTerr = context.Units.Where(u => u.GameId == replayGameId && u.TerritoryId == fleetMeta.ToTerritoryId).ToList();
-                                _logger.LogDebug($"  -> MoveFleet {action.Nation} to {fleetMeta.ToTerritoryId}. IsHostile={fleetMeta.IsHostileMove}. Units there: {string.Join(", ", allInTerr.Select(u => $"{u.UnitType} {u.Nation} {u.Id}"))}");
+                            if (fleetUnit != null)
+                            {
+                                //var allInTerr = context.Units.Where(u => u.GameId == replayGameId && u.TerritoryId == fleetMeta.ToTerritoryId).ToList();
+                                //_logger.LogTrace($"  -> MoveFleet {action.Nation} to {fleetMeta.ToTerritoryId}. IsHostile={fleetMeta.IsHostileMove}. Units there: {string.Join(", ", allInTerr.Select(u => $"{u.UnitType} {u.Nation} {u.Id}"))}");
                                 // Snapshot immediately around the live endpoint call so any unit its auto-combat
                                 // destroys can be handed to the following logged "Battle" action (see that case).
                                 var unitsBeforeFleetMove = SnapshotUnits(context, replayGameId);
                                 var fleetBattleTarget = FindAutoResolvedBattleTarget(actions, i, fleetMeta.ToTerritoryId, action.Nation!.Value);
-                                result = await maneuverController.MoveFleet(replayGameId, new MoveUnitRequest {
-                                    UnitId = fleetUnit.Id, DestinationId = fleetMeta.ToTerritoryId, IsHostile = fleetMeta.IsHostileMove ?? false,
-                                    BattleTargetNation = fleetBattleTarget?.DefenderNation, BattleTargetUnitType = fleetBattleTarget?.DefenderUnitType
+                                result = await maneuverController.MoveFleet(replayGameId, new MoveUnitRequest
+                                {
+                                    UnitId = fleetUnit.Id,
+                                    DestinationId = fleetMeta.ToTerritoryId,
+                                    IsHostile = fleetMeta.IsHostileMove ?? false,
+                                    BattleTargetNation = fleetBattleTarget?.DefenderNation,
+                                    BattleTargetUnitType = fleetBattleTarget?.DefenderUnitType
                                 });
                                 RecordMoveCombatDestructions(context, replayGameId, unitsBeforeFleetMove, fleetMeta.ToTerritoryId, destroyedByCurrentMove);
                                 if (result is BadRequestObjectResult)
@@ -593,7 +605,7 @@ public class GameReplayService
                                     result = new OkResult();
                                 }
                                 var mg = context.Games.First(g => g.Id == replayGameId);
-                                _logger.LogDebug($"  -> After MoveFleet, PendingBattle={mg.PendingBattleTerritoryId}, Defenders={string.Join(",", mg.PendingBattleDefenders)}");
+                                //_logger.LogTrace($"  -> After MoveFleet, PendingBattle={mg.PendingBattleTerritoryId}, Defenders={string.Join(",", mg.PendingBattleDefenders)}");
                                 if (mg.PendingBattleDefenders.Any())
                                 {
                                     var nextAction = (i + 1 < actions.Count) ? actions[i + 1] : null;
@@ -608,7 +620,9 @@ public class GameReplayService
                                         context.SaveChanges();
                                     }
                                 }
-                            } else {
+                            }
+                            else
+                            {
                                 return new GameReplayResult
                                 {
                                     Success = false,
@@ -630,7 +644,8 @@ public class GameReplayService
                             var unit = context.Units.FirstOrDefault(u => u.GameId == replayGameId && u.Nation == action.Nation && u.TerritoryId == hostMeta.TerritoryId && u.UnitType == hostMeta.UnitType && u.IsHostile != hostMeta.IsHostile && !u.HasMoved)
                                 ?? context.Units.FirstOrDefault(u => u.GameId == replayGameId && u.Nation == action.Nation && u.TerritoryId == hostMeta.TerritoryId && u.UnitType == hostMeta.UnitType && u.IsHostile != hostMeta.IsHostile)
                                 ?? context.Units.FirstOrDefault(u => u.GameId == replayGameId && u.Nation == action.Nation && u.TerritoryId == hostMeta.TerritoryId && u.UnitType == hostMeta.UnitType);
-                            if (unit != null) {
+                            if (unit != null)
+                            {
                                 unit.IsHostile = hostMeta.IsHostile;
                                 context.SaveChanges();
                                 // See the matching comment on the "Production"/"Import" cases: without this,
@@ -990,8 +1005,8 @@ public class GameReplayService
                                 }
                                 context.SaveChanges();
 
-                                var investorPlayerLog = context.Players.FirstOrDefault(p => p.Id == invGame.ActingPlayerId);
-                                _logger.LogDebug($"  -> Investment: Player={investorPlayerLog?.UserId} Cash={investorPlayerLog?.Cash} BondCost={invMeta.Cost} TradeIn={invMeta.TradeInCost} TradeInId={tradeInId} Nation={invMeta.Nation}");
+                                //var investorPlayerLog = context.Players.FirstOrDefault(p => p.Id == invGame.ActingPlayerId);
+                                //_logger.LogTrace($"  -> Investment: Player={investorPlayerLog?.UserId} Cash={investorPlayerLog?.Cash} BondCost={invMeta.Cost} TradeIn={invMeta.TradeInCost} TradeInId={tradeInId} Nation={invMeta.Nation}");
                                 result = await gamesController.PerformInvestment(replayGameId, new GamesController.InvestmentActionDto { ActionType = "Buy", BondId = bondToBuy?.Id, TradeInBondId = tradeInId });
                             }
                             else
@@ -1174,8 +1189,8 @@ public class GameReplayService
                     };
                 }
 
-                var postReplayGame = context.Games.First(g => g.Id == replayGameId);
-                _logger.LogDebug($"  -> IsInvestorTurn={postReplayGame.IsInvestorTurn}, Pending=[{string.Join(", ", postReplayGame.PendingInvestorIds)}]");
+                //var postReplayGame = context.Games.First(g => g.Id == replayGameId);
+                //_logger.LogTrace($"  -> IsInvestorTurn={postReplayGame.IsInvestorTurn}, Pending=[{string.Join(", ", postReplayGame.PendingInvestorIds)}]");
 
                 if (onActionReplayed != null) await onActionReplayed(action, i, false);
             }

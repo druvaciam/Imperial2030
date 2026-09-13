@@ -6,6 +6,7 @@ from imperial_env import ImperialEnv
 
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from opponent_curriculum import OpponentCurriculum
 from training_schedules import (
     MutableValueSchedule,
     SchedulePhase,
@@ -149,14 +150,20 @@ SHAPING_SCALE_FINAL = 0.30
 # than the training it is shaping. The schedules move slowly enough that this granularity is invisible.
 CURRICULUM_PUSH_EVERY = 10_000
 
+# A cumulative milestone shared by reward and opponent curricula. It is deliberately independent of a
+# single model.learn call: ordinary stop/start training must neither restore easy rewards nor easy bots.
+CURRICULUM_TIMESTEPS = 20_000_000
+
 
 class CurriculumCallback(BaseCallback):
-    """Pushes the reward-shaping curriculum into the envs, which forward it to the C# server on reset."""
+    """Pushes reward and opponent curricula into each environment for its next episode."""
 
-    def __init__(self, total_timesteps, verbose=1):
+    def __init__(self, total_timesteps, opponent_curriculum=None, fixed_opponents=None, verbose=1):
         super().__init__(verbose)
         # Cumulative, NOT run-relative - see CumulativeSchedule for why they differ.
         self.schedule = CumulativeSchedule(total_timesteps)
+        self.opponent_curriculum = opponent_curriculum
+        self.fixed_opponents = tuple(fixed_opponents) if fixed_opponents is not None else None
         self._last_push = None
 
     def _scales(self, progress):
@@ -178,13 +185,23 @@ class CurriculumCallback(BaseCallback):
         return shaping, factory
 
     def _push(self):
-        shaping, factory = self._scales(self.schedule.progress(self.num_timesteps))
-        self.training_env.env_method("set_curriculum", shaping, factory)
+        progress = self.schedule.progress(self.num_timesteps)
+        shaping, factory = self._scales(progress)
+        if self.fixed_opponents is not None:
+            opponent_stage = -1
+            opponents = self.fixed_opponents
+        else:
+            opponent_stage, opponents = self.opponent_curriculum.stage_at(progress)
+
+        self.training_env.env_method("set_curriculum", shaping, factory, list(opponents))
         self.logger.record("curriculum/shaping_scale", shaping)
         self.logger.record("curriculum/factory_penalty_scale", factory)
+        self.logger.record("curriculum/opponent_stage", opponent_stage)
+        self.logger.record("curriculum/opponent_count", len(opponents))
         if self.verbose > 0:
             print(f"[curriculum] step {self.num_timesteps:,}: "
-                  f"shaping_scale={shaping:.2f} factory_penalty_scale={factory:.2f}")
+                  f"shaping_scale={shaping:.2f} factory_penalty_scale={factory:.2f} "
+                  f"opponents={','.join(opponents)}")
 
     def _on_training_start(self) -> None:
         progress = self.schedule.progress(self.num_timesteps)
@@ -212,11 +229,16 @@ if __name__ == "__main__":
         help="Start a new learning-rate/entropy phase at the loaded checkpoint (intentional fine-tuning only).",
     )
     parser.add_argument("--bot-type", type=str, default="RL", help="The name of the bot to train (e.g. RL, RL-2).")
-    parser.add_argument("--opponents", type=str, help="Comma separated list of opponents to train against (e.g. Random,Default,RL).")
+    parser.add_argument(
+        "--opponents",
+        type=str,
+        help="Fixed comma-separated opponent pool; overrides the automatic stage-based curriculum.",
+    )
     parser.add_argument("--n-envs", type=int, default=4, help="Number of parallel training environments (separate OS processes, each with its own TCP session to the C# server). 1 falls back to a single in-process env.")
     args = parser.parse_args()
 
-    opponents_list = args.opponents.split(",") if args.opponents else []
+    fixed_opponents = (tuple(opponent.strip() for opponent in args.opponents.split(",") if opponent.strip())
+                       if args.opponents else None)
 
     MODEL_BASENAME = args.bot_type
     MODEL_PATH = f"{MODEL_BASENAME}.zip"
@@ -235,12 +257,6 @@ if __name__ == "__main__":
     # fast that same amount of experience is collected in wall-clock time, not the PPO hyperparameters.
     TOTAL_N_STEPS = 8192
     n_steps_per_env = max(1, TOTAL_N_STEPS // args.n_envs)
-
-    env_fns = [make_env(args.bot_type, opponents_list) for _ in range(args.n_envs)]
-    # SubprocVecEnv runs each env in its own OS process for genuine parallelism (Python's GIL means
-    # DummyVecEnv would just interleave them on one core). Each worker opens its own socket to the training
-    # server, which handles concurrent sessions independently (see the ConcurrentDictionary session store).
-    vec_env = SubprocVecEnv(env_fns) if args.n_envs > 1 else DummyVecEnv(env_fns)
 
     # Optional: TensorBoard logging for watching ep_rew_mean etc. trend over time. Degrades to plain console
     # logging (instead of hard-crashing training) if the `tensorboard` package isn't installed — install it
@@ -342,6 +358,22 @@ if __name__ == "__main__":
         INITIAL_ENT_COEF,
         FINAL_ENT_COEF,
     )
+
+    opponent_curriculum = None if fixed_opponents is not None else OpponentCurriculum(args.bot_type)
+    curriculum_progress = CumulativeSchedule(CURRICULUM_TIMESTEPS).progress(saved_model_timesteps)
+    if fixed_opponents is not None:
+        initial_opponents = fixed_opponents
+        print(f"Using fixed --opponents override: {','.join(initial_opponents)}")
+    else:
+        opponent_stage, initial_opponents = opponent_curriculum.stage_at(curriculum_progress)
+        print(f"[curriculum] initial opponent stage {opponent_stage} at {curriculum_progress:.0%}: "
+              f"{','.join(initial_opponents)}")
+
+    env_fns = [make_env(args.bot_type, list(initial_opponents)) for _ in range(args.n_envs)]
+    # SubprocVecEnv runs each env in its own OS process for genuine parallelism (Python's GIL means
+    # DummyVecEnv would just interleave them on one core). Each worker opens its own socket to the training
+    # server, which handles concurrent sessions independently (see the ConcurrentDictionary session store).
+    vec_env = SubprocVecEnv(env_fns) if args.n_envs > 1 else DummyVecEnv(env_fns)
 
     if is_resume:
         print("Found existing model, resuming training...")
@@ -478,12 +510,11 @@ if __name__ == "__main__":
         schedule_state_path=SCHEDULE_STATE_PATH,
         reset=args.reset,
     )
-    # CURRICULUM_TIMESTEPS is a cumulative milestone, not this run's budget: it is the point in the
-    # agent's whole training history by which shaping should have finished decaying and the Factory
-    # penalty should be at full strength. Separate from TOTAL_TIMESTEPS so changing how long a single
-    # session runs cannot silently move the curriculum.
-    CURRICULUM_TIMESTEPS = 20_000_000
-    curriculum_callback = CurriculumCallback(total_timesteps=CURRICULUM_TIMESTEPS)
+    curriculum_callback = CurriculumCallback(
+        total_timesteps=CURRICULUM_TIMESTEPS,
+        opponent_curriculum=opponent_curriculum,
+        fixed_opponents=fixed_opponents,
+    )
 
     # Apply the schedule before checkpointing so the model value and sidecar describe the same step.
     callback = CallbackList([schedule_callback, curriculum_callback, save_callback])

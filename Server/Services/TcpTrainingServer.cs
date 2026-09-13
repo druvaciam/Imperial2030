@@ -888,7 +888,7 @@ public class TcpTrainingServer : BackgroundService
                     .Select(n => n.Nation)
                     .ToHashSet();
 
-                if (chosenDestinationId != null && IsRedundantStackMove(game, unit, chosenDestinationId, rlControlledNations))
+                if (chosenDestinationId != null && ManeuverDefenseHelper.IsRedundantStackMove(game, unit, chosenDestinationId, rlControlledNations))
                 {
                     _logger.LogWarning(
                         $"[RL PENALTY] {unit.Nation} stacked another army onto '{chosenDestinationId}', which a " +
@@ -941,22 +941,6 @@ public class TcpTrainingServer : BackgroundService
                                     isHostileMove = false;
                                 }
                             }
-                        }
-
-                        // Penalize fully emptying a factory city's army garrison. Immediate rewards (flag
-                        // capture, hostile-clearing) are certain and dense; the risk of losing a factory to a
-                        // later hostile takeover is delayed and opponent-dependent, so without this the agent
-                        // has no counterweight and will happily strip a factory city's defenders for a nearby
-                        // flag grab (observed live: Russia emptied both Moscow armies to claim neutral Japan
-                        // right after Europe had just hostile-moved into Russia's other home city).
-                        // See IsRecklessFactoryCityVacation for the full conditions, including the two
-                        // moves that are exempt because they answer the threat instead of ignoring it:
-                        // striking the enemy army that could have taken the city, and clearing an enemy
-                        // off one of the nation's own home provinces.
-                        if (IsRecklessFactoryCityVacation(game, unit, session.ManeuverSelectedTerritoryId!, target, isHostileMove))
-                        {
-                            //_logger.LogWarning($"[RL PENALTY] {unit.Nation} emptied its factory city '{session.ManeuverSelectedTerritoryId}' of army defenders by moving to '{target}', with an enemy army able to reach it.");
-                            //explicitBonusReward -= 5.0f;
                         }
 
                         // Penalize walking a unit straight back where it came from when the round trip
@@ -2286,39 +2270,7 @@ public class TcpTrainingServer : BackgroundService
     /// </summary>
     public static bool IsRedundantStackMove(Game game, Unit unit, string targetTerritoryId, ISet<Nation>? friendlyNations = null)
     {
-        if (unit.UnitType != UnitType.Army) return false;
-        if (targetTerritoryId == unit.TerritoryId) return false;
-
-        var target = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == targetTerritoryId);
-
-        // Neutral land only: home provinces (anyone's) have their own reasons to be stacked.
-        if (target == null || target.Nation.HasValue || target.Type != TerritoryType.Land) return false;
-
-        bool IsFriendly(Nation n) => friendlyNations?.Contains(n) ?? (n == unit.Nation);
-
-        var occupants = game.Units.Where(u => u.TerritoryId == targetTerritoryId && u.Id != unit.Id).ToList();
-
-        // Anything foreign there makes this reinforcement, not waste.
-        if (occupants.Any(u => !IsFriendly(u.Nation))) return false;
-
-        int defendersAlreadyThere = occupants.Count(u => u.UnitType == UnitType.Army);
-        if (defendersAlreadyThere == 0) return false;
-
-        return defendersAlreadyThere >= EnemyArmiesAbleToReach(game, targetTerritoryId, IsFriendly, unit.Id);
-    }
-
-    /// <summary>
-    /// How many enemy armies could move into <paramref name="territoryId"/> on their own next maneuver,
-    /// measured with the same reachability the engine grants them (adjacency, their rail, their convoys).
-    /// </summary>
-    private static int EnemyArmiesAbleToReach(Game game, string territoryId, Func<Nation, bool> isFriendly, Guid excludeUnitId)
-    {
-        return game.Units.Count(u =>
-            u.Id != excludeUnitId &&
-            u.UnitType == UnitType.Army &&
-            !isFriendly(u.Nation) &&
-            Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, u.TerritoryId, u.Nation)
-                .Any(d => d.TerritoryId == territoryId));
+        return ManeuverDefenseHelper.IsRedundantStackMove(game, unit, targetTerritoryId, friendlyNations);
     }
 
     /// <summary>
@@ -2406,7 +2358,12 @@ public class TcpTrainingServer : BackgroundService
                 },
                 Players = game.Players.Select(pl => new
                 {
-                    pl.Id, pl.BotName, pl.BotType, pl.IsBot, pl.IsHost, pl.Cash,
+                    pl.Id,
+                    pl.BotName,
+                    pl.BotType,
+                    pl.IsBot,
+                    pl.IsHost,
+                    pl.Cash,
                     BondCount = game.Bonds.Count(b => b.HolderId == pl.Id),
                     BondCredit = game.Bonds.Where(b => b.HolderId == pl.Id).Sum(b => b.Cost),
                     Score = game.CalculateScore(pl.Id)
@@ -2414,18 +2371,32 @@ public class TcpTrainingServer : BackgroundService
                 NationStates = game.NationStates.Select(ns => new
                 {
                     Nation = ns.Nation.ToString(),
-                    ns.ControllerId, ns.Power, ns.Treasury, ns.RondelPosition,
-                    ns.HasMovedThisTurn, ns.HasBuiltThisTurn, ns.HasProducedThisTurn, ns.HasImportedThisTurn,
-                    ns.TaxRevenue, ns.PreviousTaxRevenue
+                    ns.ControllerId,
+                    ns.Power,
+                    ns.Treasury,
+                    ns.RondelPosition,
+                    ns.HasMovedThisTurn,
+                    ns.HasBuiltThisTurn,
+                    ns.HasProducedThisTurn,
+                    ns.HasImportedThisTurn,
+                    ns.TaxRevenue,
+                    ns.PreviousTaxRevenue
                 }).ToList(),
                 Bonds = game.Bonds.Select(b => new
                 {
-                    Nation = b.Nation.ToString(), b.Cost, b.Interest, b.HolderId
+                    Nation = b.Nation.ToString(),
+                    b.Cost,
+                    b.Interest,
+                    b.HolderId
                 }).ToList(),
                 Units = game.Units.Select(u => new
                 {
-                    Nation = u.Nation.ToString(), UnitType = u.UnitType.ToString(),
-                    u.TerritoryId, u.IsHostile, u.HasMoved, u.HasConvoyed
+                    Nation = u.Nation.ToString(),
+                    UnitType = u.UnitType.ToString(),
+                    u.TerritoryId,
+                    u.IsHostile,
+                    u.HasMoved,
+                    u.HasConvoyed
                 }).ToList(),
                 TerritoryStates = game.TerritoryStates
                     .Where(t => t.HasFactory || t.Controller != null)

@@ -18,7 +18,11 @@ The training pipeline consists of two components:
    cd python_rl
    python train.py --bot-type RL
    ```
-   *Note: You can train a new bot (e.g. `RL-2`) against specific opponents by using the `--opponents` flag:*
+   Without `--opponents`, training uses a cumulative opponent curriculum: Random/Default first,
+   then Friendly, Aggressive, Greedy, and finally earlier RL generations. The current generation is
+   never included (for example, RL-4 can face RL, RL-2, and RL-3, but not RL-4).
+
+   To use a fixed opponent pool instead, pass `--opponents`:
    ```bash
    python train.py --bot-type RL-2 --opponents RL,Default,Random
    ```

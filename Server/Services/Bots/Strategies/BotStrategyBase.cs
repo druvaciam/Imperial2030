@@ -1,4 +1,5 @@
 using Imperial2030.Server.Models;
+using Imperial2030.Server.Helpers;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 
@@ -6,6 +7,8 @@ namespace Imperial2030.Server.Services.Bots.Strategies;
 
 public abstract class BotStrategyBase : IBotStrategy
 {
+    private const int RedundantNeutralStackScorePenalty = 20;
+
     public abstract string Name { get; }
 
     public abstract double ScoreRondelSlot(int slot, Game game, NationState ns, Player controller, int factories, int units);
@@ -124,7 +127,7 @@ public abstract class BotStrategyBase : IBotStrategy
         var friendlyNations = game.NationStates
             .Where(ns => ns.ControllerId == controller.Id)
             .Select(ns => ns.Nation)
-            .ToList();
+            .ToHashSet();
 
         int score = Random.Shared.Next(0, 10);
         bool hasEnemy = game.Units.Any(u => u.TerritoryId == destinationId && !friendlyNations.Contains(u.Nation));
@@ -190,6 +193,14 @@ public abstract class BotStrategyBase : IBotStrategy
         bool notFriendlyHome = def?.Nation == null || !friendlyNations.Contains(def.Nation.Value);
         if (notFriendlyHome) score += 10;
         else if (!hasEnemy) score -= 50; // Penalize moving within friendly home territories if there is no enemy
+
+        // A neutral region only needs enough armies to match the enemy armies that can reach it. Prefer
+        // an open or contested destination once it has that defence, but keep forward staging better than
+        // leaving the army idle in a friendly home province when no stronger option exists.
+        if (ManeuverDefenseHelper.IsRedundantStackMove(game, unit, destinationId, friendlyNations))
+        {
+            score -= RedundantNeutralStackScorePenalty;
+        }
 
         return score;
     }

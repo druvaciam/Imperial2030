@@ -56,6 +56,18 @@ public class RLVersionComparisonTests
         int Turns,
         string InitialStateFingerprint);
 
+    private sealed record HeadToHeadResult(
+        int Scenario,
+        int Rotation,
+        Guid PlayerId,
+        string Model,
+        bool Won,
+        int Rank,
+        int Score,
+        int RelativeMargin,
+        int Turns,
+        string InitialStateFingerprint);
+
     [Fact]
     public async Task CompareRLVersionsOnMatchedRandomStarts()
     {
@@ -106,6 +118,77 @@ public class RLVersionComparisonTests
             Assert.Equal(ScenarioCount, allResults.Count(r => r.Model == model)));
     }
 
+    [Fact]
+    public async Task CompareRLVersionsHeadToHeadOnRotatedRandomStarts()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var allResults = new List<HeadToHeadResult>();
+
+        for (int scenarioNumber = 1; scenarioNumber <= ScenarioCount; scenarioNumber++)
+        {
+            Assert.True(stopwatch.Elapsed < HardTimeout,
+                $"Head-to-head comparison exceeded the {HardTimeout.TotalMinutes}-minute hard timeout before scenario {scenarioNumber}.");
+
+            var scenario = CreateHeadToHeadScenario(scenarioNumber);
+            var scenarioResults = new List<HeadToHeadResult>();
+
+            // Rotate the models through all three seats. Every game still contains RL-2, RL-3 and RL-4,
+            // while every model receives every one of this scenario's nation/bond packages exactly once.
+            for (int rotation = 0; rotation < ModelTypes.Length; rotation++)
+            {
+                var modelByPlayer = scenario.PlayerIds
+                    .Select((playerId, seat) => (playerId, model: ModelTypes[(seat + rotation) % ModelTypes.Length]))
+                    .ToDictionary(pair => pair.playerId, pair => pair.model);
+
+                var rotationResults = await PlayHeadToHeadScenario(
+                    scenario, rotation + 1, modelByPlayer, stopwatch);
+
+                Assert.Equal(ModelTypes.OrderBy(x => x), rotationResults.Select(r => r.Model).OrderBy(x => x));
+                scenarioResults.AddRange(rotationResults);
+
+                _output.WriteLine(
+                    $"Scenario {scenario.Number,2}, rotation {rotation + 1}: " +
+                    string.Join(" | ", rotationResults.OrderBy(r => r.Model).Select(r =>
+                        $"{r.Model}: rank {r.Rank}, score {r.Score}, margin {r.RelativeMargin:+#;-#;0}")));
+            }
+
+            // Bot identity is deliberately excluded from the setup fingerprint. All three rotations must
+            // therefore begin from the exact same board, seating, bonds and Investor-card holder.
+            Assert.Single(scenarioResults.Select(r => r.InitialStateFingerprint).Distinct());
+
+            // Seat rotation is the fairness guarantee: within a scenario each model plays from each player
+            // seat once, so no version is permanently tied to one pair of nations or one Investor position.
+            foreach (var playerId in scenario.PlayerIds)
+            {
+                Assert.Equal(
+                    ModelTypes.OrderBy(x => x),
+                    scenarioResults.Where(r => r.PlayerId == playerId).Select(r => r.Model).OrderBy(x => x));
+            }
+
+            allResults.AddRange(scenarioResults);
+        }
+
+        _output.WriteLine("");
+        _output.WriteLine($"=== RL head-to-head comparison: {ScenarioCount} randomized scenarios, three seat rotations each ===");
+        _output.WriteLine($"{"model",-6} {"wins",8} {"avg rank",9} {"avg score",10} {"avg margin",11} {"avg turns",10}");
+
+        foreach (var model in ModelTypes)
+        {
+            var results = allResults.Where(r => r.Model == model).ToList();
+            _output.WriteLine(
+                $"{model,-6} {results.Count(r => r.Won),2}/{results.Count,-5} " +
+                $"{results.Average(r => r.Rank),9:0.00} " +
+                $"{results.Average(r => r.Score),10:0.00} " +
+                $"{results.Average(r => r.RelativeMargin),11:+0.00;-0.00;0.00} " +
+                $"{results.Average(r => r.Turns),10:0.0}");
+        }
+
+        int expectedResultsPerModel = ScenarioCount * ModelTypes.Length;
+        Assert.Equal(expectedResultsPerModel * ModelTypes.Length, allResults.Count);
+        Assert.All(ModelTypes, model =>
+            Assert.Equal(expectedResultsPerModel, allResults.Count(r => r.Model == model)));
+    }
+
     private static MatchedScenario CreateRandomScenario(int number)
     {
         var playerIds = Enumerable.Range(0, 6).Select(_ => Guid.NewGuid()).OrderBy(id => id).ToList();
@@ -127,6 +210,34 @@ public class RLVersionComparisonTests
         Assert.Equal(OpponentTypes.OrderBy(x => x), opponentByPlayer.Values.OrderBy(x => x));
 
         return new MatchedScenario(number, rlNation, playerIds, distribution, opponentByPlayer);
+    }
+
+    private static MatchedScenario CreateHeadToHeadScenario(int number)
+    {
+        var playerIds = Enumerable.Range(0, ModelTypes.Length)
+            .Select(_ => Guid.NewGuid())
+            .OrderBy(id => id)
+            .ToList();
+        var shuffledPlayers = Shuffle(playerIds);
+
+        // These are the official three-player package pairs already used by GameSetupHelper. Randomly
+        // assigning the three players to the pairs gives every scenario a fresh initial distribution.
+        var distribution = new Dictionary<Nation, Guid>
+        {
+            [Nation.India] = shuffledPlayers[0],
+            [Nation.USA] = shuffledPlayers[0],
+            [Nation.Russia] = shuffledPlayers[1],
+            [Nation.Brazil] = shuffledPlayers[1],
+            [Nation.China] = shuffledPlayers[2],
+            [Nation.Europe] = shuffledPlayers[2]
+        };
+
+        return new MatchedScenario(
+            number,
+            Nation.Russia,
+            playerIds,
+            distribution,
+            new Dictionary<Guid, string>());
     }
 
     private async Task<GameResult> PlayScenario(string model, MatchedScenario scenario, Stopwatch overallStopwatch)
@@ -230,12 +341,120 @@ public class RLVersionComparisonTests
             initialFingerprint);
     }
 
+    private async Task<List<HeadToHeadResult>> PlayHeadToHeadScenario(
+        MatchedScenario scenario,
+        int rotation,
+        IReadOnlyDictionary<Guid, string> modelByPlayer,
+        Stopwatch overallStopwatch)
+    {
+        string databaseName = $"RLHeadToHead_{scenario.Number}_{rotation}_{Guid.NewGuid():N}";
+        await using var context = CreateContext(databaseName);
+        var gameId = Guid.NewGuid();
+
+        context.Games.Add(new Game
+        {
+            Id = gameId,
+            Name = $"RL head-to-head scenario {scenario.Number}, rotation {rotation}",
+            MaxPlayers = ModelTypes.Length,
+            Status = GameStatus.Lobby,
+            CurrentTurnNation = Nation.Russia
+        });
+        context.Players.AddRange(scenario.PlayerIds.Select((id, index) => new Player
+        {
+            Id = id,
+            GameId = gameId,
+            UserId = $"head-to-head-{id:N}",
+            IsHost = index == 0,
+            IsBot = false,
+            BotName = $"Seat {index}"
+        }));
+        await context.SaveChangesAsync();
+
+        await GameSetupHelper.InitializeGameAsync(
+            context,
+            gameId,
+            scenario.Distribution.ToDictionary(pair => pair.Key, pair => pair.Value));
+
+        var players = await context.Players.Where(p => p.GameId == gameId).ToListAsync();
+        foreach (var player in players)
+        {
+            player.IsBot = true;
+            player.BotType = modelByPlayer[player.Id];
+            player.BotName = $"{player.BotType} Bot";
+        }
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var startingGame = await context.Games
+            .Include(g => g.Players)
+            .Include(g => g.NationStates)
+            .Include(g => g.Bonds)
+            .Include(g => g.TerritoryStates)
+            .AsSplitQuery()
+            .SingleAsync(g => g.Id == gameId);
+
+        Assert.Equal(ModelTypes.OrderBy(x => x),
+            startingGame.Players.Select(p => p.BotType!).OrderBy(x => x));
+        Assert.All(startingGame.Players, player =>
+            Assert.Equal(2, startingGame.NationStates.Count(n => n.ControllerId == player.Id)));
+
+        string initialFingerprint = Fingerprint(startingGame);
+        var botService = CreateBotService(databaseName, ModelTypes);
+        botService.SkipDelays = true;
+        botService.TriggerBotTurn(gameId, 0);
+
+        while (overallStopwatch.Elapsed < HardTimeout)
+        {
+            await Task.Delay(20);
+            await using var snapshotContext = CreateContext(databaseName);
+            var status = await snapshotContext.Games.AsNoTracking()
+                .Where(g => g.Id == gameId)
+                .Select(g => g.Status)
+                .SingleAsync();
+            if (status == GameStatus.Finished) break;
+        }
+
+        Assert.True(overallStopwatch.Elapsed < HardTimeout,
+            $"Head-to-head rotation {rotation} did not finish scenario {scenario.Number} within the hard timeout.");
+
+        await using var finalContext = CreateContext(databaseName);
+        var finalGame = await finalContext.Games.AsNoTracking()
+            .Include(g => g.Players)
+            .Include(g => g.NationStates)
+            .Include(g => g.Bonds)
+            .AsSplitQuery()
+            .SingleAsync(g => g.Id == gameId);
+        Assert.Equal(GameStatus.Finished, finalGame.Status);
+
+        var ranked = finalGame.GetRankedPlayers();
+        return finalGame.Players.Select(player =>
+        {
+            int score = finalGame.CalculateScore(player.Id);
+            int bestOpponentScore = finalGame.Players
+                .Where(opponent => opponent.Id != player.Id)
+                .Max(opponent => finalGame.CalculateScore(opponent.Id));
+            int rank = ranked.FindIndex(rankedPlayer => rankedPlayer.Id == player.Id) + 1;
+
+            return new HeadToHeadResult(
+                scenario.Number,
+                rotation,
+                player.Id,
+                player.BotType!,
+                rank == 1,
+                rank,
+                score,
+                score - bestOpponentScore,
+                finalGame.TurnCount,
+                initialFingerprint);
+        }).ToList();
+    }
+
     private static ApplicationDbContext CreateContext(string databaseName) =>
         new(new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(databaseName)
             .Options);
 
-    private static BotService CreateBotService(string databaseName, string model)
+    private static BotService CreateBotService(string databaseName, params string[] models)
     {
         var hub = new Mock<IHubContext<GameHub>>();
         var clients = new Mock<IHubClients>();
@@ -256,17 +475,20 @@ public class RLVersionComparisonTests
             return scope.Object;
         });
 
+        var strategies = new List<Imperial2030.Server.Services.Bots.IBotStrategy>
+        {
+            new RandomBotStrategy(),
+            new DefaultBotStrategy(),
+            new GreedyBotStrategy(),
+            new AggressiveBotStrategy(),
+            new FriendlyBotStrategy()
+        };
+        strategies.AddRange(models.Distinct().Select(model => new RLBotStrategy(model)));
+
         return new BotService(
             scopeFactory.Object,
             hub.Object,
-            [
-                new RandomBotStrategy(),
-                new DefaultBotStrategy(),
-                new GreedyBotStrategy(),
-                new AggressiveBotStrategy(),
-                new FriendlyBotStrategy(),
-                new RLBotStrategy(model)
-            ],
+            strategies,
             NullLogger<BotService>.Instance);
     }
 

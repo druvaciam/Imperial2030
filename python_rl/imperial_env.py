@@ -130,13 +130,15 @@ class ImperialEnv(gym.Env):
         info = {"action_mask": self.current_action_mask}
         return obs, reward, done, False, info
 
-    def set_curriculum(self, shaping_scale, factory_penalty_scale):
+    def set_curriculum(self, shaping_scale, factory_penalty_scale, opponents=None):
         """Called through VecEnv.env_method, so it must work across SubprocVecEnv process boundaries -
-        hence plain floats and no shared state. Takes effect on the NEXT reset, which is the right
-        granularity: changing the reward function underneath a half-played episode would make that
-        episode's returns incomparable to both the ones before and after it."""
+        hence plain values and no shared state. Takes effect on the NEXT reset, which is the right
+        granularity: changing the reward function or opponents underneath a half-played episode would
+        make that episode incomparable to both the ones before and after it."""
         self.shaping_scale = float(shaping_scale)
         self.factory_penalty_scale = float(factory_penalty_scale)
+        if opponents is not None:
+            self.opponents = list(opponents)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
