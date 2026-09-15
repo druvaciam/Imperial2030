@@ -52,6 +52,13 @@ public class TcpTrainingServer : BackgroundService
         public int ImportUnitsPlacedThisSequence { get; set; } = 0; // Tracks whether the current Import sequence placed anything, for the wasted-import-with-money penalty
 
         /// <summary>
+        /// Board-position baseline for the RL-controlled nation's current Maneuver. Armed by arriving on
+        /// either Maneuver rondel slot and cleared only after the complete phase, including battles,
+        /// territory control, and factory-destruction decisions, has resolved.
+        /// </summary>
+        public ManeuverOutcomeSnapshot? ManeuverOutcome { get; set; }
+
+        /// <summary>
         /// Multiplier applied to every shaping term before it is folded into the reward, set per episode
         /// by the trainer (see train.py's CurriculumCallback). 1.0 reproduces the historical behaviour, so
         /// a client that never sends it - including any older imperial_env.py - is unaffected.
@@ -81,6 +88,15 @@ public class TcpTrainingServer : BackgroundService
         public int TotalSessionSteps { get; set; } = 0;
         public int LastTurnCount { get; set; } = -1;
         public int ConsecutiveSameTurnSteps { get; set; } = 0;
+    }
+
+    public sealed class ManeuverOutcomeSnapshot
+    {
+        public Nation Nation { get; set; }
+        public int TurnCount { get; set; }
+        public float InitialStrategicPotential { get; set; }
+        public bool AnyUnitChangedTerritory { get; set; }
+        public bool DirectEventOccurred { get; set; }
     }
 
     public class TcpRequest
@@ -543,6 +559,16 @@ public class TcpTrainingServer : BackgroundService
         var game = session.Game;
         if (game == null) return null;
 
+        // A Maneuver snapshot is valid for exactly one nation turn. Normal completion clears it below;
+        // this guard handles episode end or any defensive recovery path that moved the turn on first.
+        if (session.ManeuverOutcome is { } staleManeuver
+            && (game.Status != GameStatus.InProgress
+                || staleManeuver.Nation != game.CurrentTurnNation
+                || staleManeuver.TurnCount != game.TurnCount))
+        {
+            session.ManeuverOutcome = null;
+        }
+
         session.TotalSessionSteps++;
         if (session.LastTurnCount == game.TurnCount)
         {
@@ -653,9 +679,16 @@ public class TcpTrainingServer : BackgroundService
         );
         float explicitBonusReward = 0f;
 
-        bool wasManeuverAction = false;
         bool wasImportAction = false;
         bool wasFactoryBuildAction = false;
+        ManeuverOutcomeSnapshot? completedManeuver = null;
+        float completedManeuverPotential = 0f;
+
+        void MarkDirectManeuverEvent(Nation actingNation)
+        {
+            var snapshot = completedManeuver ?? session.ManeuverOutcome;
+            if (snapshot?.Nation == actingNation) snapshot.DirectEventOccurred = true;
+        }
 
         // The flag is scoped to one turn of one nation. If the turn has moved on without it resolving
         // (a bot turn played inside AdvanceUntilRLTurn, a battle interposing, an episode reset), drop it
@@ -799,7 +832,6 @@ public class TcpTrainingServer : BackgroundService
         }
         else if (req.Action == 63 && game.CurrentManeuverPhase != ManeuverPhase.None)
         {
-            wasManeuverAction = true;
             // Pass Maneuver
             if (game.CurrentManeuverPhase == ManeuverPhase.Fleets) game.CurrentManeuverPhase = ManeuverPhase.Armies;
             else game.CurrentManeuverPhase = ManeuverPhase.None;
@@ -808,7 +840,6 @@ public class TcpTrainingServer : BackgroundService
         }
         else if (req.Action >= 64 && req.Action <= 125)
         {
-            wasManeuverAction = true;
             // Stage 1: Select Unit Territory
             int idx = req.Action - 64;
             if (idx >= 0 && idx < RLBotStrategy.AllManeuverTerritories.Length)
@@ -818,7 +849,6 @@ public class TcpTrainingServer : BackgroundService
         }
         else if (req.Action >= 126 && req.Action <= 188)
         {
-            wasManeuverAction = true;
             // Stage 2: Select Destination
             var unitType = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? UnitType.Fleet : UnitType.Army;
             var unit = game.Units.FirstOrDefault(u => u.TerritoryId == session.ManeuverSelectedTerritoryId && u.UnitType == unitType && u.Nation == game.CurrentTurnNation && !u.HasMoved);
@@ -827,48 +857,18 @@ public class TcpTrainingServer : BackgroundService
             {
                 unit.HasMoved = true;
 
-                // Evaluated here, before the move resolves: the unit is still standing at its origin, which
-                // is where reachability has to be measured from. Covers "Do Not Move" too - declining is
-                // exactly the case this exists for.
-                string? chosenDestinationId = null;
-                if (req.Action != 126)
-                {
-                    int chosenIdx = req.Action - 127;
-                    if (chosenIdx >= 0 && chosenIdx < RLBotStrategy.AllManeuverTerritories.Length)
-                    {
-                        chosenDestinationId = RLBotStrategy.AllManeuverTerritories[chosenIdx];
-                    }
-                }
-
-                var rlControlledNations = game.NationStates
-                    .Where(n => n.ControllerId == session.RLPlayerId)
-                    .Select(n => n.Nation)
-                    .ToHashSet();
-
-                if (chosenDestinationId != null && ManeuverDefenseHelper.IsRedundantStackMove(game, unit, chosenDestinationId, rlControlledNations))
-                {
-                    _logger.LogWarning(
-                        $"[RL PENALTY] {unit.Nation} stacked another army onto '{chosenDestinationId}', which a " +
-                        $"friendly army already holds and nothing contests - no flag, no battle. Penalty: -{RedundantStackPenalty}");
-                    explicitBonusReward -= RedundantStackPenalty;
-                }
-
-                float declinedRelief = DeclinedHomeReliefPenaltyFor(game, unit, chosenDestinationId);
-                if (declinedRelief > 0f)
-                {
-                    _logger.LogWarning(
-                        $"[RL PENALTY] {unit.Nation} left '{ReachableBlockadedHomeProvince(game, unit)}' blockaded: " +
-                        $"the army in '{unit.TerritoryId}' could have relieved it and went to " +
-                        $"'{chosenDestinationId ?? "nowhere"}' instead. Penalty: -{declinedRelief}");
-                    explicitBonusReward -= declinedRelief;
-                }
-
                 if (req.Action != 126) // Not "Do Not Move"
                 {
                     int destIdx = req.Action - 127;
                     if (destIdx >= 0 && destIdx < RLBotStrategy.AllManeuverTerritories.Length)
                     {
                         var target = RLBotStrategy.AllManeuverTerritories[destIdx];
+
+                        if (!string.Equals(unit.TerritoryId, target, StringComparison.OrdinalIgnoreCase)
+                            && session.ManeuverOutcome?.Nation == unit.Nation)
+                        {
+                            session.ManeuverOutcome.AnyUnitChangedTerritory = true;
+                        }
 
                         var friendlyNations = game.NationStates.Where(n => n.ControllerId == session.RLPlayerId).Select(n => n.Nation).ToHashSet();
                         bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
@@ -982,6 +982,17 @@ public class TcpTrainingServer : BackgroundService
             await TryPlayBotTurnAsync(game);
             RLBotStrategy.TrainingActionOverride.Value = null;
 
+            // BotService initializes the actual rondel phase before its RL training early-return. At that
+            // point no maneuver unit has moved yet, so this is the whole-phase positional baseline. This
+            // also covers a Maneuver reached after an Investor pass-through finishes.
+            var maneuverNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+            if (game.CurrentManeuverPhase != ManeuverPhase.None
+                && maneuverNs?.ControllerId == session.RLPlayerId
+                && maneuverNs.RondelPosition is int maneuverSlot)
+            {
+                TryArmManeuverOutcome(session, game, maneuverNs.Nation, maneuverSlot);
+            }
+
             // A rondel move that landed on Factory owes a build/skip decision on the NEXT step, for this
             // turn only. Armed here rather than re-derived from RondelPosition later - see
             // IsFactoryDecisionPending for why that difference is the whole bug.
@@ -1089,10 +1100,19 @@ public class TcpTrainingServer : BackgroundService
             }
         }
 
-        // If we were manually stepping through maneuver, and the maneuver phase just ended, we must advance the turn
-        if (wasManeuverAction && game.CurrentManeuverPhase == ManeuverPhase.None && game.Status == GameStatus.InProgress)
+        // Finalize only after the WHOLE Maneuver is resolved. A last-unit move can leave a battle or a
+        // factory decision pending even though CurrentManeuverPhase is already None; those continuations
+        // belong to this same Maneuver and must affect its post-position and direct-event record.
+        if (game.Status == GameStatus.InProgress && IsManeuverOutcomeReady(session, game))
         {
-            var nationState = game.NationStates.First(ns => ns.Nation == game.CurrentTurnNation);
+            await _botService.BotUpdateTerritoryControl(null, game, player.BotName ?? "Bot");
+            var snapshot = session.ManeuverOutcome!;
+            completedManeuver = snapshot;
+            var completedNationState = game.NationStates.First(state => state.Nation == snapshot.Nation);
+            completedManeuverPotential = CalculateManeuverStrategicPotential(
+                game,
+                snapshot.Nation,
+                completedNationState.ControllerId);
             game.AdvanceTurn();
             session.DecidedFactoryDestructionTerritoriesThisTurn.Clear();
         }
@@ -1116,12 +1136,21 @@ public class TcpTrainingServer : BackgroundService
             int postCount = game.Units.Count(u => u.Nation == nation);
             if (postCount < preCount)
             {
+                var maneuverSnapshot = completedManeuver ?? session.ManeuverOutcome;
+                var destroyedNationState = game.NationStates.FirstOrDefault(state => state.Nation == nation);
+                if (maneuverSnapshot != null
+                    && nation != maneuverSnapshot.Nation
+                    && destroyedNationState?.ControllerId != session.RLPlayerId)
+                {
+                    MarkDirectManeuverEvent(maneuverSnapshot.Nation);
+                }
+
                 var rlInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId == session.RLPlayerId).Sum(b => b.Interest);
                 var leaderInterest = game.Players.Select(p => game.Bonds.Where(b => b.Nation == nation && b.HolderId == p.Id).Sum(b => b.Interest)).DefaultIfEmpty(0).Max();
 
                 if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
                 {
-                    explicitBonusReward += 1.0f * (preCount - postCount);
+                    explicitBonusReward += EnemyUnitDestroyedReward * (preCount - postCount);
                     //_logger.LogInformation($"[RL REWARD] Destroyed unit of {nation}. +{1.0f * (preCount - postCount)}");
                 }
             }
@@ -1136,13 +1165,19 @@ public class TcpTrainingServer : BackgroundService
                 int postCount = postFactoryCounts.ContainsKey(nation) ? postFactoryCounts[nation] : 0;
                 if (postCount < preCount)
                 {
+                    var maneuverSnapshot = completedManeuver ?? session.ManeuverOutcome;
+                    if (maneuverSnapshot != null && nation != maneuverSnapshot.Nation)
+                    {
+                        MarkDirectManeuverEvent(maneuverSnapshot.Nation);
+                    }
+
                     var rlInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId == session.RLPlayerId).Sum(b => b.Interest);
                     var leaderInterest = game.Players.Select(p => game.Bonds.Where(b => b.Nation == nation && b.HolderId == p.Id).Sum(b => b.Interest)).DefaultIfEmpty(0).Max();
 
                     if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
                     {
-                        explicitBonusReward += 3.0f * (preCount - postCount);
-                        _logger.LogInformation($"[RL REWARD] Destroyed factory of {nation}. +{3.0f * (preCount - postCount)}");
+                        explicitBonusReward += EnemyFactoryDestroyedReward * (preCount - postCount);
+                        _logger.LogInformation($"[RL REWARD] Destroyed factory of {nation}. +{EnemyFactoryDestroyedReward * (preCount - postCount)}");
                     }
                 }
             }
@@ -1168,9 +1203,11 @@ public class TcpTrainingServer : BackgroundService
 
                         if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
                         {
-                            explicitBonusReward += 2.0f;
+                            explicitBonusReward += EnemyFactoryOccupiedReward;
                             //_logger.LogInformation($"[RL REWARD] Occupied factory of {nation}. +2.0f");
                         }
+
+                        MarkDirectManeuverEvent(occupyingNs.Nation);
                     }
                 }
             }
@@ -1193,12 +1230,14 @@ public class TcpTrainingServer : BackgroundService
 
             if (postFlags > preFlags)
             {
-                explicitBonusReward += (postFlags - preFlags) * 1.0f; // Small reward for placing flag
+                explicitBonusReward += (postFlags - preFlags) * FlagPlacementReward;
+                MarkDirectManeuverEvent(preNs.Nation);
                 //_logger.LogInformation($"[RL REWARD] Flag placed by {preNs.Nation}. +{(postFlags - preFlags) * 1.0f}");
             }
             if (postHostilesInHome < preHostilesInHome)
             {
                 explicitBonusReward += (preHostilesInHome - postHostilesInHome) * HomeReliefReward;
+                MarkDirectManeuverEvent(preNs.Nation);
                 //_logger.LogInformation($"[RL REWARD] Hostiles cleared from home by {preNs.Nation}. +{(preHostilesInHome - postHostilesInHome) * 5.0f}");
             }
 
@@ -1369,6 +1408,26 @@ public class TcpTrainingServer : BackgroundService
             }
         }
 
+        if (completedManeuver != null)
+        {
+            float maneuverOutcomeReward = CompleteManeuverOutcome(session, completedManeuverPotential);
+            explicitBonusReward += maneuverOutcomeReward;
+            if (maneuverOutcomeReward > 0f)
+            {
+                _logger.LogInformation(
+                    $"[RL REWARD] {completedManeuver.Nation} completed Maneuver with a better strategic position. " +
+                    $"Potential: {completedManeuver.InitialStrategicPotential:F2} -> {completedManeuverPotential:F2}. " +
+                    $"Reward: +{maneuverOutcomeReward:F2}");
+            }
+            else if (maneuverOutcomeReward < 0f)
+            {
+                _logger.LogWarning(
+                    $"[RL PENALTY] {completedManeuver.Nation} completed Maneuver with no useful net result. " +
+                    $"Potential: {completedManeuver.InitialStrategicPotential:F2} -> {completedManeuverPotential:F2}. " +
+                    $"Penalty: {maneuverOutcomeReward:F2}");
+            }
+        }
+
         // The single fold point. Everything above this line is shaping; everything below (the final VP
         // margin and the flat win/loss bonus) is the actual objective and is deliberately NOT scaled -
         // decaying shaping must make the terminal signal relatively STRONGER, not weaker.
@@ -1403,6 +1462,7 @@ public class TcpTrainingServer : BackgroundService
 
             var stateResponse = GetStateVector(game, session.RLPlayerId);
 
+            session.ManeuverOutcome = null;
             _sessions.TryRemove(req.SessionId, out _);
             _botService.ClearStrategyCache(game.Players);
             return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[RLBotStrategy.TotalActionSize] };
@@ -2157,74 +2217,227 @@ public class TcpTrainingServer : BackgroundService
         return (orderedHome, canArmy, canFleet);
     }
 
-    // Home territories (ordered by Id, same convention as GetImportOptions) with per-slot legality of
-    // building a factory there right now (not already built, not blocked by a hostile foreign army).
-    /// <summary>
-    /// Cost of landing on Factory with a build genuinely available and declining it.
-    ///
-    /// Deliberately much larger than the +10 a successful build earns. Unlike the "wasted Factory action"
-    /// penalty on the rondel move — whose magnitude had to be halved because it taught the agent to avoid
-    /// the Factory slot outright — this one cannot cause slot avoidance: it only fires once the nation is
-    /// already standing on Factory AND could build, so the agent's way out is simply to build, which is
-    /// the behaviour being trained. Skipping in that position is never forced.
-    /// </summary>
-    /// <summary>
-    /// Charged for marching an army into a neutral region a friendly army of the same nation already
-    /// holds, when nothing hostile is there to fight.
-    ///
-    /// A flag goes to the first army: p.10, "A nation's flag is placed in newly occupied land or sea
-    /// regions that don't contain foreign military units." The second and third gain no flag, no battle
-    /// and no blockade - they are a spent maneuver. Observed live as "Bot Charlie (RL-4) USA army moved
-    /// to Alaska from Chicago" three times in a row, claiming one flag with three armies.
-    ///
-    /// The reward function only ever paid +1 per flag gained, which prices the good move but never the
-    /// wasted one, and the agent never sees the counterfactual three flags it did not take.
-    ///
-    /// Deliberately narrow, because stacking is often correct and the rules say why:
-    ///   - foreign home provinces are exempt - three armies destroy a factory (p.11), and armies
-    ///     blockade (p.10), both of which need numbers;
-    ///   - a destination holding any foreign unit is exempt - that is reinforcement for a fight;
-    ///   - the nation's own home provinces are exempt - massing to defend a factory city is sound.
-    /// Sized above the small flag/positioning rewards so the waste cannot be farmed, but well below
-    /// the wasted-Rondel-turn penalties because the move is pointless rather than actively damaging.
-    /// </summary>
-    public const float RedundantStackPenalty = 4.0f;
+    // Objective event rewards stay separate from the holistic positional term. They are named here so
+    // their established magnitudes are explicit and regression-tested while the Maneuver shaping changes.
+    public const float FlagPlacementReward = 1.0f;
+    public const float EnemyUnitDestroyedReward = 1.0f;
+    public const float HomeReliefReward = 15.0f;
+    public const float EnemyFactoryDestroyedReward = 3.0f;
+    public const float EnemyFactoryOccupiedReward = 2.0f;
 
-    /// <summary>
-    /// True when moving <paramref name="unit"/> to <paramref name="targetTerritoryId"/> piles it onto a
-    /// neutral region that friendly armies already hold in sufficient strength.
-    ///
-    /// "Sufficient" is decided by the combat rule, not by a count of one. Battles destroy 1:1 (p.10,
-    /// "the active nation may destroy armies in land regions 1:1"), so an attacker arriving with A armies
-    /// trades away A defenders and A of its own.
-    ///
-    /// MATCHING the reachable threat is therefore enough, not exceeding it: with equal numbers both sides
-    /// are wiped out and the region ends up empty, and p.10 says "A flag remains in a region until the
-    /// region is occupied EXCLUSIVELY by another nation" - an empty region is occupied exclusively by
-    /// nobody, so the flag stays with its owner. The engine agrees: BotUpdateTerritoryControl skips any
-    /// territory with no units in it (`if (!unitsInTerritory.Any()) continue;`), leaving the controller
-    /// untouched. So two enemies one hop away justify a second defender, and no more.
-    ///
-    /// The move is redundant once the armies already present match or beat the reachable threat.
-    /// With no enemy able to reach, one defender is already enough and every further army is spent for
-    /// nothing - which is the observed case, three armies walking into an uncontested Alaska for one flag.
-    ///
-    /// The threat count is deliberately the LAST check: it walks reachability for every enemy army, so it
-    /// only runs once the cheap structural conditions have already established the move looks redundant.
-    /// </summary>
-    public static bool IsRedundantStackMove(Game game, Unit unit, string targetTerritoryId, ISet<Nation>? friendlyNations = null)
+    // Holistic Maneuver weights. The whole result is capped below one home-relief event, so positional
+    // shaping cannot dominate the direct military/economic outcome or the terminal game objective.
+    public const float MaxManeuverOutcomeReward = 8.0f;
+    public const float WastedManeuverResultPenalty = 2.0f;
+    private const float OccupiedHomePenalty = 3.0f;
+    private const float CoveredHomeThreatReward = 1.5f;
+    private const float HomeDefenseDeficitPenalty = 2.0f;
+    private const float FactoryDefenseDeficitPenalty = 2.0f;
+    private const float ForwardStagingArmyReward = 1.0f;
+    private const float UsefulReachObjectiveReward = 0.25f;
+    private const int MaxUsefulReachObjectives = 12;
+    private const float ManeuverPotentialEqualityTolerance = 0.0001f;
+
+    public static bool TryArmManeuverOutcome(
+        TrainingSession session,
+        Game game,
+        Nation nation,
+        int targetSlot)
     {
-        return ManeuverDefenseHelper.IsRedundantStackMove(game, unit, targetTerritoryId, friendlyNations);
+        if (!RondelData.IsManeuverSlot(targetSlot) || session.ManeuverOutcome != null) return false;
+
+        var nationState = game.NationStates.FirstOrDefault(state => state.Nation == nation);
+        if (nationState?.ControllerId != session.RLPlayerId) return false;
+
+        session.ManeuverOutcome = new ManeuverOutcomeSnapshot
+        {
+            Nation = nation,
+            TurnCount = game.TurnCount,
+            InitialStrategicPotential = CalculateManeuverStrategicPotential(
+                game,
+                nation,
+                nationState.ControllerId)
+        };
+        return true;
+    }
+
+    public static bool IsManeuverOutcomeReady(TrainingSession session, Game game)
+    {
+        var snapshot = session.ManeuverOutcome;
+        return snapshot != null
+            && game.Status == GameStatus.InProgress
+            && snapshot.Nation == game.CurrentTurnNation
+            && snapshot.TurnCount == game.TurnCount
+            && game.CurrentManeuverPhase == ManeuverPhase.None
+            && !game.IsInvestorTurn
+            && !game.PendingBattleDefenders.Any()
+            && game.PendingSwissBankForceNation == null
+            && session.PendingFactoryDestructionTerritoryId == null;
+    }
+
+    public static float CompleteManeuverOutcome(TrainingSession session, float finalStrategicPotential)
+    {
+        var snapshot = session.ManeuverOutcome;
+        if (snapshot == null) return 0f;
+
+        float reward = CalculateManeuverOutcomeReward(snapshot, finalStrategicPotential);
+        session.ManeuverOutcome = null;
+        return reward;
+    }
+
+    public static float CalculateManeuverOutcomeReward(
+        ManeuverOutcomeSnapshot snapshot,
+        float finalStrategicPotential)
+    {
+        float delta = finalStrategicPotential - snapshot.InitialStrategicPotential;
+        if (snapshot.AnyUnitChangedTerritory
+            && !snapshot.DirectEventOccurred
+            && delta <= ManeuverPotentialEqualityTolerance)
+        {
+            // This is one whole-phase verdict, not another per-move penalty: a rearrangement that did
+            // not improve anything costs at least the small wasted-result amount, while a genuinely
+            // damaging result keeps its larger (bounded) positional loss.
+            delta = Math.Min(delta, -WastedManeuverResultPenalty);
+        }
+
+        if (MathF.Abs(delta) <= ManeuverPotentialEqualityTolerance) return 0f;
+        return Math.Clamp(delta, -MaxManeuverOutcomeReward, MaxManeuverOutcomeReward);
     }
 
     /// <summary>
-    /// Paid when a maneuver clears a hostile army out of the acting nation's own home province.
-    ///
-    /// Raised from 5. A hostile army standing in a home province blocks production, import, factory
-    /// building, taxation AND rail there (Imperial-2030-Rules.pdf p.10), so relieving one is worth far
-    /// more than the -40 this same function charges for a merely inefficient rondel move. At 5 it was
-    /// the smallest term in the reward function, describing one of the largest swings on the board.
+    /// Positional value used only at the two boundaries of one completed Maneuver. It deliberately omits
+    /// flag, kill, factory-destruction, factory-occupation, and home-relief event counts: those retain
+    /// their immediate rewards. Instead it measures whether the resulting board is safer and whether its
+    /// forces are usefully placed for the next Maneuver.
     /// </summary>
+    public static float CalculateManeuverStrategicPotential(Game game, Nation nation, Guid? controllerId)
+    {
+        var friendlyNations = game.NationStates
+            .Where(state => controllerId.HasValue && state.ControllerId == controllerId)
+            .Select(state => state.Nation)
+            .Append(nation)
+            .ToHashSet();
+
+        float potential = 0f;
+        foreach (var defense in HomeDefenseHelper.Assess(game, nation, controllerId))
+        {
+            int coveredThreat = Math.Min(defense.FriendlyArmyDefenders, defense.LandThreat);
+            potential += coveredThreat * CoveredHomeThreatReward;
+            potential -= defense.HostileOccupiers * OccupiedHomePenalty;
+            potential -= defense.LandDefenseDeficit * HomeDefenseDeficitPenalty;
+
+            bool hasFactory = game.TerritoryStates.Any(state =>
+                state.TerritoryId == defense.Territory.Id && state.HasFactory);
+            if (hasFactory)
+            {
+                potential -= defense.LandDefenseDeficit * FactoryDefenseDeficitPenalty;
+            }
+        }
+
+        // Convoy carriers are marked used until AdvanceTurn. The potential describes the next Maneuver,
+        // when that transient flag is reset, so temporarily normalize it and restore it in a finally.
+        var convoyedFleets = game.Units.Where(unit => unit.HasConvoyed).ToList();
+        foreach (var fleet in convoyedFleets) fleet.HasConvoyed = false;
+        try
+        {
+            var usefulObjectives = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var unit in game.Units.Where(unit => unit.Nation == nation))
+            {
+                foreach (string destinationId in ReachableDestinationsForPotential(game, unit))
+                {
+                    if (IsUsefulManeuverObjective(game, destinationId, nation, friendlyNations))
+                    {
+                        usefulObjectives.Add(destinationId);
+                    }
+                }
+            }
+
+            potential += Math.Min(usefulObjectives.Count, MaxUsefulReachObjectives)
+                * UsefulReachObjectiveReward;
+
+            var neutralStagingGroups = game.Units
+                .Where(unit => unit.Nation == nation && unit.UnitType == UnitType.Army)
+                .GroupBy(unit => unit.TerritoryId)
+                .Where(group => IsControlledNeutralStagingRegion(game, group.Key, nation));
+
+            foreach (var group in neutralStagingGroups)
+            {
+                bool reachesObjective = ManeuverHelper.GetAllReachableArmyDestinations(game, group.Key, nation)
+                    .Any(destination => IsUsefulManeuverObjective(
+                        game,
+                        destination.TerritoryId,
+                        nation,
+                        friendlyNations));
+                if (!reachesObjective) continue;
+
+                potential += Math.Min(group.Count(), ManeuverRules.DestroyFactoryArmyCost)
+                    * ForwardStagingArmyReward;
+            }
+        }
+        finally
+        {
+            foreach (var fleet in convoyedFleets) fleet.HasConvoyed = true;
+        }
+
+        return potential;
+    }
+
+    private static IEnumerable<string> ReachableDestinationsForPotential(Game game, Unit unit)
+    {
+        if (unit.UnitType == UnitType.Army)
+        {
+            return ManeuverHelper.GetAllReachableArmyDestinations(game, unit.TerritoryId, unit.Nation)
+                .Select(destination => destination.TerritoryId);
+        }
+
+        return MapConnectivity.GetNeighbors(unit.TerritoryId, isFleet: true);
+    }
+
+    private static bool IsControlledNeutralStagingRegion(Game game, string territoryId, Nation nation)
+    {
+        var territory = TerritoryData.AllTerritories.FirstOrDefault(candidate => candidate.Id == territoryId);
+        if (territory == null || territory.Type != TerritoryType.Land || territory.Nation.HasValue) return false;
+
+        var occupyingUnits = game.Units.Where(unit => unit.TerritoryId == territoryId).ToList();
+        if (occupyingUnits.Any(unit => unit.Nation != nation)) return false;
+
+        var state = game.TerritoryStates.FirstOrDefault(candidate => candidate.TerritoryId == territoryId);
+        if (state?.Controller == nation) return true;
+
+        return occupyingUnits.Count > 0 && occupyingUnits.All(unit => unit.Nation == nation);
+    }
+
+    private static bool IsUsefulManeuverObjective(
+        Game game,
+        string territoryId,
+        Nation nation,
+        ISet<Nation> friendlyNations)
+    {
+        var territory = TerritoryData.AllTerritories.FirstOrDefault(candidate => candidate.Id == territoryId);
+        if (territory == null) return false;
+
+        if (territory.Nation == nation)
+        {
+            return game.Units.Any(unit =>
+                unit.TerritoryId == territoryId
+                && !friendlyNations.Contains(unit.Nation)
+                && unit.IsHostile);
+        }
+
+        if (territory.Nation.HasValue)
+        {
+            return !friendlyNations.Contains(territory.Nation.Value);
+        }
+
+        var occupyingUnits = game.Units.Where(unit => unit.TerritoryId == territoryId).ToList();
+        if (occupyingUnits.Any(unit => !friendlyNations.Contains(unit.Nation))) return true;
+
+        var state = game.TerritoryStates.FirstOrDefault(candidate => candidate.TerritoryId == territoryId);
+        if (state?.Controller is Nation controller && friendlyNations.Contains(controller)) return false;
+
+        return occupyingUnits.Count == 0;
+    }
+
     /// <summary>
     /// Hard cap on how many agent steps one training episode may take. Measured ep_len_mean is ~61, so
     /// this is roughly 30x a normal game - only a genuinely pathological session reaches it.
@@ -2396,69 +2609,6 @@ public class TcpTrainingServer : BackgroundService
     public static bool IsFactoryDecisionPending(TrainingSession session, NationState? currentNs, Guid rlPlayerId)
         => currentNs != null && currentNs.ControllerId == rlPlayerId
            && session.FactoryDecisionOwedBy == currentNs.Nation && !currentNs.HasBuiltThisTurn;
-
-    public const float HomeReliefReward = 15.0f;
-
-    /// <summary>
-    /// Charged when the army being maneuvered could have moved into a blockaded home province of its own
-    /// nation and went somewhere else - or nowhere at all.
-    ///
-    /// <see cref="HomeReliefReward"/> only ever pays for acting; nothing cost anything for declining, and
-    /// "Do Not Move" is unconditionally legal at every maneuver step. Observed live as "Bot Delta (RL-4)
-    /// China army stayed in Korea" twice in a row while a hostile army sat in Beijing, which Korea
-    /// borders. That choice was free.
-    ///
-    /// Deliberately the same magnitude as the reward rather than larger: this is the symmetric half of an
-    /// existing term, not a new deterrent, and rule #25's warning about stacking penalties for one
-    /// outcome applies - the two are mutually exclusive, since a step either relieved the province or did
-    /// not.
-    /// </summary>
-    public const float DeclinedHomeReliefPenalty = 15.0f;
-
-    /// <summary>
-    /// The blockaded home province this army could relieve this step, or null if there is none.
-    ///
-    /// "Relieve" is exact rather than hopeful: moving an army into its own home province while foreign
-    /// units are there is forced hostile by the engine, which resolves as a battle and removes an
-    /// occupier. Armies only - p.7's blockade is caused by "hostile armies (standing upright)", and a
-    /// fleet cannot enter a land province to contest one.
-    ///
-    /// Reachability comes from ManeuverHelper.GetAllReachableArmyDestinations, the same call the action
-    /// mask uses to decide which destinations to unmask, so the penalty can never fire for a move the
-    /// agent was not actually offered.
-    /// </summary>
-    public static string? ReachableBlockadedHomeProvince(Game game, Unit unit)
-    {
-        if (unit.UnitType != UnitType.Army) return null;
-
-        var homeProvinceIds = TerritoryData.AllTerritories
-            .Where(t => t.Nation == unit.Nation)
-            .Select(t => t.Id)
-            .ToHashSet();
-
-        if (homeProvinceIds.Count == 0) return null;
-
-        bool IsBlockaded(string territoryId) => game.Units.Any(u =>
-            u.TerritoryId == territoryId && u.UnitType == UnitType.Army && u.Nation != unit.Nation && u.IsHostile);
-
-        return Helpers.ManeuverHelper
-            .GetAllReachableArmyDestinations(game, unit.TerritoryId, unit.Nation)
-            .Select(d => d.TerritoryId)
-            .FirstOrDefault(id => homeProvinceIds.Contains(id) && IsBlockaded(id));
-    }
-
-    /// <summary>
-    /// The penalty owed for this maneuver decision: <see cref="DeclinedHomeReliefPenalty"/> when relief
-    /// was available and not taken, otherwise zero. <paramref name="chosenDestinationId"/> is null when
-    /// the agent chose "Do Not Move", which is the case that prompted this.
-    /// </summary>
-    public static float DeclinedHomeReliefPenaltyFor(Game game, Unit unit, string? chosenDestinationId)
-    {
-        var relief = ReachableBlockadedHomeProvince(game, unit);
-        if (relief == null) return 0f;
-
-        return chosenDestinationId == relief ? 0f : DeclinedHomeReliefPenalty;
-    }
 
     public const float AvoidableFactorySkipPenalty = 30.0f;
 

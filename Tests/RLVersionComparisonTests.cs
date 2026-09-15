@@ -6,6 +6,7 @@ using Imperial2030.Server.Hubs;
 using Imperial2030.Server.Models;
 using Imperial2030.Server.Services;
 using Imperial2030.Server.Services.Bots.Strategies;
+using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -66,7 +67,17 @@ public class RLVersionComparisonTests
         int Score,
         int RelativeMargin,
         int Turns,
-        string InitialStateFingerprint);
+        string InitialStateFingerprint,
+        int Cash,
+        int BondScore,
+        int ControlledPower,
+        int ControlledFlags,
+        int ControlledUnits,
+        int Taxations,
+        int Productions,
+        int Imports,
+        int RondelCost,
+        string Portfolio);
 
     [Fact]
     public async Task CompareRLVersionsOnMatchedRandomStarts()
@@ -189,6 +200,93 @@ public class RLVersionComparisonTests
             Assert.Equal(expectedResultsPerModel, allResults.Count(r => r.Model == model)));
     }
 
+    [Fact]
+    public async Task BenchmarkDefaultAgainstEachHeuristicOpponent()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("IMPERIAL_DEFAULT_BENCHMARK"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            _output.WriteLine("Set IMPERIAL_DEFAULT_BENCHMARK=1 to run the 108-game Default benchmark.");
+            return;
+        }
+
+        string[] opponents = ["Aggressive", "Friendly", "Greedy"];
+        var stopwatch = Stopwatch.StartNew();
+        var resultsByOpponent = new Dictionary<string, List<HeadToHeadResult>>();
+        var allGameResultsByOpponent = new Dictionary<string, List<HeadToHeadResult>>();
+
+        foreach (string opponent in opponents)
+        {
+            var results = new List<HeadToHeadResult>();
+            resultsByOpponent[opponent] = results;
+            allGameResultsByOpponent[opponent] = [];
+
+            for (int scenarioNumber = 1; scenarioNumber <= ScenarioCount; scenarioNumber++)
+            {
+                int scenarioSeed = StableBenchmarkSeed(opponent, scenarioNumber, 0);
+                var scenario = CreateHeadToHeadScenario(scenarioNumber, scenarioSeed);
+
+                for (int rotation = 0; rotation < scenario.PlayerIds.Count; rotation++)
+                {
+                    var botByPlayer = scenario.PlayerIds
+                        .Select((playerId, seat) => (
+                            playerId,
+                            botType: seat == rotation ? "Default" : opponent))
+                        .ToDictionary(pair => pair.playerId, pair => pair.botType);
+
+                    int gameSeed = StableBenchmarkSeed(opponent, scenarioNumber, rotation + 1);
+                    var gameResults = await PlayHeadToHeadScenario(
+                        scenario,
+                        rotation + 1,
+                        botByPlayer,
+                        stopwatch,
+                        DeterministicGuid(gameSeed, 1));
+
+                    var defaultResult = Assert.Single(gameResults, result => result.Model == "Default");
+                    results.Add(defaultResult);
+                    allGameResultsByOpponent[opponent].AddRange(gameResults);
+                }
+            }
+        }
+
+        _output.WriteLine("");
+        _output.WriteLine($"=== Default bot benchmark: {ScenarioCount} starts, three seat rotations per opponent ===");
+        _output.WriteLine($"{"opponent",-11} {"wins",8} {"avg rank",9} {"avg score",10} {"avg margin",11} {"avg turns",10}");
+
+        foreach (string opponent in opponents)
+        {
+            var results = resultsByOpponent[opponent];
+            _output.WriteLine(
+                $"{opponent,-11} {results.Count(result => result.Won),2}/{results.Count,-5} " +
+                $"{results.Average(result => result.Rank),9:0.00} " +
+                $"{results.Average(result => result.Score),10:0.00} " +
+                $"{results.Average(result => result.RelativeMargin),11:+0.00;-0.00;0.00} " +
+                $"{results.Average(result => result.Turns),10:0.0}");
+        }
+
+        _output.WriteLine("");
+        _output.WriteLine("=== Average economic/action diagnostics per player ===");
+        _output.WriteLine($"{"matchup",-22} {"cash",6} {"bonds",6} {"power",6} {"flags",6} {"units",6} {"tax",5} {"prod",5} {"imp",5} {"cost",6}");
+        foreach (string opponent in opponents)
+        {
+            var allResults = allGameResultsByOpponent[opponent];
+            WriteBenchmarkDiagnostics($"Default vs {opponent}", allResults.Where(result => result.Model == "Default"));
+            WriteBenchmarkDiagnostics(opponent, allResults.Where(result => result.Model == opponent));
+
+            _output.WriteLine($"Worst Default portfolios against {opponent}:");
+            foreach (var result in resultsByOpponent[opponent].OrderBy(result => result.RelativeMargin).Take(3))
+            {
+                _output.WriteLine(
+                    $"  scenario {result.Scenario}, seat {result.Rotation}: score {result.Score}, " +
+                    $"margin {result.RelativeMargin:+#;-#;0}; {result.Portfolio}");
+            }
+        }
+
+        Assert.All(resultsByOpponent.Values, results => Assert.Equal(ScenarioCount * 3, results.Count));
+    }
+
     private static MatchedScenario CreateRandomScenario(int number)
     {
         var playerIds = Enumerable.Range(0, 6).Select(_ => Guid.NewGuid()).OrderBy(id => id).ToList();
@@ -212,13 +310,14 @@ public class RLVersionComparisonTests
         return new MatchedScenario(number, rlNation, playerIds, distribution, opponentByPlayer);
     }
 
-    private static MatchedScenario CreateHeadToHeadScenario(int number)
+    private static MatchedScenario CreateHeadToHeadScenario(int number, int? randomSeed = null)
     {
+        var random = randomSeed.HasValue ? new Random(randomSeed.Value) : null;
         var playerIds = Enumerable.Range(0, ModelTypes.Length)
-            .Select(_ => Guid.NewGuid())
+            .Select(index => random == null ? Guid.NewGuid() : DeterministicGuid(randomSeed!.Value, index))
             .OrderBy(id => id)
             .ToList();
-        var shuffledPlayers = Shuffle(playerIds);
+        var shuffledPlayers = Shuffle(playerIds, random);
 
         // These are the official three-player package pairs already used by GameSetupHelper. Randomly
         // assigning the three players to the pairs gives every scenario a fresh initial distribution.
@@ -323,7 +422,6 @@ public class RLVersionComparisonTests
             .AsSplitQuery()
             .SingleAsync(g => g.Id == gameId);
         Assert.Equal(GameStatus.Finished, finalGame.Status);
-
         var ranked = finalGame.GetRankedPlayers();
         int rank = ranked.FindIndex(p => p.Id == rlPlayerId) + 1;
         int score = finalGame.CalculateScore(rlPlayerId);
@@ -345,11 +443,12 @@ public class RLVersionComparisonTests
         MatchedScenario scenario,
         int rotation,
         IReadOnlyDictionary<Guid, string> modelByPlayer,
-        Stopwatch overallStopwatch)
+        Stopwatch overallStopwatch,
+        Guid? gameIdOverride = null)
     {
         string databaseName = $"RLHeadToHead_{scenario.Number}_{rotation}_{Guid.NewGuid():N}";
         await using var context = CreateContext(databaseName);
-        var gameId = Guid.NewGuid();
+        var gameId = gameIdOverride ?? Guid.NewGuid();
 
         context.Games.Add(new Game
         {
@@ -380,7 +479,7 @@ public class RLVersionComparisonTests
         {
             player.IsBot = true;
             player.BotType = modelByPlayer[player.Id];
-            player.BotName = $"{player.BotType} Bot";
+            player.BotName = $"{player.BotType} Bot {player.Id:N}";
         }
         await context.SaveChangesAsync();
         context.ChangeTracker.Clear();
@@ -393,13 +492,13 @@ public class RLVersionComparisonTests
             .AsSplitQuery()
             .SingleAsync(g => g.Id == gameId);
 
-        Assert.Equal(ModelTypes.OrderBy(x => x),
+        Assert.Equal(modelByPlayer.Values.OrderBy(x => x),
             startingGame.Players.Select(p => p.BotType!).OrderBy(x => x));
         Assert.All(startingGame.Players, player =>
             Assert.Equal(2, startingGame.NationStates.Count(n => n.ControllerId == player.Id)));
 
         string initialFingerprint = Fingerprint(startingGame);
-        var botService = CreateBotService(databaseName, ModelTypes);
+        var botService = CreateBotService(databaseName, modelByPlayer.Values.ToArray());
         botService.SkipDelays = true;
         botService.TriggerBotTurn(gameId, 0);
 
@@ -425,6 +524,15 @@ public class RLVersionComparisonTests
             .AsSplitQuery()
             .SingleAsync(g => g.Id == gameId);
         Assert.Equal(GameStatus.Finished, finalGame.Status);
+        var finalTerritories = await finalContext.TerritoryStates.AsNoTracking()
+            .Where(territory => territory.GameId == gameId)
+            .ToListAsync();
+        var finalUnits = await finalContext.Units.AsNoTracking()
+            .Where(unit => unit.GameId == gameId)
+            .ToListAsync();
+        var finalActions = await finalContext.GameActions.AsNoTracking()
+            .Where(action => action.GameId == gameId)
+            .ToListAsync();
 
         var ranked = finalGame.GetRankedPlayers();
         return finalGame.Players.Select(player =>
@@ -434,6 +542,13 @@ public class RLVersionComparisonTests
                 .Where(opponent => opponent.Id != player.Id)
                 .Max(opponent => finalGame.CalculateScore(opponent.Id));
             int rank = ranked.FindIndex(rankedPlayer => rankedPlayer.Id == player.Id) + 1;
+            var controlledNations = finalGame.NationStates
+                .Where(nation => nation.ControllerId == player.Id)
+                .Select(nation => nation.Nation)
+                .ToHashSet();
+            var playerActions = finalActions
+                .Where(action => action.PlayerName == player.BotName)
+                .ToList();
 
             return new HeadToHeadResult(
                 scenario.Number,
@@ -445,8 +560,53 @@ public class RLVersionComparisonTests
                 score,
                 score - bestOpponentScore,
                 finalGame.TurnCount,
-                initialFingerprint);
+                initialFingerprint,
+                player.Cash,
+                score - player.Cash,
+                finalGame.NationStates.Where(nation => controlledNations.Contains(nation.Nation)).Sum(nation => nation.Power),
+                finalTerritories.Count(territory => territory.Controller is { } nation && controlledNations.Contains(nation)),
+                finalUnits.Count(unit => controlledNations.Contains(unit.Nation)),
+                playerActions.Count(action => action.ActionType == "Taxation"),
+                playerActions.Count(action => action.ActionType == "Production"),
+                playerActions.Count(action => action.ActionType == "Import"),
+                playerActions.Where(action => action.ActionType == "Move").Sum(action => ReadMetadataInt(action.Metadata, "Cost")),
+                string.Join(", ", finalGame.Bonds
+                    .Where(bond => bond.HolderId == player.Id)
+                    .OrderBy(bond => bond.Nation)
+                    .ThenBy(bond => bond.Cost)
+                    .Select(bond =>
+                    {
+                        int power = finalGame.NationStates.Single(nation => nation.Nation == bond.Nation).Power;
+                        return $"{bond.Nation}-{bond.Cost}M/{bond.Interest}x{RondelData.GetPowerFactor(power)}";
+                    })));
         }).ToList();
+    }
+
+    private void WriteBenchmarkDiagnostics(string label, IEnumerable<HeadToHeadResult> source)
+    {
+        var results = source.ToList();
+        _output.WriteLine(
+            $"{label,-22} " +
+            $"{results.Average(result => result.Cash),6:0.0} " +
+            $"{results.Average(result => result.BondScore),6:0.0} " +
+            $"{results.Average(result => result.ControlledPower),6:0.0} " +
+            $"{results.Average(result => result.ControlledFlags),6:0.0} " +
+            $"{results.Average(result => result.ControlledUnits),6:0.0} " +
+            $"{results.Average(result => result.Taxations),5:0.0} " +
+            $"{results.Average(result => result.Productions),5:0.0} " +
+            $"{results.Average(result => result.Imports),5:0.0} " +
+            $"{results.Average(result => result.RondelCost),6:0.0}");
+    }
+
+    private static int ReadMetadataInt(string metadata, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(metadata)) return 0;
+
+        using var document = JsonDocument.Parse(metadata);
+        return document.RootElement.TryGetProperty(propertyName, out var value)
+            && value.TryGetInt32(out int result)
+                ? result
+                : 0;
     }
 
     private static ApplicationDbContext CreateContext(string databaseName) =>
@@ -483,7 +643,10 @@ public class RLVersionComparisonTests
             new AggressiveBotStrategy(),
             new FriendlyBotStrategy()
         };
-        strategies.AddRange(models.Distinct().Select(model => new RLBotStrategy(model)));
+        strategies.AddRange(models
+            .Where(model => model.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
+            .Distinct()
+            .Select(model => new RLBotStrategy(model)));
 
         return new BotService(
             scopeFactory.Object,
@@ -511,14 +674,35 @@ public class RLVersionComparisonTests
             .Select(t => new { t.TerritoryId, t.HasFactory, t.Controller })
     });
 
-    private static List<T> Shuffle<T>(IEnumerable<T> values)
+    private static List<T> Shuffle<T>(IEnumerable<T> values, Random? random = null)
     {
         var result = values.ToList();
         for (int i = result.Count - 1; i > 0; i--)
         {
-            int swapIndex = Random.Shared.Next(i + 1);
+            int swapIndex = random?.Next(i + 1) ?? Random.Shared.Next(i + 1);
             (result[i], result[swapIndex]) = (result[swapIndex], result[i]);
         }
         return result;
+    }
+
+    private static int StableBenchmarkSeed(string opponent, int scenario, int rotation)
+    {
+        unchecked
+        {
+            int hash = 17;
+            foreach (char character in opponent)
+            {
+                hash = hash * 31 + character;
+            }
+
+            return hash * 31 * 31 + scenario * 31 + rotation;
+        }
+    }
+
+    private static Guid DeterministicGuid(int seed, int discriminator)
+    {
+        var bytes = new byte[16];
+        new Random(unchecked(seed * 397 ^ discriminator)).NextBytes(bytes);
+        return new Guid(bytes);
     }
 }

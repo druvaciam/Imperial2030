@@ -13,6 +13,9 @@ public abstract class BotStrategyBase : IBotStrategy
 
     public abstract double ScoreRondelSlot(int slot, Game game, NationState ns, Player controller, int factories, int units);
 
+    public virtual double GetRondelSelectionWeight(double candidateScore, double highestCandidateScore) =>
+        candidateScore;
+
     public virtual Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)
     {
         var affordableBonds = availableBonds.Where(b => b.Cost <= actor.Cash).ToList();

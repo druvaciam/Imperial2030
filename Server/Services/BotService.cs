@@ -13,7 +13,6 @@ namespace Imperial2030.Server.Services;
 
 public class BotService
 {
-    private const double DefaultRondelSelectionTemperature = 10.0;
     private const int RondelMoveCostScorePenalty = 2;
 
     private readonly IServiceScopeFactory _scopeFactory;
@@ -550,9 +549,7 @@ public class BotService
         double candidateScore,
         double highestCandidateScore)
     {
-        return strategy is DefaultBotStrategy
-            ? Math.Exp((candidateScore - highestCandidateScore) / DefaultRondelSelectionTemperature)
-            : candidateScore;
+        return strategy.GetRondelSelectionWeight(candidateScore, highestCandidateScore);
     }
 
     internal static double GetAdjustedRondelCandidateScore(
@@ -575,8 +572,7 @@ public class BotService
 
         bool ignoreCost = moveCost > 0
             && slot == RondelData.TaxationSlot
-            && strategy is DefaultBotStrategy
-            && DefaultBotStrategy.IsProjectedWinningGameEndingTaxation(game, nationState, controller);
+            && TaxationHelper.IsProjectedWinningGameEndingTaxation(game, nationState, controller);
 
         return ignoreCost ? score : score - moveCost * RondelMoveCostScorePenalty;
     }
@@ -774,7 +770,7 @@ public class BotService
             }).ToList();
             seaNeighbors.Add(fleet.TerritoryId); // Allow staying put
 
-            var target = seaNeighbors.OrderByDescending(n => GetStrategy(controller).ScoreManeuverDestination(game, fleet, n, controller)).FirstOrDefault();
+            var target = seaNeighbors.OrderByDescending(n => strategy.ScoreManeuverDestination(game, fleet, n, controller)).FirstOrDefault();
 
             if (target != null)
             {
@@ -793,7 +789,7 @@ public class BotService
                         else if (!isFriendlyHome && !fleet.IsHostile)
                         {
                             bool isEnemyPresent = game.Units.Any(u => u.TerritoryId == target && u.Id != fleet.Id && !friendlyNations.Contains(u.Nation));
-                            if (GetStrategy(controller).DetermineHostility(isEnemyPresent, true))
+                            if (strategy.DetermineHostility(isEnemyPresent, true))
                             {
                                 fleet.IsHostile = true;
                                 GameLogger.LogHostilityToggle(ctx, game, fleet.UnitType, target, fleet.IsHostile, nation, controller.BotName ?? "Bot");
@@ -817,7 +813,7 @@ public class BotService
                 var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
                 bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
 
-                bool isHostileMove = GetStrategy(controller).DetermineHostility(hasEnemy, isForeignHome);
+                bool isHostileMove = strategy.DetermineHostility(hasEnemy, isForeignHome);
 
                 if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != nation)
                 {
@@ -932,7 +928,7 @@ public class BotService
             }
             landNeighbors.Add(army.TerritoryId); // Allow staying put
 
-            var best = landNeighbors.OrderByDescending(n => GetStrategy(controller).ScoreManeuverDestination(game, army, n, controller)).FirstOrDefault();
+            var best = landNeighbors.OrderByDescending(n => strategy.ScoreManeuverDestination(game, army, n, controller)).FirstOrDefault();
 
             if (best != null)
             {
@@ -961,7 +957,7 @@ public class BotService
                                 ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, best, army.Id);
 
                             bool isEnemyPresent = game.Units.Any(u => u.TerritoryId == best && u.Id != army.Id && !friendlyNations.Contains(u.Nation));
-                            if (!wouldBlockadeLastFactory && GetStrategy(controller).DetermineHostility(isEnemyPresent, true))
+                            if (!wouldBlockadeLastFactory && strategy.DetermineHostility(isEnemyPresent, true))
                             {
                                 army.IsHostile = true;
                                 GameLogger.LogHostilityToggle(ctx, game, army.UnitType, best, army.IsHostile, nation, controller.BotName ?? "Bot");
@@ -990,7 +986,7 @@ public class BotService
                 var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best);
                 bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
 
-                bool isHostileMove = GetStrategy(controller).DetermineHostility(hasEnemy, isForeignHome);
+                bool isHostileMove = strategy.DetermineHostility(hasEnemy, isForeignHome);
 
                 if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != nation)
                 {
@@ -1245,7 +1241,9 @@ public class BotService
         GameLogger.LogFactoryDestruction(ctx, game, territoryId, nation, controller.BotName ?? "Bot");
     }
 
-    private async Task BotUpdateTerritoryControl(ApplicationDbContext? ctx, Game game, string botName)
+    // Internal so TcpTrainingServer can finish the RL-controlled Maneuver with the same flag-placement
+    // logic as deployed bots before it evaluates the whole-phase result.
+    internal async Task BotUpdateTerritoryControl(ApplicationDbContext? ctx, Game game, string botName)
     {
         var territoriesWithUnits = game.Units.Select(u => u.TerritoryId).Distinct().ToList();
 
