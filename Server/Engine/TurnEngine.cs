@@ -14,14 +14,9 @@ namespace Imperial2030.Server.Engine;
 public static class TurnEngine
 {
     /// <summary>
-    /// Ends <see cref="Game.CurrentTurnNation"/>'s turn: refuses while an Investor phase, a battle or an
+    /// Ends <see cref="Game.CurrentTurnNation"/>'s turn: refuses while an Investor turn, a battle or an
     /// unfinished maneuver phase is still open, otherwise advances the rotation and logs <c>EndTurn</c>
     /// for the nation that just finished.
-    ///
-    /// Three callers used to do this themselves. The endpoint had the guards and the log; the bot had
-    /// the log but only the maneuver guard; the training server advanced with neither guard nor log,
-    /// which is why exported training games show a nation's Factory or Import turn followed straight by
-    /// the next nation's Move with no <c>EndTurn</c> between (implementation_plan.md divergence #8).
     /// </summary>
     public static EngineResult EndTurn(ApplicationDbContext? context, Game game)
     {

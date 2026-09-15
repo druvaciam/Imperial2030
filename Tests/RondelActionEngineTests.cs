@@ -10,11 +10,11 @@ using Xunit;
 namespace Imperial2030.Tests;
 
 /// <summary>
-/// The four single-step rondel actions and the turn end, each pinned directly against the engine that
-/// now holds its only implementation (implementation_plan.md Phase 3). The callers - endpoint, bot,
-/// training - are covered by their own suites; these fix what the operation itself does and refuses.
+/// The four single-step rondel actions and the turn end, each pinned directly against its engine. The
+/// callers - endpoint, bot, training - are covered by their own suites; these fix what the operation
+/// itself does and refuses.
 /// </summary>
-public class SlotActionEngineTests
+public class RondelActionEngineTests
 {
     private static (Game Game, NationState Ns, Player Gov) BuildGame(Nation nation, int rondelSlot, int treasury = 0)
     {
@@ -23,7 +23,7 @@ public class SlotActionEngineTests
         var game = new Game
         {
             Id = Guid.NewGuid(),
-            Name = "Slot action",
+            Name = "Rondel action",
             Status = GameStatus.InProgress,
             CurrentTurnNation = nation,
             Players = new List<Player> { gov },
@@ -164,8 +164,8 @@ public class SlotActionEngineTests
     [Fact]
     public void AnEmptyProductionStillCountsAsTheTurnsActionAndSaysWhy()
     {
-        // The endpoint used to leave the flag clear and only answer in the HTTP body; the bot set it and
-        // logged the reason. One shape now (divergence #11).
+        // The action was taken whether or not it yielded a unit, so the once-per-turn guard applies and
+        // the log says why nothing came of it.
         var (game, ns, _) = BuildGame(Nation.USA, RondelData.ProductionSlot1);
 
         var result = ProductionEngine.ExecuteProduction(null, game);
@@ -175,12 +175,12 @@ public class SlotActionEngineTests
         Assert.True(ns.HasProducedThisTurn);
         Assert.Single(game.Actions, a => a.ActionType == "ProductionNoFactories");
 
-        var blockaded = BuildGame(Nation.USA, RondelData.ProductionSlot2);
+        var occupied = BuildGame(Nation.USA, RondelData.ProductionSlot2);
         var city = HomeCity(Nation.USA, CityType.Brown);
-        blockaded.Game.TerritoryStates.First(t => t.TerritoryId == city.Id).HasFactory = true;
-        blockaded.Game.Units.Add(new Unit { Nation = Nation.Brazil, UnitType = UnitType.Army, TerritoryId = city.Id, IsHostile = true });
-        Assert.Equal(0, ProductionEngine.ExecuteProduction(null, blockaded.Game).ProducedCount);
-        Assert.Single(blockaded.Game.Actions, a => a.ActionType == "ProductionBlockaded");
+        occupied.Game.TerritoryStates.First(t => t.TerritoryId == city.Id).HasFactory = true;
+        occupied.Game.Units.Add(new Unit { Nation = Nation.Brazil, UnitType = UnitType.Army, TerritoryId = city.Id, IsHostile = true });
+        Assert.Equal(0, ProductionEngine.ExecuteProduction(null, occupied.Game).ProducedCount);
+        Assert.Single(occupied.Game.Actions, a => a.ActionType == "ProductionBlockaded");
     }
 
     // ---- Import (p.8) --------------------------------------------------------------------------
@@ -207,7 +207,7 @@ public class SlotActionEngineTests
         var (game, ns, _) = BuildGame(Nation.Europe, RondelData.ImportSlot, treasury: 4);
         var brown = HomeCity(Nation.Europe, CityType.Brown);
 
-        // A fleet in a city with no harbour is the illegal third unit.
+        // A fleet in a city with no harbor is the illegal third unit.
         var result = ImportEngine.Import(null, game, new[] { (UnitType.Army, brown.Id), (UnitType.Army, brown.Id), (UnitType.Fleet, brown.Id) });
 
         Assert.False(result.Ok);

@@ -7,14 +7,9 @@ using Microsoft.EntityFrameworkCore;
 namespace Imperial2030.Server.Engine;
 
 /// <summary>
-/// The Investor phase and the government rule, callable from any consumer of the engine.
-///
-/// Both methods lived on <c>GamesController</c> as <c>public static</c> members and were called from
-/// <c>BotService</c> by their controller-qualified name. Moving them here is the first step of
-/// <c>implementation_plan.md</c> ("Extract the game engine from the controllers"); their bodies are
-/// unchanged. They already had the engine shape - an optional <see cref="ApplicationDbContext"/> for
-/// logging and change tracking, and a loaded <see cref="Game"/> to mutate - which is the shape every
-/// other operation is being moved to.
+/// The Investor turn (Imperial-2030-Rules.pdf p.11: interest, the 2M investor bonus, and the order in
+/// which the card holder and the Swiss Banks invest) and the government rule (p.12: the highest credit
+/// sum governs; a tie is not sufficient to displace the sitting government).
 /// </summary>
 public static class InvestorEngine
 {

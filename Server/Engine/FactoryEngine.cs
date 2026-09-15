@@ -11,11 +11,6 @@ namespace Imperial2030.Server.Engine;
 /// Building a factory. Imperial-2030-Rules.pdf p.7: "The nation pays 5 million into the bank... a factory
 /// may be built in one of the nation's home cities. Only one factory may be built in each city", and
 /// p.11: a city holding a hostile foreign army cannot be built in.
-///
-/// Three copies existed: <c>GamesController.BuildFactory</c>, <c>BotService.BotBuildFactory</c> and the
-/// Factory step of <c>TcpTrainingServer</c>. The training copy did not log the build, and its site list
-/// took every home province rather than every home city - harmless on this map, where the two sets are
-/// equal, and wrong on any map where they are not (implementation_plan.md divergences #4 and #9).
 /// </summary>
 public static class FactoryEngine
 {
@@ -81,9 +76,8 @@ public static class FactoryEngine
         const int FactoryCost = GameConstants.FactoryCost;
         if (nationState.Treasury < FactoryCost) return EngineResult.Fail($"Nation treasury insufficient. Need {FactoryCost}M.");
 
-        // 6. Execute Build. Every setup path creates a TerritoryState for every territory, so the missing
-        // case is defensive; the bot and training copies created it here and the endpoint refused - the
-        // permissive shape is kept (divergence #3).
+        // 6. Execute Build. Setup creates a TerritoryState for every territory; a missing one is created
+        // rather than refused.
         var territoryState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == territoryId);
         bool createdState = territoryState == null;
         if (territoryState == null)

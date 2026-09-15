@@ -18,19 +18,15 @@ public sealed record ProductionOutcome(bool Ok, string? Error = null, int Produc
 /// unless the factory city holds a hostile foreign army (p.11), and never beyond the nation's unit
 /// supply (<see cref="NationData.GetMaxArmies"/> / <see cref="NationData.GetMaxFleets"/>).
 ///
-/// Two copies existed; they agreed on the units and differed on the bookkeeping of an EMPTY production.
-/// The endpoint left HasProducedThisTurn false and answered "No units produced" in the HTTP body; the
-/// bot set the flag regardless and logged WHICH of the three things stopped it. The bot's shape is kept
-/// for everyone: the action was taken whether or not it yielded a unit, so the once-per-turn guard
-/// applies, and the reason belongs in the game log rather than only in one caller's response
-/// (implementation_plan.md divergence #11).
+/// An empty production still counts as the turn's action: HasProducedThisTurn is set either way, and
+/// the log says which of the three things stopped it (no factory, all occupied, no piece left to place).
 /// </summary>
 public static class ProductionEngine
 {
     public static ProductionOutcome ExecuteProduction(ApplicationDbContext? context, Game game)
     {
         if (game.Status != GameStatus.InProgress) return ProductionOutcome.Fail("Game not in progress.");
-        // The nation's turn is suspended while an Investor phase resolves, so no slot action may run.
+        // The nation's turn is suspended while an Investor turn resolves, so no rondel action may run.
         if (game.IsInvestorTurn) return ProductionOutcome.Fail("Waiting for Investor Phase.");
 
         var currentNation = game.CurrentTurnNation;
@@ -65,8 +61,8 @@ public static class ProductionEngine
             if (def.Nation != currentNation) continue;
 
             var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tState.TerritoryId).ToList();
-            bool isBlockaded = unitsInTerritory.Any(u => u.Nation != currentNation && u.UnitType == UnitType.Army && u.IsHostile);
-            if (isBlockaded) continue;
+            bool isOccupied = unitsInTerritory.Any(u => u.Nation != currentNation && u.UnitType == UnitType.Army && u.IsHostile);
+            if (isOccupied) continue;
 
             UnitType typeToProduce = def.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
 
@@ -106,20 +102,20 @@ public static class ProductionEngine
             var ownFactories = game.TerritoryStates
                 .Where(ts => ts.HasFactory && TerritoryData.AllTerritories.Any(t => t.Id == ts.TerritoryId && t.Nation == currentNation))
                 .ToList();
-            bool AllBlockaded(TerritoryState ts) => game.Units.Any(u =>
+            bool AllOccupied(TerritoryState ts) => game.Units.Any(u =>
                 u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != currentNation && u.IsHostile);
 
             if (ownFactories.Count == 0)
             {
                 GameLogger.LogProductionNoFactories(context, game, currentNation, playerName);
             }
-            else if (ownFactories.All(AllBlockaded))
+            else if (ownFactories.All(AllOccupied))
             {
                 GameLogger.LogProductionBlockaded(context, game, currentNation, playerName);
             }
             else
             {
-                // Something was unblockaded and still produced nothing, so its unit type is at the cap.
+                // Something was unoccupied and still produced nothing, so no piece of its type is left.
                 GameLogger.LogProductionAtUnitCap(context, game, currentNation, playerName);
             }
         }

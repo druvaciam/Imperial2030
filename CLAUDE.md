@@ -55,7 +55,7 @@ dotnet build
 dotnet run --project Server/Imperial2030.Server.csproj
 # HTTPS dev URL used by VueReplayViewer's proxy and local launch configs: https://localhost:7180
 
-# Run the server in RL training mode (starts TcpTrainingServer on port 5005, uses in-memory DB)
+# Run the server in RL training mode (starts TcpTrainingServer on port 5295, uses in-memory DB)
 dotnet run --project Server/Imperial2030.Server.csproj -c Release -- --training
 
 # Run all tests
@@ -130,7 +130,7 @@ manually-normalized state tensor, runs inference, and applies an action mask to 
 
 ### RL training loop
 
-`TcpTrainingServer.cs` (hosted service, only registered under `--training`) listens on TCP port 5005,
+`TcpTrainingServer.cs` (hosted service, only registered under `--training`) listens on TCP port 5295,
 manages isolated in-memory game instances, and exchanges game state/actions/rewards with the Python
 `imperial_env.py` Gymnasium environment. Trained PPO models (`.zip` + `vec_normalize.pkl`) are exported to
 ONNX (`export_onnx.py`) and copied into `Server/` for zero-dependency native inference. **Backward

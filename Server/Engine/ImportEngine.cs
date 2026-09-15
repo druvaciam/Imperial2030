@@ -9,17 +9,14 @@ namespace Imperial2030.Server.Engine;
 
 /// <summary>
 /// The Import rondel action. Imperial-2030-Rules.pdf p.8: a nation "may buy up to three units at 1
-/// million each" from its treasury and place them "in its home provinces"; a fleet needs a harbour city;
-/// a province holding a hostile foreign army cannot receive units (p.11); and the nation's unit supply
-/// (<see cref="NationData.GetMaxArmies"/> / <see cref="NationData.GetMaxFleets"/>) is a hard cap.
+/// million each" from its treasury and place them "in its home provinces"; a fleet needs a harbor city;
+/// a province holding a hostile foreign army cannot receive units (p.11); and the nation's available pieces
+/// (<see cref="NationData.GetMaxArmies"/> / <see cref="NationData.GetMaxFleets"/>) is a limit.
 ///
-/// Three copies existed. The endpoint validated the whole request and then placed everything; the bot
-/// applied whatever its strategy returned, unchecked, relying on the strategy to have filtered; the
-/// training server placed one unit per agent step against a legality mask and never logged the result
-/// (implementation_plan.md divergences #5 and #12). All three now go through <see cref="PlaceOne"/> -
-/// the batch callers via <see cref="Import"/>, which checks the request as a whole first so an invalid
-/// third unit rejects the request rather than leaving two placed, and training directly, one step at a
-/// time, finishing with <see cref="CompleteImport"/>.
+/// <see cref="PlaceOne"/> is the primitive. <see cref="Import"/> is the whole action at once: it checks
+/// the request as a group first, so an invalid third unit rejects the request rather than leaving two
+/// placed. A step-by-step caller (training) uses <see cref="PlaceOne"/> per unit and closes with
+/// <see cref="CompleteImport"/>.
 /// </summary>
 public static class ImportEngine
 {
@@ -47,7 +44,7 @@ public static class ImportEngine
             return $"Cannot place Fleet in {territoryDef.Name} (no harbor).";
         }
 
-        // Unit supply
+        // The pieces available
         if (unitType == UnitType.Army)
         {
             int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);

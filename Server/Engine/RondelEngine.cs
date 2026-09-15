@@ -8,20 +8,17 @@ using Microsoft.EntityFrameworkCore;
 namespace Imperial2030.Server.Engine;
 
 /// <summary>
-/// The rondel move. One implementation for the HTTP endpoint, the heuristic bots and the RL trainee.
-///
-/// Until this existed, <c>GamesController.MoveNation</c> and <c>BotService.ExecuteBotTurn</c> each
-/// carried a full copy of the move - the same Swiss Bank intercept, the same cost, the same investor
-/// pass-through detection - and <c>docs/code_review.md</c> §M3 had already recorded them drifting once.
-/// The body here is the controller's, with the bot's one deviation from it kept deliberately: see
-/// <see cref="AutoSkipEmptyManeuverPhases"/>.
+/// The rondel move. Imperial-2030-Rules.pdf p.6: the marker moves clockwise, staying put is not allowed,
+/// the first three spaces are free and each further space costs the government's player money; p.11:
+/// passing the Investor space activates the investor, landing on it also pays interest; p.12: a Swiss
+/// Bank may force a stop on Investor when the nation can pay its interest.
 /// </summary>
 public static class RondelEngine
 {
     /// <summary>
     /// Validates and executes <paramref name="nation"/>'s move to <paramref name="targetSlot"/>.
     ///
-    /// On a Swiss Bank force-stop the result is <see cref="RondelMoveResult.SwissBankIntercepted"/> and
+    /// On a forced stop by a Swiss Bank the result is <see cref="RondelMoveResult.SwissBankForcedStop"/> and
     /// NOTHING has moved: the pending-force state is set on the game and the caller must stop and wait
     /// for the responders. Otherwise the move is applied, logged, and any Investor slot crossed or landed
     /// on has already been handled by <see cref="InvestorEngine.HandleInvestorPhase"/> - so the caller
@@ -71,7 +68,7 @@ public static class RondelEngine
 
         if (cost > 0 && controller.Cash < cost) return RondelMoveResult.Fail($"Not enough cash. Cost: {cost}M");
 
-        // --- Swiss Bank Intercept Logic ---
+        // --- Swiss Bank Forced-Stop Logic ---
         bool crossingInvestor = false;
         if (currentSlot != null && targetSlot != RondelData.InvestorSlot)
         {
@@ -98,11 +95,11 @@ public static class RondelEngine
                     game.PendingSwissBankForceNation = nation;
                     game.PendingSwissBankForceTargetSlot = targetSlot;
                     game.PendingSwissBankResponders = swissBankPlayers.Select(p => p.Id).ToList();
-                    return RondelMoveResult.Intercepted();
+                    return RondelMoveResult.ForcedStop();
                 }
             }
         }
-        // --- End Swiss Bank Intercept Logic ---
+        // --- End Swiss Bank Forced-Stop Logic ---
 
         // Clear the pending state just in case we are executing a deferred move
         if (game.PendingSwissBankForceNation == nation)
@@ -116,7 +113,7 @@ public static class RondelEngine
         controller.Cash -= cost;
         nationState.RondelPosition = targetSlot;
 
-        // Marks the nation as moved, clears its per-slot action flags and resets its units' movement.
+        // Marks the nation as moved, clears its once-per-turn action flags and resets its units' movement.
         // Turn advancement is manual, via EndTurn.
         game.ResetStateForNewMove(nationState, u => { if (context != null) context.Entry(u).State = EntityState.Modified; });
         if (context != null)
@@ -125,9 +122,7 @@ public static class RondelEngine
             context.Entry(nationState).State = EntityState.Modified;
         }
 
-        // controller.GetPlayerName resolves the real bot/player name — User.Identity?.Name is never
-        // populated by GameReplayService's replay auth context (only NameIdentifier), so every rondel move
-        // replayed through the endpoint used to be silently logged as GameConstants.SystemPlayerName instead.
+        // GetPlayerName, not User.Identity?.Name: replay's auth context carries only NameIdentifier.
         var controllerName = controller.GetPlayerName(context);
         GameLogger.LogRondelMove(context, game, targetSlot, currentSlot, cost, nation, controllerName);
 
@@ -171,17 +166,12 @@ public static class RondelEngine
     }
 
     /// <summary>
-    /// After landing on a Maneuver slot: skip the Fleets phase if the nation has no unmoved fleet, and
-    /// then the Armies phase if it has no unmoved army, logging each skip.
+    /// After landing on a Maneuver slot: skip the Fleets phase if the nation has no unmoved fleet, then
+    /// the Armies phase if it has no unmoved army, logging each skip.
     ///
-    /// Kept SEPARATE from <see cref="MoveNation"/> on purpose. The HTTP endpoint has always done this
-    /// immediately after the move; <c>BotService</c> never has - its <c>BotManeuver</c> walks both
-    /// phases itself and logs <c>AutoEndPhase</c> for each, so calling this for a bot too would add an
-    /// <c>AutoSkipPhase</c> entry and then mislabel the bot's own phase-end line. The end state is the
-    /// same either way (phase None, every unit handled); only the log and the intermediate phase value
-    /// differ. That is <c>implementation_plan.md</c> divergence #1, deferred to Phase 5, where phase
-    /// transitions get a single owner. Until then: the HTTP caller calls this, the bot caller does not,
-    /// exactly as before.
+    /// Separate from <see cref="MoveNation"/> because only the HTTP path calls it: <c>BotManeuver</c>
+    /// walks both phases itself and logs <c>AutoEndPhase</c> for each, so calling this for a bot as well
+    /// would double-log the phase end.
     /// </summary>
     public static void AutoSkipEmptyManeuverPhases(ApplicationDbContext? context, Game game, Nation nation, string playerName)
     {

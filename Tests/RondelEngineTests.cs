@@ -10,9 +10,7 @@ using Xunit;
 namespace Imperial2030.Tests;
 
 /// <summary>
-/// The rondel move as one engine operation, pinned independently of the two callers that used to each
-/// carry their own copy of it (GamesController.MoveNation and BotService.ExecuteBotTurn - see
-/// docs/code_review.md §M3 and implementation_plan.md Phase 2).
+/// The rondel move as one engine operation, pinned independently of its callers.
 ///
 /// Rules cited: Imperial-2030-Rules.pdf p.6 - the marker moves clockwise, "remaining in the same space is
 /// not allowed", the first three spaces are free and each further space costs the government's player
@@ -58,7 +56,7 @@ public class RondelEngineTests
         var result = RondelEngine.MoveNation(null, game, Nation.Russia, RondelData.ProductionSlot2);
 
         Assert.True(result.Ok, result.Error);
-        Assert.False(result.SwissBankIntercepted);
+        Assert.False(result.SwissBankForcedStop);
         Assert.Null(result.PreviousSlot);
         Assert.Equal(0, result.Cost);
         Assert.Equal(3, gov.Cash);
@@ -154,7 +152,7 @@ public class RondelEngineTests
     }
 
     [Fact]
-    public void PassingOverInvestorWithASwissBankAbleToForceAStopIsIntercepted()
+    public void PassingOverInvestorWithASwissBankAbleToForceAStopIsStopped()
     {
         // p.12: a Swiss Bank (a player governing no nation) may force the nation to stop on Investor when its
         // treasury can pay the interest. "other" governs nothing, and treasury 5 covers 4 + 1 interest.
@@ -164,7 +162,7 @@ public class RondelEngineTests
         var result = RondelEngine.MoveNation(null, game, Nation.Russia, RondelData.ImportSlot); // 2 -> 5 crosses 4
 
         Assert.True(result.Ok, result.Error);
-        Assert.True(result.SwissBankIntercepted);
+        Assert.True(result.SwissBankForcedStop);
         // Nothing moved: the decision now belongs to the responders.
         Assert.Equal(RondelData.ProductionSlot1, ns.RondelPosition);
         Assert.False(ns.HasMovedThisTurn);
@@ -176,7 +174,7 @@ public class RondelEngineTests
     }
 
     [Fact]
-    public void PassingOverInvestorWhenTheTreasuryCannotPayIsNotIntercepted()
+    public void PassingOverInvestorWhenTheTreasuryCannotPayIsNotStopped()
     {
         var (game, ns, _, _) = BuildGame(rondelPosition: RondelData.ProductionSlot1, cash: 10);
         ns.Treasury = 4; // owes 5
@@ -184,7 +182,7 @@ public class RondelEngineTests
         var result = RondelEngine.MoveNation(null, game, Nation.Russia, RondelData.ImportSlot);
 
         Assert.True(result.Ok, result.Error);
-        Assert.False(result.SwissBankIntercepted);
+        Assert.False(result.SwissBankForcedStop);
         Assert.Equal(RondelData.ImportSlot, ns.RondelPosition);
     }
 

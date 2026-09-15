@@ -105,12 +105,10 @@ public class BotService
     // "A bot may have work in this game." Recorded by every caller, INCLUDING the ones that find a loop
     // already running and return - otherwise their request is simply lost.
     //
-    // Bots have no clock: they act only when TriggerBotTurn says something changed. The old code dropped
-    // any request that arrived while a loop was running, which is fine while that loop is still working
-    // but not while it is on its way out. A loop that has just decided it has nothing left to do has not
-    // yet released its claim, so a request landing in that window was discarded by the caller AND never
-    // seen by the loop - leaving nobody running and nobody coming. The game then sits forever waiting on
-    // a bot (e.g. for the battle response a human's move just asked for).
+    // Bots have no clock: they act only when TriggerBotTurn says something changed. A request that arrives
+    // while a loop is on its way out - it has decided it has nothing left to do but not yet released its
+    // claim - must not be dropped, or nobody is running and nobody is coming, and the game sits forever
+    // waiting on a bot (e.g. for the battle response a human's move just asked for).
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> _pendingBotWakeups = new();
 
     /// <summary>Test seam: whether a wakeup request is recorded but not yet consumed.</summary>
@@ -143,7 +141,7 @@ public class BotService
 
                 bool botActed = false;
 
-                // Handle bot investor phase
+                // Handle bot Investor turn
                 if (game.IsInvestorTurn && game.ActingPlayerId.HasValue)
                 {
                     var actor = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId);
@@ -153,7 +151,7 @@ public class BotService
                         {
                             if (!SkipDelays)
                             {
-                                // Beat BEFORE the decision rather than after it. An investor phase is opened
+                                // Beat BEFORE the decision rather than after it. An Investor turn is opened
                                 // by the rondel move that just landed on (or passed over) Investor, so acting
                                 // straight away made that move and the resulting investment land in the same
                                 // instant, followed by a dead pause with nothing to watch. Same placement and
@@ -300,21 +298,17 @@ public class BotService
             // Step 1: Choose rondel slot
             targetSlot = ChooseRondelSlot(game, nationState, controller);
 
-            // One implementation of the move for every caller - the Swiss Bank intercept, the cost, the
-            // investor pass-through and the slot's phase initialisation all happen inside. This used to be
-            // a second copy of GamesController.MoveNation (docs/code_review.md §M3).
             var move = RondelEngine.MoveNation(ctx, game, nation, targetSlot);
             if (!move.Ok)
             {
-                // ChooseRondelSlot only offers legal, affordable slots, so a rejection here is a bug in the
-                // bot's own selection - and one the old inline copy would have applied anyway. Fail loudly.
+                // ChooseRondelSlot only offers legal, affordable slots; a rejection is a bug in the selection.
                 throw new InvalidOperationException($"Bot {controller.BotName} chose an illegal rondel move for {nation} to slot {targetSlot}: {move.Error}");
             }
 
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
 
-            if (move.SwissBankIntercepted)
+            if (move.SwissBankForcedStop)
             {
                 return; // PAUSE bot turn until the Swiss Bank responders answer
             }
@@ -338,12 +332,9 @@ public class BotService
             targetSlot = nationState.RondelPosition.Value;
         }
 
-        // Step 2: Execute slot action
+        // Step 2: Execute rondel action
 
-        // Watched so the pause below can be skipped when the slot did nothing worth reading. A bot that
-        // landed on Factory it could not afford used to sit silent for BotDelayMs before "ended their
-        // turn", so the gap between two log lines was 10s with nothing in between - see the Factory
-        // no-funds / no-site entries, which now fill that middle beat.
+        // Watched so the pause below can be skipped when the slot logged nothing worth reading.
         int actionCountBeforeSlot = game.Actions.Count;
 
         switch (targetSlot)
@@ -380,8 +371,7 @@ public class BotService
             var endTurn = TurnEngine.EndTurn(ctx, game);
             if (!endTurn.Ok)
             {
-                // The condition above already established the turn is finishable; a rejection here is a
-                // bug in that condition, not something to paper over by advancing anyway.
+                // The condition above established the turn is finishable; a rejection is a bug in that condition.
                 throw new InvalidOperationException($"Bot {controller.BotName} could not end {nation}'s turn: {endTurn.Error}");
             }
             await SaveChangesAsync(ctx);
@@ -523,9 +513,13 @@ public class BotService
 
     // --- Slot Action Implementations ---
 
-    // internal for the same reason as BotManeuver: Tests drives this one slot action directly.
+    // internal for the same reason as BotManeuver: Tests drives this one rondel action directly.
     internal async Task BotBuildFactory(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
     {
+        // A government that took over mid-turn (p.12: outbid in the Investor turn the rondel move opened)
+        // re-enters with the slot's action possibly already taken by its predecessor. The turn then just ends.
+        if (ns.HasBuiltThisTurn) return;
+
         var strategy = GetStrategy(controller);
         if (strategy is RLBotStrategy && RLBotStrategy.TrainingActionOverride.Value.HasValue)
         {
@@ -571,8 +565,7 @@ public class BotService
             var build = FactoryEngine.BuildFactory(ctx, game, chosenCityId);
             if (!build.Ok)
             {
-                // chosenCityId came from BuildableCities and the treasury was checked above, so the engine
-                // refusing means the bot's own view of the board disagreed with the rule - fail loudly.
+                // chosenCityId came from BuildableCities and the treasury was checked above; a refusal is a bug.
                 throw new InvalidOperationException($"Bot {controller.BotName} could not build a factory for {ns.Nation} in {chosenCityId}: {build.Error}");
             }
         }
@@ -581,11 +574,14 @@ public class BotService
 
     internal async Task BotProduction(ApplicationDbContext? ctx, Game game, NationState ns)
     {
+        // A government that took over mid-turn (p.12: outbid in the Investor turn the rondel move opened)
+        // re-enters with the slot's action possibly already taken by its predecessor. The turn then just ends.
+        if (ns.HasProducedThisTurn) return;
+
         var result = ProductionEngine.ExecuteProduction(ctx, game);
         if (!result.Ok)
         {
-            // The bot is on a Production slot in its own turn; a refusal means the turn loop's state and
-            // the engine's disagree, which is a bug to surface, not a turn to skip quietly.
+            // The bot is on a Production slot in its own turn; a refusal is a bug in the turn loop.
             var botName = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId)?.BotName ?? "Bot";
             throw new InvalidOperationException($"Bot {botName} could not produce for {ns.Nation}: {result.Error}");
         }
@@ -996,9 +992,8 @@ public class BotService
     /// hostilely, and Imperial-2030-Rules.pdf p.10 lets the defender answer it: "Armies of foreign nations
     /// can call for a battle if their land region has been invaded", and "Fleets and armies can battle
     /// against each other only if the fleet is still in the harbor. In this case, an invading army can
-    /// attack the fleet or the fleet can call for a battle." Without this the conversion silently occupied
-    /// the province with the defender's units still sitting in it — observed live as a Brazilian army
-    /// turning hostile in Mumbai alongside an Indian fleet, with no battle.
+    /// attack the fleet or the fleet can call for a battle." Without this the conversion would occupy the
+    /// province with the defender's units still sitting in it, and no battle.
     ///
     /// Deliberately mirrors the hostile-MOVE path rather than inventing a second set of rules: one
     /// defending nation resolves 1:1 on the spot, several open the negotiation phase. Humans reach the
@@ -1014,7 +1009,7 @@ public class BotService
 
         // Same shape as the move path's defender filter: like fights like, plus the home nation's other
         // unit types once we are standing hostile in their home — which is what makes an army able to
-        // reach a fleet still in its harbour.
+        // reach a fleet still in its harbor.
         bool IsReachableDefender(Unit u) =>
             u.UnitType == unit.UnitType || (isForeignHome && u.Nation == def!.Nation!.Value);
 
@@ -1092,7 +1087,7 @@ public class BotService
             bool hasDefenders = game.Units.Any(u => u.TerritoryId == territoryId && u.Nation == defenderNation);
             if (hasDefenders) continue;
 
-            // A blockaded factory does not count as an available factory for the p.10 protection.
+            // An occupied factory does not count as an available factory for the p.10 protection.
             // Use the same rule check as the human endpoint so bots cannot destroy the defender's
             // last factory that is not already occupied by hostile armies.
             if (ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, territoryId)) continue;
@@ -1195,8 +1190,7 @@ public class BotService
         var result = TaxationEngine.ExecuteTaxation(ctx, game);
         if (!result.Ok)
         {
-            // The bot is on the Taxation slot in its own turn; a refusal means the turn loop's state and
-            // the engine's disagree, which is a bug to surface, not a turn to skip quietly.
+            // The bot is on the Taxation slot in its own turn; a refusal is a bug in the turn loop.
             throw new InvalidOperationException($"Bot {controller.BotName} could not tax for {nation}: {result.Error}");
         }
 
@@ -1223,6 +1217,10 @@ public class BotService
 
     internal async Task BotImport(ApplicationDbContext? ctx, Game game, NationState ns)
     {
+        // A government that took over mid-turn (p.12: outbid in the Investor turn the rondel move opened)
+        // re-enters with the slot's action possibly already taken by its predecessor. The turn then just ends.
+        if (ns.HasImportedThisTurn) return;
+
         var nation = ns.Nation;
         var controller = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId);
         if (controller == null)
@@ -1253,15 +1251,12 @@ public class BotService
 
         if (imports.Count == 0)
         {
-            // Chose to import nothing. Still the turn's Import action, so it is closed and logged as such -
-            // "imported 0 units ()" says nothing and reads as a rendering fault.
+            // Chose to import nothing. Still the turn's Import action, so it is closed and logged as such.
             ImportEngine.CompleteImport(ctx, game, imports);
             return;
         }
 
-        // The strategy filtered for legality; the engine now checks it too, for every caller alike. A
-        // refusal here means the strategy's view of the board disagreed with the rule - fail loudly
-        // rather than place what it asked for unchecked, which is what this used to do.
+        // The strategy filtered for legality; a refusal means its view of the board disagrees with the rule.
         var result = ImportEngine.Import(ctx, game, imports);
         if (!result.Ok)
         {

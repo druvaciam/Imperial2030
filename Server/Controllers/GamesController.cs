@@ -421,11 +421,8 @@ public class GamesController : ControllerBase
             {
                 Id = p.Id,
                 UserId = p.IsBot ? $"bot-{p.Id}" : p.UserId!,
-                // GetPlayerName checks BotName before IsBot — matters because replay/import players are kept
-                // IsBot=false for the duration (see PlayerHelper.GetPlayerName's own comment) while their
-                // BotName already holds the correct display name; the old inline IsBot-gated logic here
-                // fell through to p.User?.UserName, which is null for those synthetic players (no real
-                // backing ApplicationUser), rendering as "Unknown" in the Players panel.
+                // GetPlayerName checks BotName before IsBot: replay/import players are kept IsBot=false with
+                // no backing ApplicationUser, and their display name is in BotName (see PlayerHelper).
                 UserName = p.GetPlayerName(_context),
                 IsHost = p.IsHost,
                 Cash = p.Cash,
@@ -447,13 +444,9 @@ public class GamesController : ControllerBase
                 Treasury = ns.Treasury,
                 Power = ns.Power,
                 RondelPosition = ns.RondelPosition,
-                // GetPlayerName checks BotName before IsBot (see its own comment) — replay/import players
-                // are kept IsBot=false with no real backing ApplicationUser, so the old inline IsBot-gated
-                // logic here always fell through to null, making ControllerName null for every nation
-                // during replay. IsMyTurn() (Client) compares this against MyPlayer?.UserName (also null
-                // for the replay viewer), so null==null was silently evaluating to "my turn" for every
-                // nation — showing real action controls (e.g. the maneuver phase's "End Phase" button)
-                // during what's supposed to be pure, non-interactive playback.
+                // Same as UserName above. ControllerName must not be null during replay: the client's
+                // IsMyTurn() compares it with MyPlayer?.UserName, which is null for the replay viewer, and
+                // null == null would show action controls during playback.
                 ControllerName = ns.Controller != null ? ns.Controller.GetPlayerName(_context) : null,
                 ControllerId = ns.ControllerId,
                 HasBuiltThisTurn = ns.HasBuiltThisTurn,
@@ -1080,8 +1073,7 @@ public class GamesController : ControllerBase
 
         if (game == null) return NotFound();
 
-        // Controller Check - the caller must be the nation's government. Checked here, before the engine
-        // runs, because the engine mutates; the engine repeats the "no controller" case for its other callers.
+        // The caller must be the nation's government - checked before the engine runs, because it mutates.
         var nationState = game.NationStates.FirstOrDefault(n => n.Nation == nation);
         if (nationState == null || nationState.ControllerId == null) return BadRequest("No controller for this nation.");
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
@@ -1090,7 +1082,7 @@ public class GamesController : ControllerBase
         var result = RondelEngine.MoveNation(_context, game, nation, targetSlot);
         if (!result.Ok) return BadRequest(result.Error);
 
-        if (result.SwissBankIntercepted)
+        if (result.SwissBankForcedStop)
         {
             await _context.SaveChangesAsync();
             if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
@@ -1098,8 +1090,7 @@ public class GamesController : ControllerBase
             return Ok();
         }
 
-        // The endpoint has always skipped empty maneuver phases straight after the move; the bot path
-        // does not - see RondelEngine.AutoSkipEmptyManeuverPhases for why that stays asymmetric for now.
+        // HTTP-only: see RondelEngine.AutoSkipEmptyManeuverPhases.
         RondelEngine.AutoSkipEmptyManeuverPhases(_context, game, nation, controller.GetPlayerName(_context));
         await _context.SaveChangesAsync();
 
