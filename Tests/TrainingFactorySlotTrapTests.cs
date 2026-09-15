@@ -210,6 +210,33 @@ public class TrainingFactorySlotTrapTests
     }
 
     /// <summary>
+    /// Landing on Factory by way of the Investor space (Maneuver 1 -> Factory is six spaces, crossing it)
+    /// activates the investor phase, and Imperial-2030-Rules.pdf p.11 resolves that as part of the
+    /// MOVEMENT, before the nation acts on its destination. The decision is still owed - but not until the
+    /// investor phase has cleared. The endpoint has always refused a build during an investor turn; the
+    /// training step handler used to consume the next step as the factory decision anyway
+    /// (implementation_plan.md divergence #10).
+    /// </summary>
+    [Fact]
+    public void TheDecisionWaitsForAnOpenInvestorPhase()
+    {
+        var rlPlayerId = Guid.NewGuid();
+        var (game, session) = BuildGame(rlPlayerId);
+        var china = game.NationStates.First(n => n.Nation == Nation.China);
+
+        china.RondelPosition = RondelData.FactorySlot;
+        session.FactoryDecisionOwedBy = Nation.China;
+        game.IsInvestorTurn = true;
+
+        Assert.False(TcpTrainingServer.IsFactoryDecisionPending(session, china, rlPlayerId),
+            "The factory decision was offered while the investor phase the move triggered was still open.");
+
+        game.IsInvestorTurn = false;
+        Assert.True(TcpTrainingServer.IsFactoryDecisionPending(session, china, rlPlayerId),
+            "Once the investor phase clears the decision is owed again - it must not have been forgotten.");
+    }
+
+    /// <summary>
     /// A nation the trainee does not control is never asked, whatever the flag says - those are played by
     /// BotService, and they are the ones that kept moving all game.
     /// </summary>

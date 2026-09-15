@@ -190,6 +190,7 @@ public class BotFactorySkipLoggingTests
     {
         var (game, india, bot) = BuildBoard(treasury: GameConstants.ImportUnitCost - 1, everyCityBuilt: false);
 
+        india.RondelPosition = RondelData.ImportSlot; // the slot the action belongs to - the engine checks
         await BuildBotService().BotImport(null, game, india);
 
         Assert.Contains(game.Actions, a => a.ActionType == "ImportNoFunds");
@@ -205,6 +206,7 @@ public class BotFactorySkipLoggingTests
     {
         var (game, india, bot) = BuildBoard(treasury: 20, everyCityBuilt: false);
 
+        india.RondelPosition = RondelData.ProductionSlot1; // the slot the action belongs to - the engine checks
         await BuildBotService().BotProduction(null, game, india);
 
         Assert.Contains(game.Actions, a => a.ActionType == "ProductionNoFactories");
@@ -221,6 +223,7 @@ public class BotFactorySkipLoggingTests
     {
         var (game, india, bot) = BuildBoard(treasury: 20, everyCityBuilt: true, blockadeEveryFreeCity: true);
 
+        india.RondelPosition = RondelData.ProductionSlot1; // the slot the action belongs to - the engine checks
         await BuildBotService().BotProduction(null, game, india);
 
         Assert.Contains(game.Actions, a => a.ActionType == "ProductionBlockaded");
@@ -233,6 +236,7 @@ public class BotFactorySkipLoggingTests
     {
         var (game, india, bot) = BuildBoard(treasury: 20, everyCityBuilt: true);
 
+        india.RondelPosition = RondelData.ProductionSlot1; // the slot the action belongs to - the engine checks
         await BuildBotService().BotProduction(null, game, india);
 
         Assert.Contains(game.Actions, a => a.ActionType == "Production");
@@ -270,6 +274,7 @@ public class BotFactorySkipLoggingTests
             }
         }
 
+        india.RondelPosition = RondelData.ProductionSlot1; // the slot the action belongs to - the engine checks
         await BuildBotService().BotProduction(null, game, india);
 
         Assert.Contains(game.Actions, a => a.ActionType == "ProductionAtUnitCap");

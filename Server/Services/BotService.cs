@@ -377,9 +377,13 @@ public class BotService
             nationState = game.NationStates.First(ns => ns.Nation == nation);
 
             // Advance turn
-            game.AdvanceTurn();
-
-            GameLogger.LogEndTurn(ctx, game, nation, controller.BotName ?? "Bot");
+            var endTurn = TurnEngine.EndTurn(ctx, game);
+            if (!endTurn.Ok)
+            {
+                // The condition above already established the turn is finishable; a rejection here is a
+                // bug in that condition, not something to paper over by advancing anyway.
+                throw new InvalidOperationException($"Bot {controller.BotName} could not end {nation}'s turn: {endTurn.Error}");
+            }
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
         }
@@ -536,15 +540,10 @@ public class BotService
             return;
         }
 
-        var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation && t.CityType != CityType.None).ToList();
+        var homeCities = TerritoryData.AllTerritories.Where(t => t.IsHomeCity(ns.Nation)).ToList();
 
-        var validCities = homeCities.Where(city =>
-        {
-            var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
-            if (ts != null && ts.HasFactory) return false;
-            bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != ns.Nation && u.IsHostile);
-            return !hasHostileForeignArmy;
-        }).ToList();
+        // Same legality the endpoint and the RL action mask use - one definition of "buildable".
+        var validCities = FactoryEngine.BuildableCities(game, ns.Nation);
 
         var chosenCityId = validCities.Any() ? strategy.ChooseCityForFactory(game, ns.Nation, validCities) : null;
         if (chosenCityId == null)
@@ -569,76 +568,26 @@ public class BotService
         }
         else
         {
-            var city = validCities.First(c => c.Id == chosenCityId);
-            var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
-            if (ts == null)
+            var build = FactoryEngine.BuildFactory(ctx, game, chosenCityId);
+            if (!build.Ok)
             {
-                ts = new TerritoryState { TerritoryId = city.Id, GameId = game.Id };
-                AddTerritoryState(ctx, game, ts);
+                // chosenCityId came from BuildableCities and the treasury was checked above, so the engine
+                // refusing means the bot's own view of the board disagreed with the rule - fail loudly.
+                throw new InvalidOperationException($"Bot {controller.BotName} could not build a factory for {ns.Nation} in {chosenCityId}: {build.Error}");
             }
-            ns.Treasury -= FactoryCost;
-            ts.HasFactory = true;
-            GameLogger.LogFactoryBuild(ctx, game, city.Name, ns.Nation, controller.BotName ?? "Bot");
         }
         ns.HasBuiltThisTurn = true; // Resolved either way (built, or explicitly/implicitly skipped)
     }
 
     internal async Task BotProduction(ApplicationDbContext? ctx, Game game, NationState ns)
     {
-        var nation = ns.Nation;
-        int produced = 0;
-        int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
-        int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
-
-        var locationNames = new List<(UnitType UnitType, string TerritoryId)>();
-        foreach (var ts in game.TerritoryStates.Where(t => t.HasFactory))
+        var result = ProductionEngine.ExecuteProduction(ctx, game);
+        if (!result.Ok)
         {
-            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (def?.Nation != nation) continue;
-            bool blocked = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-            if (blocked) continue;
-
-            var unitType = def.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
-            if (unitType == UnitType.Army && currentArmies >= NationData.GetMaxArmies(nation)) continue;
-            if (unitType == UnitType.Fleet && currentFleets >= NationData.GetMaxFleets(nation)) continue;
-
-            AddUnit(ctx, game, new Unit { GameId = game.Id, Nation = nation, TerritoryId = ts.TerritoryId, UnitType = unitType, IsHostile = false });
-            if (unitType == UnitType.Army) currentArmies++;
-            else currentFleets++;
-            produced++;
-            locationNames.Add((unitType, ts.TerritoryId));
-        }
-        ns.HasProducedThisTurn = true;
-        var botName = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId)?.BotName ?? "Bot";
-
-        if (produced > 0)
-        {
-            GameLogger.LogProduction(ctx, game, produced, locationNames, nation, botName);
-        }
-        else
-        {
-            // Same treatment as a wasted Factory turn: say which of the three things stopped it, rather
-            // than logging "produced 0 units ()".
-            var ownFactories = game.TerritoryStates
-                .Where(ts => ts.HasFactory && TerritoryData.AllTerritories.Any(t => t.Id == ts.TerritoryId && t.Nation == nation))
-                .ToList();
-
-            bool AllBlockaded(TerritoryState ts) => game.Units.Any(u =>
-                u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-
-            if (ownFactories.Count == 0)
-            {
-                GameLogger.LogProductionNoFactories(ctx, game, nation, botName);
-            }
-            else if (ownFactories.All(AllBlockaded))
-            {
-                GameLogger.LogProductionBlockaded(ctx, game, nation, botName);
-            }
-            else
-            {
-                // Something was unblockaded and still produced nothing, so its unit type is at the cap.
-                GameLogger.LogProductionAtUnitCap(ctx, game, nation, botName);
-            }
+            // The bot is on a Production slot in its own turn; a refusal means the turn loop's state and
+            // the engine's disagree, which is a bug to surface, not a turn to skip quietly.
+            var botName = game.Players.FirstOrDefault(p => p.Id == ns.ControllerId)?.BotName ?? "Bot";
+            throw new InvalidOperationException($"Bot {botName} could not produce for {ns.Nation}: {result.Error}");
         }
     }
 
@@ -1242,24 +1191,22 @@ public class BotService
     private async Task BotTaxation(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
     {
         var nation = ns.Nation;
-        int oldTreasury = ns.Treasury;
-        // --- Apply Centralized Taxation Logic ---
-        var result = TaxationHelper.ApplyTaxation(game, ns, controller);
 
-        int treasuryGain = ns.Treasury - oldTreasury;
-        GameLogger.LogTaxation(ctx, game, result.TotalTaxRevenue, result.SoldiersPay, treasuryGain, result.Bonus, result.PowerGain, nation, controller.BotName ?? "Bot");
-
-        if (ns.Power >= GameConstants.MaxPowerPoints)
+        var result = TaxationEngine.ExecuteTaxation(ctx, game);
+        if (!result.Ok)
         {
-            game.Status = GameStatus.Finished;
-            game.FinishedAt = DateTime.UtcNow;
+            // The bot is on the Taxation slot in its own turn; a refusal means the turn loop's state and
+            // the engine's disagree, which is a bug to surface, not a turn to skip quietly.
+            throw new InvalidOperationException($"Bot {controller.BotName} could not tax for {nation}: {result.Error}");
+        }
 
+        if (result.GameEnded)
+        {
             if (ctx != null)
             {
                 await game.SetWinnerNameAsync(ctx);
                 ctx.Entry(game).State = EntityState.Modified;
             }
-
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
             await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameEnded", game.Id);
@@ -1270,12 +1217,8 @@ public class BotService
                 var notificationService = notificationScope.ServiceProvider.GetRequiredService<INotificationService>();
                 _ = notificationService.NotifyGameFinishedAsync(game, $"Ended by {nation} reaching {GameConstants.MaxPowerPoints} Power (Bot {controller.BotName})");
             }
-
-            return;
         }
-
-        // Taxation auto-advances turn
-        game.AdvanceTurn();
+        // Otherwise the engine has already advanced the turn - Taxation ends the turn by itself.
     }
 
     internal async Task BotImport(ApplicationDbContext? ctx, Game game, NationState ns)
@@ -1301,32 +1244,28 @@ public class BotService
             ns.HasImportedThisTurn = true; // Nothing to import; nothing left to decide
             return;
         }
-        int maxImport = Math.Min(3, ns.Treasury);
+        int maxImport = Math.Min(GameConstants.MaxImportUnits, ns.Treasury);
 
         var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == nation).ToList();
-        var imports = strategy.ChooseImports(game, ns, maxImport, homeTerritories);
+        var imports = strategy.ChooseImports(game, ns, maxImport, homeTerritories)
+            .Select(i => (i.Type, i.TerritoryId))
+            .ToList();
 
-        int imported = 0;
-        var locationNames = new List<(UnitType UnitType, string TerritoryId)>();
-
-        foreach (var import in imports)
+        if (imports.Count == 0)
         {
-            AddUnit(ctx, game, new Unit { GameId = game.Id, Nation = nation, TerritoryId = import.TerritoryId, UnitType = import.Type, IsHostile = false });
-            imported++;
-            locationNames.Add((import.Type, import.TerritoryId));
-        }
-
-        ns.Treasury -= imported;
-        ns.HasImportedThisTurn = true;
-        var botName = controller.BotName ?? "Bot";
-        if (imported == 0)
-        {
+            // Chose to import nothing. Still the turn's Import action, so it is closed and logged as such -
             // "imported 0 units ()" says nothing and reads as a rendering fault.
-            GameLogger.LogImportedNothing(ctx, game, nation, botName);
+            ImportEngine.CompleteImport(ctx, game, imports);
+            return;
         }
-        else
+
+        // The strategy filtered for legality; the engine now checks it too, for every caller alike. A
+        // refusal here means the strategy's view of the board disagreed with the rule - fail loudly
+        // rather than place what it asked for unchecked, which is what this used to do.
+        var result = ImportEngine.Import(ctx, game, imports);
+        if (!result.Ok)
         {
-            GameLogger.LogImport(ctx, game, imported, locationNames, nation, botName);
+            throw new InvalidOperationException($"Bot {controller.BotName} chose an illegal import for {nation}: {result.Error}");
         }
     }
 
@@ -1610,16 +1549,6 @@ public class BotService
             .FirstOrDefaultAsync(g => g.Id == gameId);
     }
 
-
-    private void AddUnit(ApplicationDbContext? ctx, Game game, Unit unit)
-    {
-        // Add to the in-memory collection (necessary when operating on a disconnected game state like in RL training)
-        game.Units.Add(unit);
-        
-        // Explicitly notify EF Core to track this as a new entity. 
-        // Using ctx.Add() is the consistent best practice in EF Core over manually setting the EntityState.
-        if (ctx != null) ctx.Add(unit);
-    }
 
     private void RemoveUnit(ApplicationDbContext? ctx, Game game, Unit unit)
     {

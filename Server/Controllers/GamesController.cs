@@ -1130,93 +1130,22 @@ public class GamesController : ControllerBase
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
-        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
-        // The nation's turn is suspended while an Investor phase resolves, so no slot action may run.
-        // Mirrors BuildFactory/ExecuteImport, which have always had this guard.
-        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
 
-        var currentNation = game.CurrentTurnNation;
-        var nationState = game.NationStates.First(n => n.Nation == currentNation);
-
+        // Controller Check - the caller must be the acting nation's government, before the engine mutates.
+        var nationState = game.NationStates.First(n => n.Nation == game.CurrentTurnNation);
         if (nationState.ControllerId == null) return BadRequest("No controller.");
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
-        // Check Rondel Position (Production slots: 2 and 6)
-        if (!RondelData.IsProductionSlot(nationState.RondelPosition ?? -1))
-        {
-            return BadRequest("Not on a Production slot.");
-        }
+        var result = ProductionEngine.ExecuteProduction(_context, game);
+        if (!result.Ok) return BadRequest(result.Error);
 
-        // Per-turn limit. Production is a single action taken on landing (Imperial-2030-Rules.pdf p.7,
-        // "Production": each factory "may produce one army or one fleet"), not a repeatable one.
-        // HasProducedThisTurn used to be written here but never read, unlike the identical guards on
-        // HasBuiltThisTurn (BuildFactory) and HasImportedThisTurn (ExecuteImport) — so re-POSTing this
-        // endpoint produced another full batch of free units on every call, letting a nation fill to its
-        // GetMaxArmies/GetMaxFleets cap in a single turn.
-        if (nationState.HasProducedThisTurn) return BadRequest("Already produced this turn.");
+        await _context.SaveChangesAsync();
+        if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
 
-        var factoryTerritories = game.TerritoryStates
-            .Where(t => t.HasFactory)
-            .ToList();
-
-        var createdUnits = 0;
-        var producedDetails = new List<(UnitType UnitType, string TerritoryId)>();
-
-        int createdArmies = 0;
-        int createdFleets = 0;
-        int currentArmies = game.Units.Count(u => u.Nation == currentNation && u.UnitType == UnitType.Army);
-        int currentFleets = game.Units.Count(u => u.Nation == currentNation && u.UnitType == UnitType.Fleet);
-
-        foreach (var tState in factoryTerritories)
-        {
-            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tState.TerritoryId);
-            if (def == null) continue;
-
-            if (def.Nation != currentNation) continue;
-
-            var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tState.TerritoryId).ToList();
-            bool isBlockaded = unitsInTerritory.Any(u => u.Nation != currentNation && u.UnitType == UnitType.Army && u.IsHostile);
-
-            if (isBlockaded) continue;
-
-            UnitType typeToProduce = def.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
-
-            if (typeToProduce == UnitType.Army && currentArmies + createdArmies >= NationData.GetMaxArmies(currentNation)) continue;
-            if (typeToProduce == UnitType.Fleet && currentFleets + createdFleets >= NationData.GetMaxFleets(currentNation)) continue;
-
-            var newUnit = new Unit
-            {
-                GameId = game.Id,
-                Nation = currentNation,
-                TerritoryId = tState.TerritoryId,
-                UnitType = typeToProduce,
-                IsHostile = false
-            };
-
-            _context.Units.Add(newUnit);
-            createdUnits++;
-            if (typeToProduce == UnitType.Army) createdArmies++;
-            else createdFleets++;
-
-            producedDetails.Add((typeToProduce, tState.TerritoryId));
-        }
-
-        if (createdUnits > 0)
-        {
-            nationState.HasProducedThisTurn = true;
-            _context.Entry(nationState).State = EntityState.Modified;
-
-            GameLogger.LogProduction(_context, game, createdUnits, producedDetails, currentNation, controller.GetPlayerName(_context));
-
-            await _context.SaveChangesAsync();
-            if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
-            return Ok($"Produced {createdUnits} units.");
-        }
-        else
-        {
-            return Ok("No units produced (all factories blockaded or none exist).");
-        }
+        return result.ProducedCount > 0
+            ? Ok($"Produced {result.ProducedCount} units.")
+            : Ok("No units produced (all factories blockaded or none exist).");
     }
 
     [HttpPost("{gameId}/investor-action")]
@@ -1372,59 +1301,15 @@ public class GamesController : ControllerBase
             .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
-        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
-        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
 
-        var nation = game.CurrentTurnNation;
-        var nationState = game.NationStates.First(n => n.Nation == nation);
-
-        // Controller Check
+        // Controller Check - the caller must be the acting nation's government, before the engine mutates.
+        var nationState = game.NationStates.First(n => n.Nation == game.CurrentTurnNation);
         if (nationState.ControllerId == null) return BadRequest("No controller for this nation.");
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
-        // 1. Validate Rondel Position
-        if (nationState.RondelPosition != RondelData.FactorySlot) return BadRequest("Nation must be on 'Factory' slot.");
-
-        // 1b. Validate Per Turn Limit
-        if (nationState.HasBuiltThisTurn) return BadRequest("Already built factory this turn.");
-
-        // 2. Validate Territory
-        var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
-        if (territoryDef == null) return BadRequest("Invalid territory.");
-
-        // 3. Validate Home City
-        if (!territoryDef.IsHomeCity(nation)) return BadRequest($"Can only build in {nation}'s home cities.");
-
-        // 4. Validate State (No existing factory)
-        var territoryState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == territoryId);
-        if (territoryState == null) return BadRequest("Territory state not initialized."); // Should not happen if StartGame worked
-        if (territoryState.HasFactory) return BadRequest("Factory already exists.");
-
-        // 4b. Validate no hostile foreign armies
-        bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == territoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-        if (hasHostileForeignArmy) return BadRequest("Cannot build factory: hostile foreign armies are present in the city.");
-
-        // 5. Validate Cost (5M from Nation Treasury - per User Request "The nation pays 5 million into the bank")
-        const int FactoryCost = GameConstants.FactoryCost;
-        if (nationState.Treasury < FactoryCost) return BadRequest($"Nation treasury insufficient. Need {FactoryCost}M.");
-
-        // 6. Execute Build
-        nationState.Treasury -= FactoryCost;
-        territoryState.HasFactory = true;
-
-        // Set flag
-        nationState.HasBuiltThisTurn = true;
-
-        // No turn advance here? usually Factory building is an action within the turn. 
-        // The turn advances when moving on the Rondel. 
-        // Wait, the "Factory" action happens AFTER moving.
-        // So we update state, but do not change CurrentTurnNation (that happened in MoveNation).
-
-        _context.Entry(nationState).State = EntityState.Modified;
-        _context.Entry(territoryState).State = EntityState.Modified;
-
-        GameLogger.LogFactoryBuild(_context, game, territoryDef.Name, nation, controller.GetPlayerName(_context));
+        var result = FactoryEngine.BuildFactory(_context, game, territoryId);
+        if (!result.Ok) return BadRequest(result.Error);
 
         await _context.SaveChangesAsync();
         if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
@@ -1445,26 +1330,16 @@ public class GamesController : ControllerBase
             .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
-        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
-        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
-        if (game.PendingBattleDefenders.Any()) return BadRequest("Cannot end turn while a battle is pending.");
-        if (game.CurrentManeuverPhase != ManeuverPhase.None) return BadRequest($"Finish your maneuver phase ({game.CurrentManeuverPhase}) first.");
 
-        var nation = game.CurrentTurnNation;
-        var nationState = game.NationStates.First(n => n.Nation == nation);
-
-        // Controller Check
+        // Controller Check - the caller must be the acting nation's government, before the engine mutates.
+        var nationState = game.NationStates.First(n => n.Nation == game.CurrentTurnNation);
         if (nationState.ControllerId == null) return BadRequest("No controller for this nation.");
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
-        // Advance Turn (Russia -> China -> India -> Brazil -> USA -> Europe)
-        // Note: game.AdvanceTurn() handles all state flag resetting!
-        game.AdvanceTurn();
+        var result = TurnEngine.EndTurn(_context, game);
+        if (!result.Ok) return BadRequest(result.Error);
 
-        _context.Entry(game).State = EntityState.Modified;
-
-        GameLogger.LogEndTurn(_context, game, nation, controller.GetPlayerName(_context));
         await _context.SaveChangesAsync();
 
         if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
@@ -1492,46 +1367,26 @@ public class GamesController : ControllerBase
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
-        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
-        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
 
         var nation = game.CurrentTurnNation;
-        var nationState = game.NationStates.First(n => n.Nation == nation);
 
-        // Controller Check
+        // Controller Check - the caller must be the acting nation's government, before the engine mutates.
+        var nationState = game.NationStates.First(n => n.Nation == nation);
         if (nationState.ControllerId == null) return BadRequest("No controller for this nation.");
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
-        // Validate Rondel Position: Must be on Taxation
-        if (nationState.RondelPosition != RondelData.TaxationSlot) return BadRequest("Nation must be on 'Taxation' slot.");
+        var result = TaxationEngine.ExecuteTaxation(_context, game);
+        if (!result.Ok) return BadRequest(result.Error);
 
-        int oldTreasury = nationState.Treasury;
-        // --- Apply Centralized Taxation Logic ---
-        var result = TaxationHelper.ApplyTaxation(game, nationState, controller);
-
-        // Mark Controller as modified if they gained cash
-        if (result.Bonus > 0)
-        {
-            _context.Entry(controller).State = EntityState.Modified;
-        }
-
-        // Save Changes
-        _context.Entry(nationState).State = EntityState.Modified;
-        int treasuryGain = nationState.Treasury - oldTreasury;
-        GameLogger.LogTaxation(_context, game, result.TotalTaxRevenue, result.SoldiersPay, treasuryGain, result.Bonus, result.PowerGain, nation, controller.GetPlayerName(_context));
         await _context.SaveChangesAsync();
 
-        // --- Game End Check ---
-        if (nationState.Power >= GameConstants.MaxPowerPoints)
+        if (result.GameEnded)
         {
-            game.Status = GameStatus.Finished;
-            game.FinishedAt = DateTime.UtcNow;
-
             await game.SetWinnerNameAsync(_context);
-
             _context.Entry(game).State = EntityState.Modified;
             await _context.SaveChangesAsync();
+
             if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); } // Notify update FIRST so clients see 25 Power
             if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameEnded", gameId); } // Notify end
 
@@ -1547,13 +1402,6 @@ public class GamesController : ControllerBase
 
             return Ok(new { Message = "Game Over", Winner = nation });
         }
-
-        // --- Step 5: Turn Advance ---
-        // Same logic as EndTurn (resets all turn state flags automatically)
-        game.AdvanceTurn();
-
-        _context.Entry(game).State = EntityState.Modified;
-        await _context.SaveChangesAsync();
 
         if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
 
@@ -1583,86 +1431,22 @@ public class GamesController : ControllerBase
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
-        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
-        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
 
+        // Controller Check - the caller must be the acting nation's government, before the engine mutates.
         var nationState = game.NationStates.First(n => n.Nation == game.CurrentTurnNation);
         if (nationState.ControllerId == null) return BadRequest("No controller.");
-
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
-        if (nationState.RondelPosition != RondelData.ImportSlot) return BadRequest("Not in Import phase.");
-        if (nationState.HasImportedThisTurn) return BadRequest("Already imported this turn.");
+        var units = request.Units.Select(u => (u.UnitType, u.TerritoryId)).ToList();
+        var result = ImportEngine.Import(_context, game, units);
+        if (!result.Ok) return BadRequest(result.Error);
 
-        if (request.Units.Count > 3) return BadRequest("Cannot import more than 3 units.");
-        if (request.Units.Count == 0) return BadRequest("No units specified.");
-
-        int cost = request.Units.Count; // 1M per unit
-        if (nationState.Treasury < cost) return BadRequest($"Insufficient treasury. Cost: {cost}M");
-
-        // Validate placement
-        foreach (var unitReq in request.Units)
-        {
-            var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == unitReq.TerritoryId);
-            if (territoryDef == null) return BadRequest($"Invalid territory: {unitReq.TerritoryId}");
-
-            // Home Province Check
-            if (territoryDef.Nation != game.CurrentTurnNation) return BadRequest($"Territory {territoryDef.Name} is not a home province of {game.CurrentTurnNation}.");
-
-            // Hostile Army Check (Standing armies of other nations block import)
-            bool hasHostileArmy = game.Units.Any(u => u.TerritoryId == unitReq.TerritoryId && u.Nation != game.CurrentTurnNation && u.UnitType == UnitType.Army && u.IsHostile);
-            if (hasHostileArmy) return BadRequest($"Territory {territoryDef.Name} contains hostile armies.");
-
-            // Fleet Harbor Check
-            if (unitReq.UnitType == UnitType.Fleet)
-            {
-                if (territoryDef.CityType != CityType.LightBlue) return BadRequest($"Cannot place Fleet in {territoryDef.Name} (no harbor).");
-            }
-        }
-
-        int currentArmies = game.Units.Count(u => u.Nation == game.CurrentTurnNation && u.UnitType == UnitType.Army);
-        int currentFleets = game.Units.Count(u => u.Nation == game.CurrentTurnNation && u.UnitType == UnitType.Fleet);
-
-        int requestedArmies = request.Units.Count(u => u.UnitType == UnitType.Army);
-        int requestedFleets = request.Units.Count(u => u.UnitType == UnitType.Fleet);
-
-        if (currentArmies + requestedArmies > NationData.GetMaxArmies(game.CurrentTurnNation))
-            return BadRequest($"Cannot import {requestedArmies} armies. You already have {currentArmies} armies on the board, and the maximum allowed is {NationData.GetMaxArmies(game.CurrentTurnNation)}.");
-
-        if (currentFleets + requestedFleets > NationData.GetMaxFleets(game.CurrentTurnNation))
-            return BadRequest($"Cannot import {requestedFleets} fleets. You already have {currentFleets} fleets on the board, and the maximum allowed is {NationData.GetMaxFleets(game.CurrentTurnNation)}.");
-
-        // Execute
-        nationState.Treasury -= cost;
-        nationState.HasImportedThisTurn = true;
-
-        foreach (var unitReq in request.Units)
-        {
-            var newUnit = new Unit
-            {
-                GameId = gameId,
-                Nation = game.CurrentTurnNation,
-                TerritoryId = unitReq.TerritoryId,
-                UnitType = unitReq.UnitType,
-                IsHostile = false, // Default to standing (friendly)
-                HasMoved = false
-            };
-            _context.Units.Add(newUnit);
-        }
-
-        _context.Entry(nationState).State = EntityState.Modified;
-
-        var importTuples = request.Units.Select(u => (u.UnitType, u.TerritoryId)).ToList();
-        GameLogger.LogImport(_context, game, request.Units.Count, importTuples, game.CurrentTurnNation, controller.GetPlayerName(_context));
         await _context.SaveChangesAsync();
-
         if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
 
         return Ok();
     }
-
-
 
     [HttpPost("{gameId}/swissbank-response")]
     public async Task<IActionResult> SwissBankResponse(Guid gameId, [FromBody] SwissBankResponseRequest request)

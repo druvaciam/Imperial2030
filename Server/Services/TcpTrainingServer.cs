@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Imperial2030.Server.Data;
+using Imperial2030.Server.Engine;
 using Imperial2030.Server.Models;
 using Imperial2030.Server.Services.Bots.Strategies;
 using Imperial2030.Shared.Constants;
@@ -49,7 +50,12 @@ public class TcpTrainingServer : BackgroundService
         public Nation? FactoryDecisionOwedBy { get; set; }
 
         public int? PendingImportRemaining { get; set; } // Non-null while stepping through an Import decision sequence
-        public int ImportUnitsPlacedThisSequence { get; set; } = 0; // Tracks whether the current Import sequence placed anything, for the wasted-import-with-money penalty
+        /// <summary>
+        /// Units placed so far by the current step-by-step Import sequence. Its count feeds the
+        /// wasted-import-with-money penalty; its contents are what ImportEngine.CompleteImport logs when
+        /// the sequence ends - the training path used to end the sequence without logging the import at all.
+        /// </summary>
+        public List<(UnitType UnitType, string TerritoryId)> ImportPlacedThisSequence { get; set; } = new();
 
         /// <summary>
         /// Board-position baseline for the RL-controlled nation's current Maneuver. Armed by arriving on
@@ -720,14 +726,13 @@ public class TcpTrainingServer : BackgroundService
                 if (slotIndex < orderedHome.Count && canBuild[slotIndex])
                 {
                     var cityId = orderedHome[slotIndex].Id;
-                    var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == cityId);
-                    if (ts == null)
+                    var build = FactoryEngine.BuildFactory(null, game, cityId);
+                    if (!build.Ok)
                     {
-                        ts = new TerritoryState { TerritoryId = cityId, GameId = game.Id };
-                        game.TerritoryStates.Add(ts);
+                        // The mask said this slot was legal and the treasury check above passed, so the
+                        // engine disagreeing is a bug in the mask - surface it rather than skip silently.
+                        throw new InvalidOperationException($"Training step: mask allowed a factory in {cityId} for {ns.Nation} but the engine refused: {build.Error}");
                     }
-                    ns.Treasury -= 5;
-                    ts.HasFactory = true;
 
                     // Immediate reward for growing production capacity. Without this, the only reward signal for
                     // a new factory comes from the dense VP term's factoryScore, discounted by Power/5 — which is
@@ -783,15 +788,21 @@ public class TcpTrainingServer : BackgroundService
 
                 if (slotIndex < orderedHome.Count && ((unitType == UnitType.Army && canArmy[slotIndex]) || (unitType == UnitType.Fleet && canFleet[slotIndex])))
                 {
-                    game.Units.Add(new Unit { GameId = game.Id, Nation = ns.Nation, TerritoryId = orderedHome[slotIndex].Id, UnitType = unitType, IsHostile = false });
-                    ns.Treasury -= 1;
+                    var territoryId = orderedHome[slotIndex].Id;
+                    var place = ImportEngine.PlaceOne(null, game, territoryId, unitType);
+                    if (!place.Ok)
+                    {
+                        // The mask said this placement was legal; the engine disagreeing is a bug in the
+                        // mask - surface it rather than skip silently.
+                        throw new InvalidOperationException($"Training step: mask allowed importing a {unitType} to {territoryId} for {ns.Nation} but the engine refused: {place.Error}");
+                    }
                     session.PendingImportRemaining--;
-                    session.ImportUnitsPlacedThisSequence++;
+                    session.ImportPlacedThisSequence.Add((unitType, territoryId));
                 }
 
                 if (session.PendingImportRemaining <= 0)
                 {
-                    ns.HasImportedThisTurn = true;
+                    ImportEngine.CompleteImport(null, game, session.ImportPlacedThisSequence);
                     session.PendingImportRemaining = null;
                 }
             }
@@ -802,12 +813,12 @@ public class TcpTrainingServer : BackgroundService
                 // remaining slots" branch above can only be reached right after a successful placement), and
                 // the sequence only ever starts when treasury >= 1 (see where PendingImportRemaining is set),
                 // so reaching here with zero placed unambiguously means affordable Import got wasted entirely.
-                if (session.ImportUnitsPlacedThisSequence == 0)
+                if (session.ImportPlacedThisSequence.Count == 0)
                 {
                     _logger.LogWarning($"[RL PENALTY] Wasted Import action by {ns.Nation}. Had money but imported 0 units.");
                     explicitBonusReward -= 7.0f;
                 }
-                ns.HasImportedThisTurn = true;
+                ImportEngine.CompleteImport(null, game, session.ImportPlacedThisSequence);
                 session.PendingImportRemaining = null;
             }
         }
@@ -1009,14 +1020,17 @@ public class TcpTrainingServer : BackgroundService
             if (postMoveNs != null && postMoveNs.ControllerId == session.RLPlayerId && postMoveNs.RondelPosition == RondelData.ImportSlot && !postMoveNs.HasImportedThisTurn)
             {
                 wasImportAction = true;
-                if (postMoveNs.Treasury >= 1)
+                if (postMoveNs.Treasury >= GameConstants.ImportUnitCost)
                 {
                     session.PendingImportRemaining = Math.Min(RLBotStrategy.MaxImportUnits, postMoveNs.Treasury);
-                    session.ImportUnitsPlacedThisSequence = 0;
+                    session.ImportPlacedThisSequence = new();
                 }
                 else
                 {
-                    postMoveNs.HasImportedThisTurn = true; // Nothing to import; nothing to decide
+                    // Nothing to import; nothing to decide. Logged the way the heuristic bots log it, so an
+                    // exported training game says why the Import turn did nothing.
+                    GameLogger.LogImportNotAfforded(null, game, postMoveNs.Nation, player.BotName ?? "Bot");
+                    postMoveNs.HasImportedThisTurn = true;
                 }
             }
 
@@ -1113,20 +1127,20 @@ public class TcpTrainingServer : BackgroundService
                 game,
                 snapshot.Nation,
                 completedNationState.ControllerId);
-            game.AdvanceTurn();
+            EndTrainingTurn(game);
             session.DecidedFactoryDestructionTerritoriesThisTurn.Clear();
         }
 
         // Same for the step-by-step Import decision sequence, once it's fully resolved
         if (wasImportAction && !session.PendingImportRemaining.HasValue && game.Status == GameStatus.InProgress)
         {
-            game.AdvanceTurn();
+            EndTrainingTurn(game);
         }
 
         // Same for the Factory build decision, which always resolves in a single step
         if (wasFactoryBuildAction && game.Status == GameStatus.InProgress)
         {
-            game.AdvanceTurn();
+            EndTrainingTurn(game);
         }
 
         // Calculate destruction explicit rewards before AdvanceUntilRLTurn (so we don't reward for other bots' actions)
@@ -1469,6 +1483,22 @@ public class TcpTrainingServer : BackgroundService
         }
 
         return new StepResponse { State = GetStateVector(game, session.RLPlayerId, session.ManeuverSelectedTerritoryId), Reward = reward, Done = false, ActionMask = GetActionMask(game, session) };
+    }
+
+    /// <summary>
+    /// Ends the trainee's turn through the engine, so the training game gets the same guards and the same
+    /// <c>EndTurn</c> log entry as every other path. This used to be a bare <c>game.AdvanceTurn()</c>,
+    /// which left exported training games with no EndTurn between a nation's Factory/Import/Maneuver turn
+    /// and the next nation's Move. A rejection here means the step handler's own "the turn is finished"
+    /// condition disagreed with the engine's, which is a bug to surface, not to advance past.
+    /// </summary>
+    private static void EndTrainingTurn(Game game)
+    {
+        var result = TurnEngine.EndTurn(null, game);
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"Training step tried to end {game.CurrentTurnNation}'s turn but the engine refused: {result.Error}");
+        }
     }
 
     private async Task<bool> AdvanceUntilRLTurn(Game g, Guid rlPlayerId)
@@ -2196,23 +2226,19 @@ public class TcpTrainingServer : BackgroundService
     // legality of importing an Army or a Fleet there right now.
     private (List<Territory> OrderedHome, bool[] CanArmy, bool[] CanFleet) GetImportOptions(Game game, NationState ns)
     {
+        // The ORDER is the action-space layout (ImportPlaceActionBase + index * 2) and must not change -
+        // rule #17. Only the per-slot legality comes from the engine.
         var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation).OrderBy(t => t.Id).ToList();
-        int currentArmies = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Army);
-        int currentFleets = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Fleet);
 
         var canArmy = new bool[orderedHome.Count];
         var canFleet = new bool[orderedHome.Count];
         for (int i = 0; i < orderedHome.Count; i++)
         {
-            var t = orderedHome[i];
-            bool occupied = game.Units.Any(u => u.TerritoryId == t.Id && u.Nation != ns.Nation && u.UnitType == UnitType.Army && u.IsHostile);
-            if (occupied) continue;
-
             // No London exclusion here: that's a heuristic-only guard in BotStrategyBase to keep the
             // simple AI from stranding an army in a coastal city — the real game rules allow it, and the
             // RL policy should be free to judge that trade-off itself (it may even be the only open slot).
-            canArmy[i] = currentArmies < NationData.GetMaxArmies(ns.Nation);
-            canFleet[i] = t.CityType == CityType.LightBlue && currentFleets < NationData.GetMaxFleets(ns.Nation);
+            canArmy[i] = ImportEngine.CanPlace(game, ns.Nation, orderedHome[i].Id, UnitType.Army);
+            canFleet[i] = ImportEngine.CanPlace(game, ns.Nation, orderedHome[i].Id, UnitType.Fleet);
         }
         return (orderedHome, canArmy, canFleet);
     }
@@ -2608,7 +2634,12 @@ public class TcpTrainingServer : BackgroundService
     /// </remarks>
     public static bool IsFactoryDecisionPending(TrainingSession session, NationState? currentNs, Guid rlPlayerId)
         => currentNs != null && currentNs.ControllerId == rlPlayerId
-           && session.FactoryDecisionOwedBy == currentNs.Nation && !currentNs.HasBuiltThisTurn;
+           && session.FactoryDecisionOwedBy == currentNs.Nation && !currentNs.HasBuiltThisTurn
+           // A move to Factory that crossed the Investor space opened an investor phase, and p.11 resolves
+           // that as part of the movement - before the destination's action. The decision stays owed
+           // (the flag is untouched) and is asked for once the phase clears. The endpoint has always
+           // refused a build during an investor turn; this used to ask anyway (divergence #10).
+           && !session.Game.IsInvestorTurn;
 
     public const float AvoidableFactorySkipPenalty = 30.0f;
 
@@ -2773,16 +2804,15 @@ public class TcpTrainingServer : BackgroundService
 
     private static (List<Territory> OrderedHome, bool[] CanBuild) GetFactoryBuildOptionsFor(Game game, NationState ns)
     {
+        // The ORDER is the action-space layout (FactoryBuildActionBase + index) and must not change - rule
+        // #17. It is every home province by Id, exactly as the deployed models were trained on. Only the
+        // per-slot legality now comes from the engine, which also requires the site to be a CITY; on this
+        // map every home province is one, so the mask is unchanged (implementation_plan.md divergence #4).
         var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation).OrderBy(t => t.Id).ToList();
         var canBuild = new bool[orderedHome.Count];
         for (int i = 0; i < orderedHome.Count; i++)
         {
-            var t = orderedHome[i];
-            var ts = game.TerritoryStates.FirstOrDefault(x => x.TerritoryId == t.Id);
-            if (ts != null && ts.HasFactory) continue;
-
-            bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == t.Id && u.UnitType == UnitType.Army && u.Nation != ns.Nation && u.IsHostile);
-            canBuild[i] = !hasHostileForeignArmy;
+            canBuild[i] = FactoryEngine.IsBuildableSite(game, ns.Nation, orderedHome[i].Id);
         }
         return (orderedHome, canBuild);
     }
