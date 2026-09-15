@@ -1,6 +1,7 @@
 using Imperial2030.Server.Data;
 using Imperial2030.Server.Helpers;
 using Imperial2030.Server.Models;
+using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,6 +12,39 @@ namespace Imperial2030.Server.Engine;
 /// which the card holder and the Swiss Banks invest) and the government rule (p.12: the highest credit
 /// sum governs; a tie is not sufficient to displace the sitting government).
 /// </summary>
+/// <summary>
+/// Outcome of buying a bond. Carries what the caller's toast needs: who bought which bond, what was
+/// traded in, and whether the purchase changed the nation's government.
+/// </summary>
+public sealed record InvestmentOutcome(
+    bool Ok,
+    string? Error = null,
+    Nation Nation = default,
+    int BondCost = 0,
+    int? TradeInCost = null,
+    bool TookControl = false,
+    string? PreviousControllerName = null,
+    string ActorName = "") : EngineResult(Ok, Error)
+{
+    public static new InvestmentOutcome Fail(string error) => new(false, error);
+}
+
+/// <summary>
+/// Outcome of a Swiss Bank's answer. <see cref="MoveResolved"/> says whether the nation's rondel move
+/// has now happened - to Investor on a forced stop, or to its original target once every responder has
+/// passed - or whether more responders are still to answer.
+/// </summary>
+public sealed record SwissBankOutcome(
+    bool Ok,
+    string? Error = null,
+    Nation Nation = default,
+    string ResponderName = "",
+    bool ForcedStop = false,
+    bool MoveResolved = false) : EngineResult(Ok, Error)
+{
+    public static new SwissBankOutcome Fail(string error) => new(false, error);
+}
+
 public static class InvestorEngine
 {
     public static void HandleInvestorPhase(ApplicationDbContext? context, Game game, NationState nationState, Player controller, bool isLandedOn)
@@ -293,5 +327,180 @@ public static class InvestorEngine
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// The acting investor buys <paramref name="bondId"/> from the bank, optionally trading in
+    /// <paramref name="tradeInBondId"/> - a lower bond of the same nation, whose value is deducted (p.12).
+    /// The price goes into the nation's treasury, the government is re-evaluated, the purchase is logged,
+    /// and the Investor turn moves to the next investor or ends. Does not save or broadcast.
+    /// </summary>
+    public static InvestmentOutcome Buy(ApplicationDbContext? context, Game game, Guid bondId, Guid? tradeInBondId)
+    {
+        var refusal = InvestorRefusal(game, out var actingPlayer);
+        if (refusal != null) return InvestmentOutcome.Fail(refusal);
+
+        var bond = game.Bonds.FirstOrDefault(b => b.Id == bondId);
+        if (bond == null) return InvestmentOutcome.Fail("Bond not found.");
+        if (bond.HolderId != null) return InvestmentOutcome.Fail("Bond already owned.");
+
+        int cost = bond.Cost;
+        int? tradeInCost = null;
+        Bond? tradeIn = null;
+
+        // Trade In Logic
+        if (tradeInBondId.HasValue)
+        {
+            tradeIn = game.Bonds.FirstOrDefault(b => b.Id == tradeInBondId.Value);
+            if (tradeIn == null) return InvestmentOutcome.Fail("Trade-in bond not found.");
+            if (tradeIn.HolderId != actingPlayer.Id) return InvestmentOutcome.Fail("You do not own the trade-in bond.");
+            if (tradeIn.Nation != bond.Nation) return InvestmentOutcome.Fail("Trade-in must be for same nation.");
+            if (tradeIn.Cost >= bond.Cost) return InvestmentOutcome.Fail("New bond must be higher value.");
+
+            tradeInCost = tradeIn.Cost;
+            cost = bond.Cost - tradeIn.Cost;
+        }
+
+        // Check funds
+        if (actingPlayer.Cash < cost) return InvestmentOutcome.Fail("Insufficient funds.");
+
+        if (tradeIn != null)
+        {
+            // Return old bond to bank
+            tradeIn.HolderId = null;
+            if (context != null) context.Entry(tradeIn).State = EntityState.Modified;
+        }
+
+        actingPlayer.Cash -= cost;
+        bond.HolderId = actingPlayer.Id;
+
+        // Pay to Treasury
+        var ns = game.NationStates.First(n => n.Nation == bond.Nation);
+        ns.Treasury += cost;
+
+        if (context != null)
+        {
+            context.Entry(ns).State = EntityState.Modified;
+            context.Entry(bond).State = EntityState.Modified;
+            context.Entry(actingPlayer).State = EntityState.Modified;
+        }
+
+        // Update Controller Logic
+        var oldControllerId = ns.ControllerId;
+        UpdateNationController(context, game, ns.Nation);
+        var newControllerId = ns.ControllerId;
+
+        string? newControllerName = newControllerId.HasValue
+            ? game.Players.FirstOrDefault(p => p.Id == newControllerId.Value)?.GetPlayerName(context)
+            : null;
+        string? oldControllerName = oldControllerId.HasValue
+            ? game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value)?.GetPlayerName(context)
+            : null;
+
+        bool tookControl = oldControllerId != newControllerId;
+
+        // A displaced government that now governs nothing has become a Swiss Bank (p.12).
+        bool isSwissBankKicked = oldControllerId.HasValue && !game.NationStates.Any(n => n.ControllerId == oldControllerId.Value);
+
+        var actorName = actingPlayer.GetPlayerName(context);
+        GameLogger.LogInvestmentBuy(context, game, bond.Nation, bond.Cost, actorName, newControllerName, oldControllerName, isSwissBankKicked, tradeInCost);
+
+        AdvanceInvestorQueue(game);
+
+        return new InvestmentOutcome(true,
+            Nation: bond.Nation,
+            BondCost: bond.Cost,
+            TradeInCost: tradeInCost,
+            TookControl: tookControl,
+            PreviousControllerName: oldControllerName,
+            ActorName: actorName);
+    }
+
+    /// <summary>The acting investor buys nothing; logged, and the Investor turn moves on.</summary>
+    public static EngineResult Pass(ApplicationDbContext? context, Game game)
+    {
+        var refusal = InvestorRefusal(game, out var actingPlayer);
+        if (refusal != null) return EngineResult.Fail(refusal);
+
+        GameLogger.LogInvestmentPass(context, game, actingPlayer.GetPlayerName(context));
+        AdvanceInvestorQueue(game);
+        return EngineResult.Success;
+    }
+
+    private static string? InvestorRefusal(Game game, out Player actingPlayer)
+    {
+        actingPlayer = null!;
+        if (!game.IsInvestorTurn) return "Not investor turn.";
+        if (game.ActingPlayerId == null) return "No acting player.";
+        var actor = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId);
+        if (actor == null) return "No acting player.";
+        actingPlayer = actor;
+        return null;
+    }
+
+    /// <summary>
+    /// Next investor in the queue acts; when the queue is empty the Investor card passes to the next
+    /// player (p.11) and the Investor turn ends.
+    /// </summary>
+    private static void AdvanceInvestorQueue(Game game)
+    {
+        if (game.PendingInvestorIds != null && game.PendingInvestorIds.Any())
+        {
+            game.ActingPlayerId = game.PendingInvestorIds.First();
+            game.PendingInvestorIds = game.PendingInvestorIds.Skip(1).ToList();
+        }
+        else
+        {
+            // Pass Investor Card
+            if (game.InvestorCardHolderId.HasValue)
+            {
+                game.InvestorCardHolderId = PlayerHelper.GetNextPlayerId(game, game.InvestorCardHolderId.Value);
+            }
+
+            // End Investor Turn
+            game.IsInvestorTurn = false;
+            game.ActingPlayerId = null;
+        }
+    }
+
+    /// <summary>
+    /// A Swiss Bank answers a pending forced-stop question (p.12: a Swiss Bank may force a nation whose
+    /// move would pass the Investor space to stop on it, if its treasury can pay the interest).
+    /// Forcing it completes the nation's move to Investor at once. Passing removes this responder; when
+    /// the last one has passed, the move completes to its original target. Either completed move is
+    /// <see cref="RondelEngine.MoveNation"/>, so it pays, logs and activates the investor exactly as an
+    /// undisturbed move would. Does not save or broadcast.
+    /// </summary>
+    public static SwissBankOutcome RespondToSwissBank(ApplicationDbContext? context, Game game, Player responder, bool forceStop)
+    {
+        if (game.PendingSwissBankForceNation == null) return SwissBankOutcome.Fail("No pending Swiss Bank decision.");
+        if (!game.PendingSwissBankResponders.Contains(responder.Id)) return SwissBankOutcome.Fail("You are not required to respond.");
+
+        var nation = game.PendingSwissBankForceNation.Value;
+        var responderName = responder.GetPlayerName(context);
+
+        if (forceStop)
+        {
+            GameLogger.LogSwissBankForceStop(context, game, nation, responderName);
+            var move = RondelEngine.MoveNation(context, game, nation, RondelData.InvestorSlot);
+            if (!move.Ok) return SwissBankOutcome.Fail(move.Error!);
+            return new SwissBankOutcome(true, Nation: nation, ResponderName: responderName, ForcedStop: true, MoveResolved: true);
+        }
+
+        GameLogger.LogSwissBankPass(context, game, nation, responderName);
+        var responders = game.PendingSwissBankResponders;
+        responders.Remove(responder.Id);
+        game.PendingSwissBankResponders = responders.ToList();
+        if (context != null) context.Entry(game).Property(g => g.PendingSwissBankResponders).IsModified = true;
+
+        if (responders.Any())
+        {
+            return new SwissBankOutcome(true, Nation: nation, ResponderName: responderName, ForcedStop: false, MoveResolved: false);
+        }
+
+        int targetSlot = game.PendingSwissBankForceTargetSlot!.Value;
+        var deferred = RondelEngine.MoveNation(context, game, nation, targetSlot);
+        if (!deferred.Ok) return SwissBankOutcome.Fail(deferred.Error!);
+        return new SwissBankOutcome(true, Nation: nation, ResponderName: responderName, ForcedStop: false, MoveResolved: true);
     }
 }

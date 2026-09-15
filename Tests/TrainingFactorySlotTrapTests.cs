@@ -264,6 +264,29 @@ public class TrainingFactorySlotTrapTests
     }
 
     /// <summary>
+    /// A rondel move that a Swiss Bank stopped for its answer has not happened: the marker is where it was
+    /// and HasMovedThisTurn is still false. A nation already sitting on Factory (or Import) from an earlier
+    /// turn must not be treated as having just landed there, or the step handler consumes the next step
+    /// as a decision for a move that never took place and ends the turn with the question still open.
+    /// </summary>
+    [Fact]
+    public void AStoppedMoveIsNotALanding()
+    {
+        var rlPlayerId = Guid.NewGuid();
+        var (game, _) = BuildGame(rlPlayerId);
+        var china = game.NationStates.First(n => n.Nation == Nation.China);
+        china.RondelPosition = RondelData.FactorySlot;
+        china.HasBuiltThisTurn = false;
+
+        china.HasMovedThisTurn = false; // the move was stopped for a Swiss Bank answer
+        Assert.False(TcpTrainingServer.LandedThisTurn(china, RondelData.FactorySlot));
+
+        china.HasMovedThisTurn = true;  // the move happened
+        Assert.True(TcpTrainingServer.LandedThisTurn(china, RondelData.FactorySlot));
+        Assert.False(TcpTrainingServer.LandedThisTurn(china, RondelData.ImportSlot));
+    }
+
+    /// <summary>
     /// A nation the RL agent does not control is never asked, whatever FactoryDecisionOwedBy says - those are played by
     /// BotService, and they are the ones that kept moving all game.
     /// </summary>

@@ -14,8 +14,8 @@ namespace Imperial2030.Server.Engine;
 public static class TurnEngine
 {
     /// <summary>
-    /// Ends <see cref="Game.CurrentTurnNation"/>'s turn: refuses while an Investor turn, a battle or an
-    /// unfinished maneuver phase is still open, otherwise advances the rotation and logs <c>EndTurn</c>
+    /// Ends <see cref="Game.CurrentTurnNation"/>'s turn: refuses while an Investor turn, a battle, a Swiss
+    /// Bank question or an unfinished maneuver phase is still open, otherwise advances the rotation and logs <c>EndTurn</c>
     /// for the nation that just finished.
     /// </summary>
     public static EngineResult EndTurn(ApplicationDbContext? context, Game game)
@@ -23,6 +23,8 @@ public static class TurnEngine
         if (game.Status != GameStatus.InProgress) return EngineResult.Fail("Game not in progress.");
         if (game.IsInvestorTurn) return EngineResult.Fail("Waiting for Investor Phase.");
         if (game.PendingBattleDefenders.Any()) return EngineResult.Fail("Cannot end turn while a battle is pending.");
+        // The nation's rondel move is still being decided by the Swiss Banks (p.12) - it has not happened yet.
+        if (game.PendingSwissBankForceNation != null) return EngineResult.Fail("Cannot end turn while a Swiss Bank decision is pending.");
         if (game.CurrentManeuverPhase != ManeuverPhase.None) return EngineResult.Fail($"Finish your maneuver phase ({game.CurrentManeuverPhase}) first.");
 
         var nation = game.CurrentTurnNation;

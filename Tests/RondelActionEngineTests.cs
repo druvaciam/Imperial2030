@@ -296,6 +296,13 @@ public class RondelActionEngineTests
         game.IsInvestorTurn = true;
         Assert.Equal("Waiting for Investor Phase.", TurnEngine.EndTurn(null, game).Error);
 
+        // The nation's own move is still being decided by the Swiss Banks (p.12); the turn cannot end
+        // before it has happened.
+        game.IsInvestorTurn = false;
+        game.PendingSwissBankForceNation = Nation.Russia;
+        Assert.Equal("Cannot end turn while a Swiss Bank decision is pending.", TurnEngine.EndTurn(null, game).Error);
+        game.PendingSwissBankForceNation = null;
+
         Assert.Equal(Nation.Russia, game.CurrentTurnNation);
         Assert.Empty(game.Actions);
     }

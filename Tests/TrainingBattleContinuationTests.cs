@@ -77,7 +77,9 @@ public sealed class TrainingStallRegressionTests
             InvestorCardHolderId = controllerId,
             Players = new List<Player>
             {
-                new() { Id = controllerId, GameId = gameId, IsBot = true, BotName = "Russia bot", BotType = "Default" },
+                // Cash for the deferred four-space move (1M): a pending forced-stop question only ever exists
+                // for a move the player could afford when it was asked.
+                new() { Id = controllerId, GameId = gameId, IsBot = true, BotName = "Russia bot", BotType = "Default", Cash = 5 },
                 new() { Id = swissBankId, GameId = gameId, IsBot = true, BotName = "Swiss bank", BotType = "Default" }
             },
             NationStates = new List<NationState>

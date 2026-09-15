@@ -1009,7 +1009,7 @@ public class TcpTrainingServer : BackgroundService
             // investor step of the same turn must not reset a sequence that is waiting for the phase to clear.
             var postFactoryNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
             if (!isInvestorTurn && postFactoryNs != null && postFactoryNs.ControllerId == session.RLPlayerId
-                && postFactoryNs.RondelPosition == RondelData.FactorySlot && !postFactoryNs.HasBuiltThisTurn)
+                && LandedThisTurn(postFactoryNs, RondelData.FactorySlot) && !postFactoryNs.HasBuiltThisTurn)
             {
                 session.FactoryDecisionOwedBy = postFactoryNs.Nation;
             }
@@ -1017,7 +1017,7 @@ public class TcpTrainingServer : BackgroundService
             // A rondel move that landed on Import starts the step-by-step Import decision sequence
             // (BotService.BotImport is a no-op for RL during training; see its early return).
             var postMoveNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-            if (!isInvestorTurn && postMoveNs != null && postMoveNs.ControllerId == session.RLPlayerId && postMoveNs.RondelPosition == RondelData.ImportSlot && !postMoveNs.HasImportedThisTurn)
+            if (!isInvestorTurn && postMoveNs != null && postMoveNs.ControllerId == session.RLPlayerId && LandedThisTurn(postMoveNs, RondelData.ImportSlot) && !postMoveNs.HasImportedThisTurn)
             {
                 wasImportAction = true;
                 if (postMoveNs.Treasury >= GameConstants.ImportUnitCost)
@@ -2297,6 +2297,14 @@ public class TcpTrainingServer : BackgroundService
     /// </summary>
     public static bool MayRondelActionEndTheTurn(Game game)
         => game.Status == GameStatus.InProgress && !game.IsInvestorTurn;
+
+    /// <summary>
+    /// Whether the nation's rondel move this turn ended on <paramref name="slot"/>. A move a Swiss Bank
+    /// stopped for its answer has not happened: HasMovedThisTurn is still false and the marker is where it
+    /// was, which may already be <paramref name="slot"/> from an earlier turn.
+    /// </summary>
+    public static bool LandedThisTurn(NationState ns, int slot)
+        => ns.HasMovedThisTurn && ns.RondelPosition == slot;
 
     public static bool IsManeuverOutcomeReady(TrainingSession session, Game game)
     {

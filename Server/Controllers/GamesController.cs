@@ -1046,12 +1046,6 @@ public class GamesController : ControllerBase
         }
     }
 
-    // Helper to find next player in rotation
-    private Guid GetNextPlayerId(Game game, Guid currentId)
-    {
-        return PlayerHelper.GetNextPlayerId(game, currentId);
-    }
-
     private string GenerateJoinCode()
     {
         return JoinCodeGenerator.Generate();
@@ -1142,7 +1136,6 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/investor-action")]
     public async Task<IActionResult> PerformInvestment(Guid gameId, [FromBody] InvestmentActionDto action)
     {
-
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
@@ -1156,110 +1149,25 @@ public class GamesController : ControllerBase
         if (!game.IsInvestorTurn) return BadRequest("Not investor turn.");
         if (game.ActingPlayerId == null) return BadRequest("No acting player.");
 
+        // The caller must be the acting investor - checked before the engine runs, because it mutates.
         var actingPlayer = game.Players.FirstOrDefault(p => p.Id == game.ActingPlayerId);
         if (actingPlayer == null || actingPlayer.UserId != userId) return Forbid();
 
         if (action.ActionType == "Buy")
         {
             if (action.BondId == null) return BadRequest("BondId required.");
-            var bond = game.Bonds.FirstOrDefault(b => b.Id == action.BondId);
-            if (bond == null) return BadRequest("Bond not found.");
-            if (bond.HolderId != null) return BadRequest("Bond already owned.");
 
-            int cost = bond.Cost;
-            int? tradeInCost = null;
-
-            // Trade In Logic
-            if (action.TradeInBondId.HasValue)
-            {
-                var tradeIn = game.Bonds.FirstOrDefault(b => b.Id == action.TradeInBondId.Value);
-                if (tradeIn == null) return BadRequest("Trade-in bond not found.");
-                if (tradeIn.HolderId != actingPlayer.Id) return BadRequest("You do not own the trade-in bond.");
-                if (tradeIn.Nation != bond.Nation) return BadRequest("Trade-in must be for same nation.");
-                if (tradeIn.Cost >= bond.Cost) return BadRequest("New bond must be higher value.");
-
-                tradeInCost = tradeIn.Cost;
-                cost = bond.Cost - tradeIn.Cost;
-
-                // Return old bond to bank
-                tradeIn.HolderId = null;
-                _context.Entry(tradeIn).State = EntityState.Modified;
-            }
-
-            // Check funds
-            if (actingPlayer.Cash < cost) return BadRequest("Insufficient funds.");
-
-            actingPlayer.Cash -= cost;
-            bond.HolderId = actingPlayer.Id;
-
-            // Pay to Treasury
-            var ns = game.NationStates.First(n => n.Nation == bond.Nation);
-            ns.Treasury += cost;
-
-            _context.Entry(ns).State = EntityState.Modified;
-            _context.Entry(bond).State = EntityState.Modified;
-            _context.Entry(actingPlayer).State = EntityState.Modified;
-
-            // Update Controller Logic
-            var oldControllerId = ns.ControllerId;
-            InvestorEngine.UpdateNationController(_context, game, ns.Nation);
-            var newControllerId = ns.ControllerId;
-
-            string? newControllerName = null;
-            string? oldControllerName = null;
-
-            if (newControllerId.HasValue)
-            {
-                newControllerName = game.Players.FirstOrDefault(p => p.Id == newControllerId.Value)?.GetPlayerName(_context);
-            }
-
-            if (oldControllerId.HasValue)
-            {
-                oldControllerName = game.Players.FirstOrDefault(p => p.Id == oldControllerId.Value)?.GetPlayerName(_context);
-            }
-
-            bool tookControl = oldControllerId != newControllerId;
-
-            bool isSwissBankKicked = oldControllerId.HasValue && !game.NationStates.Any(n => n.ControllerId == oldControllerId.Value);
-
-            GameLogger.LogInvestmentBuy(
-                _context,
-                game,
-                bond.Nation,
-                bond.Cost,
-                actingPlayer.GetPlayerName(_context),
-                newControllerName,
-                oldControllerName,
-                isSwissBankKicked,
-                tradeInCost);
+            var bought = InvestorEngine.Buy(_context, game, action.BondId.Value, action.TradeInBondId);
+            if (!bought.Ok) return BadRequest(bought.Error);
 
             var investmentToast = ToastBuilder.BuildInvestmentToast(
-                actingPlayer.GetPlayerName(_context), bond.Nation, bond.Cost, tradeInCost, tookControl, oldControllerName);
-
+                bought.ActorName, bought.Nation, bought.BondCost, bought.TradeInCost, bought.TookControl, bought.PreviousControllerName);
             if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", investmentToast, false); }
         }
         else
         {
-            GameLogger.LogInvestmentPass(_context, game, actingPlayer.GetPlayerName(_context));
-        }
-
-        // Advance queue
-        if (game.PendingInvestorIds != null && game.PendingInvestorIds.Any())
-        {
-            game.ActingPlayerId = game.PendingInvestorIds.First();
-            game.PendingInvestorIds = game.PendingInvestorIds.Skip(1).ToList();
-        }
-        else
-        {
-            // Pass Investor Card
-            if (game.InvestorCardHolderId.HasValue)
-            {
-                game.InvestorCardHolderId = GetNextPlayerId(game, game.InvestorCardHolderId.Value);
-            }
-
-            // End Investor Turn
-            game.IsInvestorTurn = false;
-            game.ActingPlayerId = null;
+            var passed = InvestorEngine.Pass(_context, game);
+            if (!passed.Ok) return BadRequest(passed.Error);
         }
 
         await _context.SaveChangesAsync();
@@ -1458,91 +1366,14 @@ public class GamesController : ControllerBase
         var responder = game.Players.FirstOrDefault(p => p.UserId == userId);
         if (responder == null) return Forbid();
 
-        if (game.PendingSwissBankForceNation == null) return BadRequest("No pending Swiss Bank decision.");
+        var result = InvestorEngine.RespondToSwissBank(_context, game, responder, request.ForceStop);
+        if (!result.Ok) return BadRequest(result.Error);
 
-        if (!game.PendingSwissBankResponders.Contains(responder.Id)) return BadRequest("You are not required to respond.");
-
-        var nationState = game.NationStates.First(n => n.Nation == game.PendingSwissBankForceNation);
-        var controller = game.Players.First(p => p.Id == nationState.ControllerId);
-
-        if (request.ForceStop)
-        {
-            int targetSlot = RondelData.InvestorSlot;
-            int? currentSlot = nationState.RondelPosition;
-            int cost = RondelData.GetMoveCost(currentSlot, targetSlot, nationState.Power);
-
-            game.PendingSwissBankForceNation = null;
-            game.PendingSwissBankForceTargetSlot = null;
-            game.PendingSwissBankResponders.Clear();
-
-
-            controller.Cash -= cost;
-            nationState.RondelPosition = targetSlot;
-            game.ResetStateForNewMove(nationState, u => _context.Entry(u).State = EntityState.Modified);
-            game.InitializeRondelActionPhase(targetSlot);
-            _context.Entry(controller).State = EntityState.Modified;
-            _context.Entry(nationState).State = EntityState.Modified;
-
-            string responderName = responder.IsBot ? (responder.BotName ?? "Bot") : (User.Identity?.Name ?? "Human");
-            GameLogger.LogSwissBankForceStop(_context, game, nationState.Nation, responderName);
-
-            string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (_context.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human");
-            GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
-
-            InvestorEngine.HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: true);
-
-            await _context.SaveChangesAsync();
-            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
-            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", ToastBuilder.BuildSwissBankToast(responderName, nationState.Nation, isForceStop: true), false); }
-            _botService.TriggerBotTurn(gameId);
-            return Ok();
-        }
-        else
-        {
-            string responderName = responder.IsBot ? (responder.BotName ?? "Bot") : (User.Identity?.Name ?? "Human");
-            GameLogger.LogSwissBankPass(_context, game, nationState.Nation, responderName);
-
-            var responders = game.PendingSwissBankResponders;
-            responders.Remove(responder.Id);
-            game.PendingSwissBankResponders = responders.ToList();
-            _context.Entry(game).Property(g => g.PendingSwissBankResponders).IsModified = true;
-
-            if (!responders.Any())
-            {
-                int targetSlot = game.PendingSwissBankForceTargetSlot.Value;
-                int? currentSlot = nationState.RondelPosition;
-                int cost = RondelData.GetMoveCost(currentSlot, targetSlot, nationState.Power);
-
-                game.PendingSwissBankForceNation = null;
-                game.PendingSwissBankForceTargetSlot = null;
-
-                controller.Cash -= cost;
-                nationState.RondelPosition = targetSlot;
-                game.ResetStateForNewMove(nationState, u => _context.Entry(u).State = EntityState.Modified);
-                game.InitializeRondelActionPhase(targetSlot);
-                _context.Entry(controller).State = EntityState.Modified;
-                _context.Entry(nationState).State = EntityState.Modified;
-
-                string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (_context.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human");
-                GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
-
-                InvestorEngine.HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: false);
-
-                await _context.SaveChangesAsync();
-                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
-                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", ToastBuilder.BuildSwissBankToast(responderName, nationState.Nation, isForceStop: false), false); }
-                _botService.TriggerBotTurn(gameId);
-                return Ok();
-            }
-            else
-            {
-                await _context.SaveChangesAsync();
-                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
-                if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", ToastBuilder.BuildSwissBankToast(responderName, nationState.Nation, isForceStop: false), false); }
-                _botService.TriggerBotTurn(gameId);
-                return Ok();
-            }
-        }
+        await _context.SaveChangesAsync();
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
+        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", ToastBuilder.BuildSwissBankToast(result.ResponderName, result.Nation, isForceStop: result.ForcedStop), false); }
+        _botService.TriggerBotTurn(gameId);
+        return Ok();
     }
 
     [HttpPost("{gameId}/toggle-pause")]
