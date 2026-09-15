@@ -1,4 +1,5 @@
 ﻿using Imperial2030.Server.Data;
+using Imperial2030.Server.Engine;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Server.Helpers;
@@ -299,91 +300,24 @@ public class BotService
             // Step 1: Choose rondel slot
             targetSlot = ChooseRondelSlot(game, nationState, controller);
 
-            // Calculate cost
-            int cost = RondelData.GetMoveCost(nationState.RondelPosition, targetSlot, nationState.Power);
-
-            int? oldPos = nationState.RondelPosition;
-
-            // --- Swiss Bank Intercept ---
-            bool crossingInvestor = false;
-            if (oldPos != null && targetSlot != RondelData.InvestorSlot)
+            // One implementation of the move for every caller - the Swiss Bank intercept, the cost, the
+            // investor pass-through and the slot's phase initialisation all happen inside. This used to be
+            // a second copy of GamesController.MoveNation (docs/code_review.md §M3).
+            var move = RondelEngine.MoveNation(ctx, game, nation, targetSlot);
+            if (!move.Ok)
             {
-                int dist = (targetSlot - oldPos.Value + RondelData.SlotCount) % RondelData.SlotCount;
-                for (int i = 1; i < dist; i++)
-                {
-                    if ((oldPos.Value + i) % RondelData.SlotCount == RondelData.InvestorSlot)
-                    {
-                        crossingInvestor = true;
-                        break;
-                    }
-                }
+                // ChooseRondelSlot only offers legal, affordable slots, so a rejection here is a bug in the
+                // bot's own selection - and one the old inline copy would have applied anyway. Fail loudly.
+                throw new InvalidOperationException($"Bot {controller.BotName} chose an illegal rondel move for {nation} to slot {targetSlot}: {move.Error}");
             }
-
-            if (crossingInvestor && game.PendingSwissBankForceNation == null)
-            {
-                int totalInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId != null).Sum(b => b.Interest);
-                if (nationState.Treasury >= totalInterest)
-                {
-                    var swissBankPlayers = game.Players.Where(p => !game.NationStates.Any(ns => ns.ControllerId == p.Id)).GetOrderedPlayers().ToList();
-                    if (swissBankPlayers.Any())
-                    {
-                        game.PendingSwissBankForceNation = nation;
-                        game.PendingSwissBankForceTargetSlot = targetSlot;
-                        game.PendingSwissBankResponders = swissBankPlayers.Select(p => p.Id).ToList();
-
-                        await SaveChangesAsync(ctx);
-                        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
-                        return; // PAUSE bot turn!
-                    }
-                }
-            }
-
-            // Clear pending just in case
-            if (game.PendingSwissBankForceNation == nation)
-            {
-                game.PendingSwissBankForceNation = null;
-                game.PendingSwissBankForceTargetSlot = null;
-                game.PendingSwissBankResponders.Clear();
-            }
-            // --- End Swiss Bank Intercept ---
-
-            controller.Cash -= cost;
-            nationState.RondelPosition = targetSlot;
-            game.ResetStateForNewMove(nationState);
-
-            // Check investor pass-through
-            bool triggeredInvestor = false;
-            if (oldPos != null)
-            {
-                int dist = (targetSlot - oldPos.Value + RondelData.SlotCount) % RondelData.SlotCount;
-                for (int i = 1; i <= dist; i++)
-                {
-                    int step = (oldPos.Value + i) % RondelData.SlotCount;
-                    if (step == RondelData.InvestorSlot)
-                    {
-                        triggeredInvestor = true;
-                        break;
-                    }
-                }
-            }
-            else if (targetSlot == RondelData.InvestorSlot)
-            {
-                triggeredInvestor = true;
-            }
-
-            GameLogger.LogRondelMove(ctx, game, targetSlot, oldPos, cost, nation, controller.BotName ?? "Bot");
-
-            if (triggeredInvestor)
-            {
-                bool landedOn = (targetSlot == RondelData.InvestorSlot);
-                Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, landedOn);
-            }
-
-            // Initialize the phase for the slot the move actually reached.
-            game.InitializeRondelActionPhase(targetSlot);
 
             await SaveChangesAsync(ctx);
             await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
+
+            if (move.SwissBankIntercepted)
+            {
+                return; // PAUSE bot turn until the Swiss Bank responders answer
+            }
 
             if (game.IsInvestorTurn)
             {
@@ -1412,7 +1346,7 @@ public class BotService
             string botName = actor.BotName ?? "Bot";
 
             var oldControllerId = ns.ControllerId;
-            Imperial2030.Server.Controllers.GamesController.UpdateNationController(ctx, game, bondToBuy.Nation);
+            Imperial2030.Server.Engine.InvestorEngine.UpdateNationController(ctx, game, bondToBuy.Nation);
             var newControllerId = ns.ControllerId;
 
             string? newControllerName = null;
@@ -1615,7 +1549,7 @@ public class BotService
                 string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (ctx != null ? (ctx.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human") : "Human");
 
                 GameLogger.LogRondelMove(ctx, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
-                Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: true);
+                Imperial2030.Server.Engine.InvestorEngine.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: true);
 
                 await SaveChangesAsync(ctx);
                 await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
@@ -1650,7 +1584,7 @@ public class BotService
 
                     string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (ctx != null ? (ctx.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human") : "Human");
                     GameLogger.LogRondelMove(ctx, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
-                    Imperial2030.Server.Controllers.GamesController.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: false);
+                    Imperial2030.Server.Engine.InvestorEngine.HandleInvestorPhase(ctx, game, nationState, controller, isLandedOn: false);
 
                     await SaveChangesAsync(ctx);
                     await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);

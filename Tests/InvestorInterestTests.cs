@@ -1,3 +1,4 @@
+using Imperial2030.Server.Engine;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -69,7 +70,7 @@ namespace Imperial2030.Tests
             context.Games.Add(game);
             await context.SaveChangesAsync();
 
-            GamesController.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
+            InvestorEngine.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
 
             var dbPlayerA = await context.Players.FindAsync(playerAId);
             var dbPlayerB = await context.Players.FindAsync(playerBId);
@@ -126,7 +127,7 @@ namespace Imperial2030.Tests
             context.Games.Add(game);
             await context.SaveChangesAsync();
 
-            GamesController.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
+            InvestorEngine.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
 
             var dbPlayerA = await context.Players.FindAsync(playerAId);
             var dbPlayerB = await context.Players.FindAsync(playerBId);
@@ -183,7 +184,7 @@ namespace Imperial2030.Tests
             context.Games.Add(game);
             await context.SaveChangesAsync();
 
-            GamesController.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
+            InvestorEngine.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
 
             var dbPlayerA = await context.Players.FindAsync(playerAId);
             var dbPlayerB = await context.Players.FindAsync(playerBId);
@@ -233,7 +234,7 @@ namespace Imperial2030.Tests
             context.Games.Add(game);
             await context.SaveChangesAsync();
 
-            GamesController.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
+            InvestorEngine.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
 
             var dbPlayerB = await context.Players.FindAsync(playerBId);
             var dbController = await context.Players.FindAsync(controllerId);
@@ -281,7 +282,7 @@ namespace Imperial2030.Tests
             context.Games.Add(game);
             await context.SaveChangesAsync();
 
-            GamesController.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
+            InvestorEngine.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
 
             var dbPlayerB = await context.Players.FindAsync(playerBId);
             var dbController = await context.Players.FindAsync(controllerId);
@@ -327,7 +328,7 @@ namespace Imperial2030.Tests
             context.Games.Add(game);
             await context.SaveChangesAsync();
 
-            GamesController.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
+            InvestorEngine.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
 
             var dbController = await context.Players.FindAsync(controllerId);
             var dbNation = game.NationStates.First();
@@ -377,7 +378,7 @@ namespace Imperial2030.Tests
 
             // isLandedOn: false - the Investor space was only passed over, which per p.11 still runs steps
             // two and three. Keeps this test on the ordering and out of the interest-payout branch.
-            GamesController.HandleInvestorPhase(null, game, russia, investor, isLandedOn: false);
+            InvestorEngine.HandleInvestorPhase(null, game, russia, investor, isLandedOn: false);
 
             Assert.Equal(investorId, game.ActingPlayerId);
             Assert.Equal(new List<Guid> { swissBankId }, game.PendingInvestorIds);
@@ -410,7 +411,7 @@ namespace Imperial2030.Tests
 
             var russia = game.NationStates.First(n => n.Nation == Nation.Russia);
 
-            GamesController.HandleInvestorPhase(null, game, russia, rival, isLandedOn: false);
+            InvestorEngine.HandleInvestorPhase(null, game, russia, rival, isLandedOn: false);
 
             Assert.Equal(investorId, game.ActingPlayerId);
             Assert.Empty(game.PendingInvestorIds);
@@ -460,7 +461,7 @@ namespace Imperial2030.Tests
             var russia = game.NationStates.First(n => n.Nation == Nation.Russia);
             var cardHolder = game.Players.First(p => p.Id == third);
 
-            GamesController.HandleInvestorPhase(null, game, russia, cardHolder, isLandedOn: false);
+            InvestorEngine.HandleInvestorPhase(null, game, russia, cardHolder, isLandedOn: false);
 
             Assert.Equal(third, game.ActingPlayerId);
             Assert.Equal(new List<Guid> { fourth, first }, game.PendingInvestorIds);

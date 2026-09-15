@@ -21,7 +21,11 @@ independent pieces:
 
 - **`Server/`** — ASP.NET Core Web host: REST API (`Controllers/`), SignalR hub (`Hubs/GameHub.cs`),
   business logic (`Services/`, `Helpers/`), EF Core data access (`Data/`), Identity/JWT auth, and the RL
-  training TCP server (`Services/TcpTrainingServer.cs`).
+  training TCP server (`Services/TcpTrainingServer.cs`). `Engine/` is where game operations are being
+  extracted to, one implementation each, so HTTP, bots, training and replay stop carrying their own
+  copies — static classes with the `(ApplicationDbContext? context, Game game, …)` shape, returning
+  `EngineResult`. In progress: see `implementation_plan.md` for what has moved and what still lives in
+  the controllers.
 - **`Client/`** — Blazor WebAssembly UI (`Pages/`, `Components/`, `Shared/`).
 - **`Shared/`** — DTOs, models, and game constants (`Constants/`) referenced by both `Server` and
   `Client`, and mirrored by hand into the Vue viewer's TypeScript types (see below).

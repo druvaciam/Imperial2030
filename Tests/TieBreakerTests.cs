@@ -1,3 +1,4 @@
+using Imperial2030.Server.Engine;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Models;
 using Xunit;
@@ -144,7 +145,7 @@ namespace Imperial2030.Tests
                 }
             };
 
-            Imperial2030.Server.Controllers.GamesController.UpdateNationController(null, game, Nation.Russia);
+            Imperial2030.Server.Engine.InvestorEngine.UpdateNationController(null, game, Nation.Russia);
 
             Assert.Equal(incumbent, game.NationStates.First(ns => ns.Nation == Nation.Russia).ControllerId);
         }

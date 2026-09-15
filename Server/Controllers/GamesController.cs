@@ -1,4 +1,5 @@
 ﻿using Imperial2030.Server.Data;
+using Imperial2030.Server.Engine;
 using Imperial2030.Server.Models;
 using Imperial2030.Server.Helpers;
 using Imperial2030.Shared.Models;
@@ -1063,288 +1064,6 @@ public class GamesController : ControllerBase
         return JoinCodeGenerator.Generate();
     }
 
-    public static void HandleInvestorPhase(ApplicationDbContext? context, Game game, NationState nationState, Player controller, bool isLandedOn)
-    {
-        var controllerName = controller.GetPlayerName(context);
-
-        // 1. Paying out interest (ONLY if landed on)
-        if (isLandedOn)
-        {
-            var bonds = game.Bonds.Where(b => b.Nation == nationState.Nation && b.HolderId != null).ToList();
-
-            int owedToController = 0;
-            int owedToOthers = 0;
-
-            foreach (var bond in bonds)
-            {
-                if (bond.HolderId == controller.Id)
-                    owedToController += bond.Interest;
-                else
-                    owedToOthers += bond.Interest;
-            }
-
-            // Pay Others First
-            if (nationState.Treasury >= owedToOthers)
-            {
-                nationState.Treasury -= owedToOthers;
-                // Distribute to others, one entry per HOLDER rather than per bond. Paying per bond made a
-                // player holding two bonds in this nation show up as two consecutive "paid Nm interest to
-                // X" lines while everyone else got one, which read as though they were being treated
-                // differently — the controller's own payment below has always been logged as a single
-                // combined total. Cash is identical either way; only the reporting changes.
-                foreach (var holderBonds in bonds.Where(b => b.HolderId != controller.Id).GroupBy(b => b.HolderId))
-                {
-                    var holder = game.Players.First(p => p.Id == holderBonds.Key);
-                    int owedToHolder = holderBonds.Sum(b => b.Interest);
-                    holder.Cash += owedToHolder;
-                    if (context != null) context.Entry(holder).State = EntityState.Modified;
-                    var holderName = holder.GetPlayerName(context);
-                    GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, owedToHolder, holderName);
-                }
-
-                // Pay Controller
-                if (nationState.Treasury >= owedToController && owedToController > 0)
-                {
-                    nationState.Treasury -= owedToController;
-                    controller.Cash += owedToController;
-                    GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, owedToController, controllerName);
-                }
-                else if (nationState.Treasury > 0 && owedToController > 0)
-                {
-                    // Partial payment to controller
-                    controller.Cash += nationState.Treasury;
-                    GameLogger.LogInvestorInterestPartial(context, game, nationState.Nation, controllerName, nationState.Treasury, owedToController, controllerName);
-                    nationState.Treasury = 0;
-                }
-                else if (owedToController > 0)
-                {
-                    GameLogger.LogInvestorUnableToPay(context, game, nationState.Nation, controllerName, owedToController, controllerName, true, true);
-                }
-            }
-            else
-            {
-                // Treasury insufficient for others
-                int treasuryAmount = nationState.Treasury;
-                nationState.Treasury = 0;
-
-                // Calculate how much the controller can actually cover
-                int deficit = owedToOthers - treasuryAmount;
-                int paymentFromController = Math.Min(controller.Cash, deficit); // Cap at available cash
-
-                controller.Cash -= paymentFromController;
-                if (paymentFromController > 0)
-                {
-                    GameLogger.LogInvestorPersonallyContributed(context, game, nationState.Nation, controllerName, paymentFromController);
-                }
-
-                // Total funds available for others
-                int totalForOthers = treasuryAmount + paymentFromController;
-
-                // Distribute to others
-                if (totalForOthers >= owedToOthers)
-                {
-                    // Full payment possible — grouped per holder for the same reason as the branch above.
-                    foreach (var holderBonds in bonds.Where(b => b.HolderId != controller.Id).GroupBy(b => b.HolderId))
-                    {
-                        var holder = game.Players.First(p => p.Id == holderBonds.Key);
-                        int owedToHolder = holderBonds.Sum(b => b.Interest);
-                        holder.Cash += owedToHolder;
-                        if (context != null) context.Entry(holder).State = EntityState.Modified;
-                        var holderName = holder.GetPlayerName(context);
-                        GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, owedToHolder, holderName);
-                    }
-                }
-                else
-                {
-                    // Partial payment (Lowest denomination first)
-                    // Order bonds held by others by lowest interest (or lowest cost, they are correlated)
-                    var otherBonds = bonds.Where(b => b.HolderId != controller.Id).OrderBy(b => b.Interest).ToList();
-                    int remainingFunds = totalForOthers;
-                    foreach (var bond in otherBonds)
-                    {
-                        if (remainingFunds >= bond.Interest)
-                        {
-                            var holder = game.Players.First(p => p.Id == bond.HolderId);
-                            holder.Cash += bond.Interest;
-                            if (context != null) context.Entry(holder).State = EntityState.Modified;
-                            var holderName = holder.GetPlayerName(context);
-                            GameLogger.LogInvestorInterestPaid(context, game, nationState.Nation, controllerName, bond.Interest, holderName);
-                            remainingFunds -= bond.Interest;
-                        }
-                        else
-                        {
-                            // Not enough to pay this bond fully. Give them the remaining funds as a partial payment.
-                            if (remainingFunds > 0)
-                            {
-                                var holder = game.Players.First(p => p.Id == bond.HolderId);
-                                holder.Cash += remainingFunds;
-                                if (context != null) context.Entry(holder).State = EntityState.Modified;
-                                var holderName = holder.GetPlayerName(context);
-                                GameLogger.LogInvestorInterestPartial(context, game, nationState.Nation, controllerName, remainingFunds, bond.Interest, holderName);
-                                remainingFunds = 0;
-                            }
-                            else
-                            {
-                                // No funds left at all
-                                var holder = game.Players.First(p => p.Id == bond.HolderId);
-                                var holderName = holder.GetPlayerName(context);
-                                GameLogger.LogInvestorUnableToPay(context, game, nationState.Nation, controllerName, bond.Interest, holderName, false, holderName == controllerName);
-                            }
-                        }
-                    }
-
-                    // Any leftover funds are returned to the treasury (should be 0 here because of the partial payment logic, 
-                    // unless they somehow had EXACTLY enough to pay the first bond but not others, wait if they had exactly enough, remainingFunds is 0).
-                    nationState.Treasury += remainingFunds;
-                }
-
-                if (owedToController > 0)
-                {
-                    GameLogger.LogInvestorUnableToPay(context, game, nationState.Nation, controllerName, owedToController, controllerName, true, true);
-                }
-            }
-        }
-
-        // 2. Activating the Investor
-        // 2M Bonus
-        if (game.InvestorCardHolderId.HasValue)
-        {
-            var investor = game.Players.FirstOrDefault(p => p.Id == game.InvestorCardHolderId.Value);
-            if (investor != null)
-            {
-                investor.Cash += 2;
-                if (context != null) context.Entry(investor).State = EntityState.Modified;
-                var investorName = investor.GetPlayerName(context);
-                GameLogger.LogInvestorBonus(context, game, investorName, 2);
-            }
-        }
-
-        // Determine investment order. Imperial-2030-Rules.pdf p.11 numbers these steps: "2. Activating the
-        // Investor" - the card holder takes the 2M above and invests - and only then "3. Investing as Swiss
-        // Bank". The card holder therefore picks FIRST; bonds are a scarce shared pool and the trade-in
-        // mechanic makes first pick materially valuable, so this order changes who gets what.
-        var eligibleInvestors = new List<Guid>();
-
-        if (game.InvestorCardHolderId.HasValue)
-        {
-            eligibleInvestors.Add(game.InvestorCardHolderId.Value);
-        }
-
-        // Swiss Bank players = players who control 0 nations (p.12), taken in the order p.11 gives them:
-        // "If several players have a Swiss Bank, investing is done in the order of play (clockwise),
-        // starting from the player currently with the Investor card." So walk the play order rotated to
-        // begin at the card holder rather than from its arbitrary head.
-        var playOrder = game.Players.GetOrderedPlayers().Select(p => p.Id).ToList();
-        int rotation = game.InvestorCardHolderId.HasValue ? playOrder.IndexOf(game.InvestorCardHolderId.Value) : -1;
-        if (rotation < 0) rotation = 0; // no investor card in play: nothing to count from, keep play order
-
-        var controlledNations = game.NationStates.Where(ns => ns.ControllerId.HasValue).Select(ns => ns.ControllerId).Distinct().ToList();
-
-        var swissBankPlayers = Enumerable.Range(0, playOrder.Count)
-            .Select(i => playOrder[(rotation + i) % playOrder.Count])
-            .Where(id => !controlledNations.Contains(id))
-            // A card holder who also holds a Swiss Bank does not get a second turn - FAQ p.14: "Can the
-            // investor invest twice if he owns a Swiss Bank? No." They are already queued above.
-            .Where(id => !eligibleInvestors.Contains(id))
-            .ToList();
-
-        eligibleInvestors.AddRange(swissBankPlayers);
-
-        if (eligibleInvestors.Any())
-        {
-            game.IsInvestorTurn = true;
-            game.ActingPlayerId = eligibleInvestors.First();
-            game.PendingInvestorIds = eligibleInvestors.Skip(1).ToList();
-        }
-    }
-
-    public static void UpdateNationController(ApplicationDbContext? context, Game game, Nation nation)
-    {
-        var nationState = game.NationStates.First(n => n.Nation == nation);
-        var bonds = game.Bonds.Where(b => b.Nation == nation && b.HolderId != null).ToList();
-
-        if (!bonds.Any()) return; // No change if no bonds
-
-        // Calculate total investment per player
-        var investmentMap = new Dictionary<Guid, int>();
-        foreach (var bond in bonds)
-        {
-            if (bond.HolderId.HasValue)
-            {
-                if (!investmentMap.ContainsKey(bond.HolderId.Value))
-                    investmentMap[bond.HolderId.Value] = 0;
-
-                investmentMap[bond.HolderId.Value] += bond.Cost;
-            }
-        }
-
-        // Imperial-2030-Rules.pdf p.12: "If, due to the allocation of bonds, a new player has achieved the
-        // highest credit sum (a tie is not sufficient), he takes over the government of that nation and is
-        // given the nation flag card. If several players achieve the same highest credit sum, the player
-        // first in seating order, counting from the player with the investor card, takes over the
-        // government."
-        //
-        // So: an outright leader takes over, and a tie that includes the sitting government leaves it in
-        // place ("a tie is not sufficient"). Note that "the player among them who bought a bond of the
-        // nation most recently gets the card" - which an earlier comment here cited as a rule - does not
-        // appear anywhere in the rulebook. Don't reason from it.
-
-        if (!investmentMap.Any()) return;
-
-        var currentControllerId = nationState.ControllerId;
-        var topInvestor = investmentMap.OrderByDescending(kvp => kvp.Value).First();
-        int maxInvestment = topInvestor.Value;
-
-        var candidates = investmentMap.Where(kvp => kvp.Value == maxInvestment).Select(kvp => kvp.Key).ToList();
-
-        if (candidates.Count == 1)
-        {
-            // Clear winner
-            if (nationState.ControllerId != candidates[0])
-            {
-                nationState.ControllerId = candidates[0];
-                if (context != null) context.Entry(nationState).State = EntityState.Modified;
-            }
-        }
-        else
-        {
-            // Tie for the highest credit sum.
-            if (currentControllerId.HasValue && candidates.Contains(currentControllerId.Value))
-            {
-                // The sitting government is among the tied leaders: "a tie is not sufficient" to displace
-                // it, so it retains the nation flag card. Nothing to do.
-            }
-            else
-            {
-                // UNREACHABLE in real play, and left as a defensive fallback rather than built out.
-                //
-                // Reaching it needs the tied leaders to exclude the sitting government, and that cannot
-                // happen: this method runs after each SINGLE bond purchase, so exactly one player's credit
-                // sum changes per call, and the government always already holds the maximum (it is seeded
-                // that way at setup - GameSetupHelper assigns it from the nation's 2M bond holder - and
-                // every branch here preserves it). Let M be the old maximum, held by the government, and V
-                // the buyer's new sum: V > M makes the buyer the sole candidate; V == M or V < M leaves the
-                // government among the candidates and it retains. No path leaves it out.
-                //
-                // So the rulebook's own tie-break for this case - "the player first in seating order,
-                // counting from the player with the investor card" (p.12) - has nothing to resolve here.
-                // Do NOT implement it speculatively; if a future change can actually strand the government
-                // off the maximum (e.g. bonds being returned mid-game), write the failing test first, then
-                // replace this fallback with that rule.
-                if (game.ActingPlayerId.HasValue && candidates.Contains(game.ActingPlayerId.Value))
-                {
-                    nationState.ControllerId = game.ActingPlayerId.Value;
-                    if (context != null) context.Entry(nationState).State = EntityState.Modified;
-                }
-                else
-                {
-                    nationState.ControllerId = candidates[0];
-                    if (context != null) context.Entry(nationState).State = EntityState.Modified;
-                }
-            }
-        }
-    }
-
     [HttpPost("{gameId}/move/{nation}/{targetSlot}")]
     public async Task<IActionResult> MoveNation(Guid gameId, Nation nation, int targetSlot)
     {
@@ -1360,174 +1079,28 @@ public class GamesController : ControllerBase
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();
-        if (game.Status != GameStatus.InProgress) return BadRequest("Game not in progress.");
-        if (game.IsInvestorTurn) return BadRequest("Waiting for Investor Phase.");
-        if (game.CurrentTurnNation != nation) return BadRequest($"It is {game.CurrentTurnNation}'s turn.");
-        if (targetSlot < 0 || targetSlot >= RondelData.SlotCount) return BadRequest($"Invalid slot {targetSlot}. Must be 0-{RondelData.SlotCount - 1}.");
 
-        var nationState = game.NationStates.First(n => n.Nation == nation);
-
-        // Controller Check
-        if (nationState.ControllerId == null) return BadRequest("No controller for this nation.");
-
+        // Controller Check - the caller must be the nation's government. Checked here, before the engine
+        // runs, because the engine mutates; the engine repeats the "no controller" case for its other callers.
+        var nationState = game.NationStates.FirstOrDefault(n => n.Nation == nation);
+        if (nationState == null || nationState.ControllerId == null) return BadRequest("No controller for this nation.");
         var controller = game.Players.First(p => p.Id == nationState.ControllerId);
         if (controller.UserId != userId) return Forbid();
 
-        // Check if already moved
-        if (nationState.HasMovedThisTurn) return BadRequest("Already moved this turn.");
+        var result = RondelEngine.MoveNation(_context, game, nation, targetSlot);
+        if (!result.Ok) return BadRequest(result.Error);
 
-        // Calculate Distance and Cost
-        int? currentSlot = nationState.RondelPosition;
-        int cost = 0;
-
-        if (currentSlot == null)
+        if (result.SwissBankIntercepted)
         {
-            // First move: Free Placement to any slot
-            cost = 0;
-        }
-        else
-        {
-            // Standard Move Logic
-            if (currentSlot.Value == targetSlot) return BadRequest("Must move to a different slot.");
-
-            int distance = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
-
-            if (distance == 0) return BadRequest("Must move at least 1 step."); // Should be covered by above equality check but safe.
-            if (distance > RondelData.MaxMoveDistance) return BadRequest($"Cannot move more than {RondelData.MaxMoveDistance} spaces on the rondel.");
-            cost = RondelData.GetMoveCost(currentSlot, targetSlot, nationState.Power);
+            await _context.SaveChangesAsync();
+            if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
+            _botService.TriggerBotTurn(gameId);
+            return Ok();
         }
 
-        if (cost > 0 && controller.Cash < cost) return BadRequest($"Not enough cash. Cost: {cost}M");
-
-        // --- Swiss Bank Intercept Logic ---
-        bool crossingInvestor = false;
-        if (currentSlot != null && targetSlot != RondelData.InvestorSlot)
-        {
-            int dist = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
-            for (int i = 1; i < dist; i++) // Check intermediate steps
-            {
-                if ((currentSlot.Value + i) % RondelData.SlotCount == RondelData.InvestorSlot)
-                {
-                    crossingInvestor = true;
-                    break;
-                }
-            }
-        }
-
-        if (crossingInvestor && game.PendingSwissBankForceNation == null)
-        {
-            int totalInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId != null).Sum(b => b.Interest);
-            if (nationState.Treasury >= totalInterest)
-            {
-                // Find Swiss Bank players (players with no controlled government)
-                var swissBankPlayers = game.Players.Where(p => !game.NationStates.Any(ns => ns.ControllerId == p.Id)).GetOrderedPlayers().ToList();
-                if (swissBankPlayers.Any())
-                {
-                    game.PendingSwissBankForceNation = nation;
-                    game.PendingSwissBankForceTargetSlot = targetSlot;
-                    game.PendingSwissBankResponders = swissBankPlayers.Select(p => p.Id).ToList();
-
-                    await _context.SaveChangesAsync();
-                    if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
-                    _botService.TriggerBotTurn(gameId);
-                    return Ok();
-                }
-            }
-        }
-        // --- End Swiss Bank Intercept Logic ---
-
-        // Clear the pending state just in case we are executing a deferred move
-        if (game.PendingSwissBankForceNation == nation)
-        {
-            game.PendingSwissBankForceNation = null;
-            game.PendingSwissBankForceTargetSlot = null;
-            game.PendingSwissBankResponders.Clear();
-
-        }
-
-        // Execute Move
-        controller.Cash -= cost;
-        nationState.RondelPosition = targetSlot;
-        nationState.HasMovedThisTurn = true;
-
-        // Reset Action Flags for the new slot
-        nationState.HasProducedThisTurn = false;
-        nationState.HasBuiltThisTurn = false;
-        nationState.HasImportedThisTurn = false;
-
-        // Turn advancement is now manual via EndTurn endpoint
-
-        // Reset Unit Movement for this nation
-        foreach (var u in game.Units.Where(u => u.Nation == nation))
-        {
-            u.HasMoved = false;
-            u.HasConvoyed = false;
-            _context.Entry(u).State = EntityState.Modified;
-        }
-        _context.Entry(controller).State = EntityState.Modified;
-        _context.Entry(nationState).State = EntityState.Modified;
-
-        await _context.SaveChangesAsync();
-
-        // controller.GetPlayerName resolves the real bot/player name — User.Identity?.Name is never
-        // populated by GameReplayService's replay auth context (only NameIdentifier), so every rondel move
-        // replayed through this endpoint was silently logged as GameConstants.SystemPlayerName instead.
-        GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nation, controller.GetPlayerName(_context));
-        await _context.SaveChangesAsync();
-
-        // Check for Investor Slot (Index 4)
-        bool triggeredInvestor = false;
-        if (currentSlot != null)
-        {
-            // Moving from currentSlot to targetSlot (clockwise)
-            // Path: (current + 1) ... targetSlot
-            int dist = (targetSlot - currentSlot.Value + RondelData.SlotCount) % RondelData.SlotCount;
-            for (int i = 1; i <= dist; i++)
-            {
-                int step = (currentSlot.Value + i) % RondelData.SlotCount;
-                if (step == RondelData.InvestorSlot)
-                {
-                    triggeredInvestor = true;
-                    break;
-                }
-            }
-        }
-        else
-        {
-            // First placement: if placed on Investor
-            if (targetSlot == RondelData.InvestorSlot) triggeredInvestor = true;
-        }
-
-        if (triggeredInvestor)
-        {
-            // Calculate if landed on
-            // Note: The loop logic above is slightly flawed if we just check targetSlot==Investor for "landedOn"
-            // because distinct "pass through" vs "land on" matters for 2M bonus.
-            // But for now, sticking to existing logic structure.
-            bool landedOn = (targetSlot == RondelData.InvestorSlot);
-            HandleInvestorPhase(_context, game, nationState, controller, landedOn);
-        }
-
-        // Initialize the phase for the slot the move actually reached.
-        game.InitializeRondelActionPhase(targetSlot);
-        if (game.CurrentManeuverPhase == ManeuverPhase.Fleets)
-        {
-            bool hasFleets = game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved);
-            if (!hasFleets)
-            {
-                game.CurrentManeuverPhase = ManeuverPhase.Armies;
-                GameLogger.LogAutoSkipManeuverPhase(_context, game, "Fleets", nation, controller.GetPlayerName(_context));
-            }
-            if (game.CurrentManeuverPhase == ManeuverPhase.Armies)
-            {
-                bool hasArmies = game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved);
-                if (!hasArmies)
-                {
-                    game.CurrentManeuverPhase = ManeuverPhase.None;
-                    GameLogger.LogAutoSkipManeuverPhase(_context, game, "Armies", nation, controller.GetPlayerName(_context));
-                }
-            }
-        }
+        // The endpoint has always skipped empty maneuver phases straight after the move; the bot path
+        // does not - see RondelEngine.AutoSkipEmptyManeuverPhases for why that stays asymmetric for now.
+        RondelEngine.AutoSkipEmptyManeuverPhases(_context, game, nation, controller.GetPlayerName(_context));
         await _context.SaveChangesAsync();
 
         if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }
@@ -1709,7 +1282,7 @@ public class GamesController : ControllerBase
 
             // Update Controller Logic
             var oldControllerId = ns.ControllerId;
-            UpdateNationController(_context, game, ns.Nation);
+            InvestorEngine.UpdateNationController(_context, game, ns.Nation);
             var newControllerId = ns.ControllerId;
 
             string? newControllerName = null;
@@ -2141,7 +1714,7 @@ public class GamesController : ControllerBase
             string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (_context.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human");
             GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
 
-            HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: true);
+            InvestorEngine.HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: true);
 
             await _context.SaveChangesAsync();
             if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
@@ -2178,7 +1751,7 @@ public class GamesController : ControllerBase
                 string controllerName = controller.IsBot ? (controller.BotName ?? "Bot") : (_context.Users.Where(u => u.Id == controller.UserId).Select(u => u.UserName).FirstOrDefault() ?? "Human");
                 GameLogger.LogRondelMove(_context, game, targetSlot, currentSlot, cost, nationState.Nation, controllerName);
 
-                HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: false);
+                InvestorEngine.HandleInvestorPhase(_context, game, nationState, controller, isLandedOn: false);
 
                 await _context.SaveChangesAsync();
                 if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }

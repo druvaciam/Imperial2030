@@ -5,7 +5,7 @@ namespace Imperial2030.Server.Helpers;
 
 public static class InvestorHelper
 {
-    // Non-mutating simulation of GamesController.HandleInvestorPhase's payout logic (the isLandedOn branch),
+    // Non-mutating simulation of InvestorEngine.HandleInvestorPhase's payout logic (the isLandedOn branch),
     // for the current controller of `nationState` right now. Mirrors TaxationHelper.PreviewTaxation.
     //
     // NetControllerCashDelta: how the controller's cash would change if this nation landed on Investor this
