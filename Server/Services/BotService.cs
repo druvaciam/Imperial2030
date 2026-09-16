@@ -607,578 +607,177 @@ public class BotService
         }
 
         var nation = ns.Nation;
-        // Find nations controlled by same bot player
-        var friendlyNations = game.NationStates.Where(n => n.ControllerId == controller.Id).Select(n => n.Nation).ToHashSet();
+        var friendlyNations = ManeuverEngine.FriendlyNations(game, controller, nation);
+        string botName = controller.BotName ?? "Bot";
 
         // The phase still auto-ends below, but two "auto-ended ... maneuver phase" lines do not say why
         // nothing moved. Logged once here rather than per phase, since the answer is the same for both.
         if (!game.Units.Any(u => u.Nation == nation))
         {
-            GameLogger.LogManeuverNoUnits(ctx, game, nation, controller.BotName ?? "Bot");
+            GameLogger.LogManeuverNoUnits(ctx, game, nation, botName);
         }
 
         // Move fleets first
         var fleets = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved).ToList();
         foreach (var fleet in fleets)
         {
-            // Captured before any mutation below — see GameLogger.LogUnitMove call sites for why this
-            // pre-move hostility snapshot is threaded through to the action log.
-            bool sourceWasHostile = fleet.IsHostile;
             if (!MapConnectivity.Adjacency.TryGetValue(fleet.TerritoryId, out var neighbors)) continue;
-            var seaNeighbors = neighbors.Where(n =>
+            var candidates = neighbors
+                .Where(n => ManeuverEngine.FleetDestinationRefusal(game, fleet, n, controller) == null)
+                .ToList();
+            candidates.Add(fleet.TerritoryId); // Allow staying put
+
+            var target = candidates.OrderByDescending(n => strategy.ScoreManeuverDestination(game, fleet, n, controller)).FirstOrDefault();
+            if (target == null) continue;
+
+            if (target == fleet.TerritoryId)
             {
-                if (!TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)) return false;
-
-                var canal = MapConnectivity.CanalLinks.FirstOrDefault(c =>
-                    (c.Region1 == fleet.TerritoryId && c.Region2 == n) ||
-                    (c.Region1 == n && c.Region2 == fleet.TerritoryId));
-
-                if (canal != default)
-                {
-                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == canal.ControllerId);
-                    if (tState != null && tState.Controller != null && tState.Controller != nation)
-                    {
-                        var canalNationState = game.NationStates.FirstOrDefault(ns => ns.Nation == tState.Controller.Value);
-                        if (canalNationState == null || canalNationState.ControllerId != controller.Id)
-                        {
-                            return false; // Canal blocked
-                        }
-                    }
-                }
-                return true;
-            }).ToList();
-            seaNeighbors.Add(fleet.TerritoryId); // Allow staying put
-
-            var target = seaNeighbors.OrderByDescending(n => strategy.ScoreManeuverDestination(game, fleet, n, controller)).FirstOrDefault();
-
-            if (target != null)
-            {
-                if (target == fleet.TerritoryId)
-                {
-                    fleet.HasMoved = true;
-                    var defT = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
-                    if (defT != null && defT.Nation.HasValue)
-                    {
-                        bool isFriendlyHome = friendlyNations.Contains(defT.Nation.Value);
-                        if (isFriendlyHome && fleet.IsHostile)
-                        {
-                            fleet.IsHostile = false;
-                            GameLogger.LogHostilityToggle(ctx, game, fleet.UnitType, target, fleet.IsHostile, nation, controller.BotName ?? "Bot");
-                        }
-                        else if (!isFriendlyHome && !fleet.IsHostile)
-                        {
-                            bool isEnemyPresent = game.Units.Any(u => u.TerritoryId == target && u.Id != fleet.Id && !friendlyNations.Contains(u.Nation));
-                            if (strategy.DetermineHostility(isEnemyPresent, true))
-                            {
-                                fleet.IsHostile = true;
-                                GameLogger.LogHostilityToggle(ctx, game, fleet.UnitType, target, fleet.IsHostile, nation, controller.BotName ?? "Bot");
-
-                                if (TryResolveStationaryBattle(ctx, game, fleet, friendlyNations, nation, controller)) return;
-                            }
-                        }
-                        else
-                        {
-                            GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, sourceWasHostile, target, nation, controller.BotName ?? "Bot");
-                        }
-                    }
-                    else
-                    {
-                        GameLogger.LogUnitStay(ctx, game, UnitType.Fleet, sourceWasHostile, target, nation, controller.BotName ?? "Bot");
-                    }
-                    await BotUnitActionDelay(ctx, game);
-                    continue;
-                }
-                bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
-                var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
-                bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
-
-                bool isHostileMove = strategy.DetermineHostility(hasEnemy, isForeignHome);
-
-                if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != nation)
-                {
-                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == target);
-                    if (tState != null && tState.HasFactory)
-                    {
-                        var defenderNation = def.Nation.Value;
-                        var defenderFactoryCount = game.TerritoryStates.Count(s =>
-                        {
-                            if (!s.HasFactory) return false;
-                            var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
-                            if (t == null || t.Nation != defenderNation) return false;
-                            bool isOccupied = game.Units.Any(u => u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
-                            return !isOccupied;
-                        });
-                        bool isTargetOccupied = game.Units.Any(u => u.TerritoryId == target && u.Nation != defenderNation && u.IsHostile);
-                        if (defenderFactoryCount <= 1 && !isTargetOccupied)
-                        {
-                            isHostileMove = false;
-                        }
-                    }
-                }
-
-                var originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == fleet.TerritoryId)?.Name ?? fleet.TerritoryId;
-                var targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target)?.Name ?? target;
-
-                var originalTerritoryId = fleet.TerritoryId;
-                fleet.TerritoryId = target;
-                fleet.HasMoved = true;
-                fleet.IsHostile = isHostileMove;
-
-                if (hasEnemy)
-                {
-                    var foreignDefenders = game.Units
-                        .Where(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation))
-                        .Where(u => u.UnitType == UnitType.Fleet || (isForeignHome && def != null && u.Nation == def.Nation.Value && isHostileMove))
-                        .Select(u => u.Nation)
-                        .Distinct()
-                        .ToList();
-
-                    bool isMyHome = def != null && def.Nation.HasValue && def.Nation.Value == nation;
-                    if (isMyHome && foreignDefenders.Any())
-                    {
-                        isHostileMove = true;
-                        fleet.IsHostile = true;
-                    }
-
-                    if (foreignDefenders.Any())
-                    {
-                        if (isHostileMove && foreignDefenders.Count == 1)
-                        {
-                            var targetNation = foreignDefenders.First();
-                            var enemyFleet = game.Units.FirstOrDefault(u => u.TerritoryId == target && u.Nation == targetNation &&
-                                (u.UnitType == UnitType.Fleet || (isForeignHome && def != null && u.Nation == def.Nation.Value)));
-
-                            if (enemyFleet != null)
-                            {
-                                GameLogger.LogUnitMove(ctx, game, fleet.UnitType, sourceWasHostile, originalTerritoryId, target, true, nation, controller.BotName ?? "Bot");
-                                RemoveUnit(ctx, game, fleet);
-                                RemoveUnit(ctx, game, enemyFleet);
-                                GameLogger.LogBattleDestruction(ctx, game, fleet.UnitType, targetNation, enemyFleet.UnitType, target, nation, controller.BotName ?? "Bot");
-                                await BotUnitActionDelay(ctx, game);
-                                continue;
-                            }
-                        }
-                        else
-                        {
-                            // Trigger Negotiation Phase
-                            game.PendingBattleTerritoryId = target;
-                            game.PendingBattleAggressorNation = nation;
-                            game.PendingBattleAggressorUnitId = fleet.Id;
-                            game.PendingBattleDefenders = foreignDefenders.ToList();
-
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Fleet, sourceWasHostile, originalTerritoryId, target, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot");
-                            // Deliberately no BotUpdateTerritoryControl before pausing: flags are step 3 of
-                            // the maneuver (Imperial-2030-Rules.pdf p.8/p.10) and this maneuver isn't over -
-                            // it resumes here once the defenders answer, and the phase-end call below runs then.
-
-                            // Exit BotManeuverFleets and pause the turn to await responses
-                            return;
-                        }
-                    }
-                }
-
-                GameLogger.LogUnitMove(ctx, game, UnitType.Fleet, sourceWasHostile, originalTerritoryId, target, isHostileMove, nation, controller.BotName ?? "Bot");
-                await BotUnitActionDelay(ctx, game);
+                if (await BotStayAndDecideHostility(ctx, game, fleet, friendlyNations, nation, controller)) return;
+                continue;
             }
+
+            bool isHostileMove = DecideHostility(game, strategy, fleet, target, friendlyNations, nation);
+            var move = ManeuverEngine.MoveFleet(ctx, game, fleet.Id, target, isHostileMove);
+            if (!move.Ok)
+            {
+                throw new InvalidOperationException($"Bot {botName} chose an illegal fleet move for {nation} to {target}: {move.Error}");
+            }
+            if (move.BattlePending)
+            {
+                // Deliberately no flag placement before pausing: flags are step 3 of the maneuver
+                // (Imperial-2030-Rules.pdf p.8/p.10) and this maneuver resumes once the defenders answer.
+                return;
+            }
+            await BotUnitActionDelay(ctx, game);
         }
 
-        await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
-        GameLogger.LogAutoEndManeuverPhase(ctx, game, "Fleets", nation, controller.BotName ?? "Bot");
+        ManeuverEngine.UpdateTerritoryControl(ctx, game);
+        GameLogger.LogAutoEndManeuverPhase(ctx, game, "Fleets", nation, botName);
         game.CurrentManeuverPhase = ManeuverPhase.Armies;
 
         // Move armies
         var armies = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved).ToList();
         foreach (var army in armies)
         {
-            // Captured before any mutation below — see GameLogger.LogUnitMove call sites for why this
-            // pre-move hostility snapshot is threaded through to the action log.
-            bool sourceWasHostile = army.IsHostile;
-            var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, army.TerritoryId, army.Nation);
-            var convoyPaths = new Dictionary<string, List<Unit>>();
-            var landNeighbors = new HashSet<string>();
+            var candidates = ManeuverHelper.GetAllReachableArmyDestinations(game, army.TerritoryId, army.Nation)
+                .Select(d => d.TerritoryId)
+                .ToHashSet();
+            candidates.Add(army.TerritoryId); // Allow staying put
 
-            foreach (var dest in destinations)
+            var best = candidates.OrderByDescending(n => strategy.ScoreManeuverDestination(game, army, n, controller)).FirstOrDefault();
+            if (best == null) continue;
+
+            if (best == army.TerritoryId)
             {
-                landNeighbors.Add(dest.TerritoryId);
-                if (dest.IsConvoy && dest.ConvoyFleets != null)
-                {
-                    convoyPaths[dest.TerritoryId] = dest.ConvoyFleets;
-                }
+                if (await BotStayAndDecideHostility(ctx, game, army, friendlyNations, nation, controller)) return;
+                continue;
             }
-            landNeighbors.Add(army.TerritoryId); // Allow staying put
 
-            var best = landNeighbors.OrderByDescending(n => strategy.ScoreManeuverDestination(game, army, n, controller)).FirstOrDefault();
-
-            if (best != null)
+            bool isHostileMove = DecideHostility(game, strategy, army, best, friendlyNations, nation);
+            // The engine picks the way there - adjacent step, rail, or convoy over the nation's fleets -
+            // by the same rule the endpoint uses, so the bot cannot play by different rules than a human.
+            var move = ManeuverEngine.MoveArmy(ctx, game, army.Id, best, isHostileMove);
+            if (!move.Ok)
             {
-                if (best == army.TerritoryId)
-                {
-                    army.HasMoved = true;
-                    var defT = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best);
-                    if (defT != null && defT.Nation.HasValue)
-                    {
-                        bool isFriendlyHome = friendlyNations.Contains(defT.Nation.Value);
-                        if (isFriendlyHome && army.IsHostile)
-                        {
-                            army.IsHostile = false;
-                            GameLogger.LogHostilityToggle(ctx, game, army.UnitType, best, army.IsHostile, nation, controller.BotName ?? "Bot");
-                        }
-                        else if (!isFriendlyHome && !army.IsHostile)
-                        {
-                            // Standing an army upright where it already is has the same end state as walking
-                            // in hostilely, so it needs the same p.10 protection: "If a nation has only one
-                            // factory left that is not occupied by hostile armies (standing upright), the
-                            // province of this factory may not be entered by hostile armies." Without this the
-                            // entry rule is walked around in two steps - enter peacefully (which is what the
-                            // rule forces), then stand up. ManeuverController.ToggleHostility already refuses
-                            // this for a human; this is the bot's equivalent of that call site.
-                            bool wouldBlockadeLastFactory =
-                                ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, best, army.Id);
-
-                            bool isEnemyPresent = game.Units.Any(u => u.TerritoryId == best && u.Id != army.Id && !friendlyNations.Contains(u.Nation));
-                            if (!wouldBlockadeLastFactory && strategy.DetermineHostility(isEnemyPresent, true))
-                            {
-                                army.IsHostile = true;
-                                GameLogger.LogHostilityToggle(ctx, game, army.UnitType, best, army.IsHostile, nation, controller.BotName ?? "Bot");
-
-                                if (TryResolveStationaryBattle(ctx, game, army, friendlyNations, nation, controller)) return;
-                            }
-                            else
-                            {
-                                GameLogger.LogUnitStay(ctx, game, UnitType.Army, sourceWasHostile, best, nation, controller.BotName ?? "Bot");
-                            }
-                        }
-                        else
-                        {
-                            GameLogger.LogUnitStay(ctx, game, UnitType.Army, sourceWasHostile, best, nation, controller.BotName ?? "Bot");
-                        }
-                    }
-                    else
-                    {
-                        GameLogger.LogUnitStay(ctx, game, UnitType.Army, sourceWasHostile, best, nation, controller.BotName ?? "Bot");
-                    }
-                    await BotUnitActionDelay(ctx, game);
-                    continue;
-                }
-
-                bool hasEnemy = game.Units.Any(u => u.TerritoryId == best && !friendlyNations.Contains(u.Nation));
-                var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best);
-                bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
-
-                bool isHostileMove = strategy.DetermineHostility(hasEnemy, isForeignHome);
-
-                if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != nation)
-                {
-                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == best);
-                    if (tState != null && tState.HasFactory)
-                    {
-                        var defenderNation = def.Nation.Value;
-                        var defenderFactoryCount = game.TerritoryStates.Count(s =>
-                        {
-                            if (!s.HasFactory) return false;
-                            var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
-                            if (t == null || t.Nation != defenderNation) return false;
-                            bool isOccupied = game.Units.Any(u => u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
-                            return !isOccupied;
-                        });
-                        bool isTargetOccupied = game.Units.Any(u => u.TerritoryId == best && u.Nation != defenderNation && u.IsHostile);
-                        if (defenderFactoryCount <= 1 && !isTargetOccupied)
-                        {
-                            isHostileMove = false;
-                        }
-                    }
-                }
-
-                var originName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == army.TerritoryId)?.Name ?? army.TerritoryId;
-                var targetName = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == best)?.Name ?? best;
-
-                var originalTerritoryId = army.TerritoryId;
-                army.TerritoryId = best;
-                army.HasMoved = true;
-                army.IsHostile = isHostileMove;
-
-                // Everything the army passed through on the way, for the log - see GameLogger.LogUnitMove's
-                // routeVia parameter for why it has to be recorded here rather than derived afterwards.
-                // Captured before the fleets are flagged below, which is what erases the convoy evidence.
-                // How the army got there, decided by the same helper MoveArmy uses so the bot cannot play
-                // by different rules than a human. convoyPaths holds an entry for EVERY destination a
-                // convoy could reach, adjacent and rail-connected ones included, so keying off it alone
-                // sent armies by sea when they could have walked - New Orleans -> Mexico "via the North
-                // Pacific". That was not just a wrong log line: the carrying fleets were marked
-                // HasConvoyed, spending carriers that could have moved another army this turn.
-                var moveMode = ManeuverHelper.DetermineArmyMoveMode(game, originalTerritoryId, best, nation);
-                List<Unit>? usedFleets = null;
-
-                if (moveMode == ManeuverHelper.ArmyMoveMode.Convoy && convoyPaths.TryGetValue(best, out var convoyFleets))
-                {
-                    usedFleets = convoyFleets;
-                    foreach (var f in usedFleets)
-                    {
-                        f.HasConvoyed = true;
-                    }
-                }
-
-                List<string>? routeVia = ManeuverHelper.BuildMoveRoute(game, originalTerritoryId, best, nation, moveMode, usedFleets);
-
-                if (hasEnemy)
-                {
-                    var foreignDefenders = game.Units
-                        .Where(u => u.TerritoryId == best && !friendlyNations.Contains(u.Nation))
-                        .Where(u => u.UnitType == UnitType.Army || (isForeignHome && def != null && u.Nation == def.Nation.Value && isHostileMove))
-                        .Select(u => u.Nation)
-                        .Distinct()
-                        .ToList();
-
-                    bool isMyHome = def != null && def.Nation.HasValue && def.Nation.Value == nation;
-                    if (isMyHome && foreignDefenders.Any())
-                    {
-                        isHostileMove = true;
-                        army.IsHostile = true;
-                    }
-
-                    if (foreignDefenders.Any())
-                    {
-                        if (isHostileMove && foreignDefenders.Count == 1)
-                        {
-                            var targetNation = foreignDefenders.First();
-                            var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == best && u.Nation == targetNation &&
-                                (u.UnitType == UnitType.Army || (isForeignHome && def != null && u.Nation == def.Nation.Value)));
-
-                            if (enemyUnit != null)
-                            {
-                                GameLogger.LogUnitMove(ctx, game, army.UnitType, sourceWasHostile, originalTerritoryId, best, true, nation, controller.BotName ?? "Bot", routeVia);
-                                RemoveUnit(ctx, game, army);
-                                RemoveUnit(ctx, game, enemyUnit);
-                                GameLogger.LogBattleDestruction(ctx, game, army.UnitType, targetNation, enemyUnit.UnitType, best, nation, controller.BotName ?? "Bot");
-                                await BotUnitActionDelay(ctx, game);
-                                continue;
-                            }
-                        }
-                        else
-                        {
-                            // Trigger Negotiation Phase
-                            game.PendingBattleTerritoryId = best;
-                            game.PendingBattleAggressorNation = nation;
-                            game.PendingBattleAggressorUnitId = army.Id;
-                            game.PendingBattleDefenders = foreignDefenders.ToList();
-
-                            GameLogger.LogUnitMoveAwaitingResponse(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, string.Join(", ", foreignDefenders), nation, controller.BotName ?? "Bot", routeVia);
-                            // See the Fleets loop above: no flag placement while the maneuver is only paused.
-
-                            // Exit BotManeuver and pause the turn to await responses
-                            return;
-                        }
-                    }
-                }
-
-                GameLogger.LogUnitMove(ctx, game, UnitType.Army, sourceWasHostile, originalTerritoryId, best, isHostileMove, nation, controller.BotName ?? "Bot", routeVia);
-                await BotUnitActionDelay(ctx, game);
+                throw new InvalidOperationException($"Bot {botName} chose an illegal army move for {nation} to {best}: {move.Error}");
             }
+            if (move.BattlePending)
+            {
+                // See the Fleets loop above: no flag placement while the maneuver is only paused.
+                return;
+            }
+            await BotUnitActionDelay(ctx, game);
         }
 
-        await BotUpdateTerritoryControl(ctx, game, controller.BotName ?? "Bot");
+        ManeuverEngine.UpdateTerritoryControl(ctx, game);
 
         // Factory Destruction: Check if bot has >= 3 armies on any foreign factory
         await BotTryDestroyFactories(ctx, game, ns.Nation, controller);
 
-        GameLogger.LogAutoEndManeuverPhase(ctx, game, "Armies", nation, controller.BotName ?? "Bot");
+        GameLogger.LogAutoEndManeuverPhase(ctx, game, "Armies", nation, botName);
         game.CurrentManeuverPhase = ManeuverPhase.None;
     }
 
     /// <summary>
-    /// Battle resolution for a unit that turned hostile where it already stood, rather than by moving in.
-    ///
-    /// Standing an army upright in a foreign home province is the same act of aggression as walking in
-    /// hostilely, and Imperial-2030-Rules.pdf p.10 lets the defender answer it: "Armies of foreign nations
-    /// can call for a battle if their land region has been invaded", and "Fleets and armies can battle
-    /// against each other only if the fleet is still in the harbor. In this case, an invading army can
-    /// attack the fleet or the fleet can call for a battle." Without this the conversion would occupy the
-    /// province with the defender's units still sitting in it, and no battle.
-    ///
-    /// Deliberately mirrors the hostile-MOVE path rather than inventing a second set of rules: one
-    /// defending nation resolves 1:1 on the spot, several open the negotiation phase. Humans reach the
-    /// same outcome through the stationary Battle endpoint, which bots have no equivalent of.
-    ///
-    /// Returns true when the maneuver must pause for battle negotiation.
+    /// Whether the bot enters <paramref name="target"/> standing upright. The strategy decides; a nation's
+    /// last unoccupied factory province may only be entered peacefully (p.10), so that overrides it.
     /// </summary>
-    private bool TryResolveStationaryBattle(ApplicationDbContext? ctx, Game game, Unit unit, HashSet<Nation> friendlyNations, Nation nation, Player controller)
+    private static bool DecideHostility(Game game, IBotStrategy strategy, Unit unit, string target, HashSet<Nation> friendlyNations, Nation nation)
     {
-        var territoryId = unit.TerritoryId;
-        var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
+        bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
+        var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
         bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
 
-        // Same shape as the move path's defender filter: like fights like, plus the home nation's other
-        // unit types once we are standing hostile in their home — which is what makes an army able to
-        // reach a fleet still in its harbor.
-        bool IsReachableDefender(Unit u) =>
-            u.UnitType == unit.UnitType || (isForeignHome && u.Nation == def!.Nation!.Value);
+        bool isHostileMove = strategy.DetermineHostility(hasEnemy, isForeignHome);
+        if (isHostileMove && ManeuverEngine.MustEnterPeacefully(game, nation, target, unit.Id)) isHostileMove = false;
+        return isHostileMove;
+    }
 
-        var foreignDefenders = game.Units
-            .Where(u => u.TerritoryId == territoryId && u.Id != unit.Id && !friendlyNations.Contains(u.Nation))
-            .Where(IsReachableDefender)
-            .Select(u => u.Nation)
-            .Distinct()
-            .ToList();
+    /// <summary>
+    /// The unit stays where it is, and the bot decides its posture there: lie down in a friendly home
+    /// province, or stand up in a foreign one - which, with foreign units present, is answered like an
+    /// invasion (p.10). Returns true when the maneuver must pause for a battle negotiation.
+    /// </summary>
+    private async Task<bool> BotStayAndDecideHostility(ApplicationDbContext? ctx, Game game, Unit unit, HashSet<Nation> friendlyNations, Nation nation, Player controller)
+    {
+        var strategy = GetStrategy(controller);
+        string botName = controller.BotName ?? "Bot";
 
-        if (foreignDefenders.Count == 0) return false;
-
-        if (foreignDefenders.Count == 1)
+        // Posture first, then the stay. The order matters to replay: it identifies the unit a
+        // ToggleHostility entry refers to by "hostility differs from the logged result and not yet moved",
+        // and the stay entry that follows carries the unit's hostility AFTER the toggle - so each entry
+        // picks out the same unit again even when identical units share the territory.
+        bool battlePending = false;
+        var defT = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == unit.TerritoryId);
+        if (defT != null && defT.Nation.HasValue)
         {
-            var targetNation = foreignDefenders[0];
-            var enemyUnit = game.Units.FirstOrDefault(u =>
-                u.TerritoryId == territoryId && u.Nation == targetNation && IsReachableDefender(u));
-
-            if (enemyUnit == null) return false;
-
-            RemoveUnit(ctx, game, unit);
-            RemoveUnit(ctx, game, enemyUnit);
-            GameLogger.LogBattleDestruction(ctx, game, unit.UnitType, targetNation, enemyUnit.UnitType, territoryId, nation, controller.BotName ?? "Bot");
-            return false;
+            bool isFriendlyHome = friendlyNations.Contains(defT.Nation.Value);
+            if (isFriendlyHome && unit.IsHostile)
+            {
+                var toggled = ManeuverEngine.ToggleHostility(ctx, game, unit.Id);
+                if (!toggled.Ok) throw new InvalidOperationException($"Bot {botName} could not lay down a {unit.UnitType} of {nation}: {toggled.Error}");
+            }
+            else if (!isFriendlyHome && !unit.IsHostile)
+            {
+                bool isEnemyPresent = game.Units.Any(u => u.TerritoryId == unit.TerritoryId && u.Id != unit.Id && !friendlyNations.Contains(u.Nation));
+                bool wouldOccupyLastFactory = ManeuverEngine.MustEnterPeacefully(game, nation, unit.TerritoryId, unit.Id);
+                if (!wouldOccupyLastFactory && strategy.DetermineHostility(isEnemyPresent, true))
+                {
+                    var toggled = ManeuverEngine.ToggleHostility(ctx, game, unit.Id);
+                    if (!toggled.Ok) throw new InvalidOperationException($"Bot {botName} could not stand up a {unit.UnitType} of {nation}: {toggled.Error}");
+                }
+            }
         }
 
-        game.PendingBattleTerritoryId = territoryId;
-        game.PendingBattleAggressorNation = nation;
-        game.PendingBattleAggressorUnitId = unit.Id;
-        game.PendingBattleDefenders = foreignDefenders.ToList();
-        return true;
+        var stay = ManeuverEngine.Stay(ctx, game, unit.Id);
+        if (!stay.Ok) throw new InvalidOperationException($"Bot {botName} could not keep a {unit.UnitType} of {nation} in place: {stay.Error}");
+
+        // Standing up where foreign units are is answered like an invasion (p.10).
+        if (unit.IsHostile && game.Units.Contains(unit))
+        {
+            var battle = ManeuverEngine.ResolveStationaryBattle(ctx, game, unit.Id);
+            if (!battle.Ok) throw new InvalidOperationException($"Bot {botName}: {battle.Error}");
+            battlePending = battle.BattlePending;
+        }
+
+        if (battlePending) return true;
+        await BotUnitActionDelay(ctx, game);
+        return false;
     }
 
     public async Task BotTryDestroyFactories(ApplicationDbContext? ctx, Game game, Nation nation, Player controller)
     {
         var strategy = GetStrategy(controller);
 
-        foreach (var territoryId in FindFactoryDestructionCandidates(game, nation, controller))
+        foreach (var territoryId in ManeuverEngine.FactoryDestructionCandidates(game, nation, controller))
         {
             // Ask strategy if we should destroy
             if (!strategy.ShouldDestroyFactory(game, nation, territoryId, controller)) continue;
 
-            ExecuteFactoryDestruction(ctx, game, territoryId, nation, controller);
-        }
-    }
-
-    // Territories where this nation has >= 3 undefended armies stacked on a destroyable foreign factory
-    public List<string> FindFactoryDestructionCandidates(Game game, Nation nation, Player controller)
-    {
-        var friendlyNations = game.NationStates.Where(n => n.ControllerId == controller.Id).Select(n => n.Nation).ToHashSet();
-
-        var armiesByTerritory = game.Units
-            .Where(u => u.Nation == nation && u.UnitType == UnitType.Army)
-            .GroupBy(u => u.TerritoryId)
-            .Where(g => g.Count() >= ManeuverRules.DestroyFactoryArmyCost)
-            .ToList();
-
-        var candidates = new List<string>();
-        foreach (var group in armiesByTerritory)
-        {
-            var territoryId = group.Key;
-            var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId);
-            if (territoryDef == null || !territoryDef.Nation.HasValue) continue;
-
-            var defenderNation = territoryDef.Nation.Value;
-
-            // Cannot destroy your own factory
-            if (friendlyNations.Contains(defenderNation)) continue;
-
-            // Check factory exists
-            var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == territoryId);
-            if (tState == null || !tState.HasFactory) continue;
-
-            // Check no defenders present
-            bool hasDefenders = game.Units.Any(u => u.TerritoryId == territoryId && u.Nation == defenderNation);
-            if (hasDefenders) continue;
-
-            // An occupied factory does not count as an available factory for the p.10 protection.
-            // Use the same rule check as the human endpoint so bots cannot destroy the defender's
-            // last factory that is not already occupied by hostile armies.
-            if (ManeuverHelper.IsProtectedLastFactoryProvince(game, nation, territoryId)) continue;
-
-            candidates.Add(territoryId);
-        }
-        return candidates;
-    }
-
-    // Executes an already-decided factory destruction: sacrifices ManeuverRules.DestroyFactoryArmyCost
-    // armies of `nation` in `territoryId` and removes the factory
-    public void ExecuteFactoryDestruction(ApplicationDbContext? ctx, Game game, string territoryId, Nation nation, Player controller)
-    {
-        var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == territoryId);
-        if (tState == null || !tState.HasFactory) return;
-
-        var armiesToSacrifice = game.Units
-            .Where(u => u.Nation == nation && u.UnitType == UnitType.Army && u.TerritoryId == territoryId)
-            .Take(ManeuverRules.DestroyFactoryArmyCost)
-            .ToList();
-        if (armiesToSacrifice.Count < ManeuverRules.DestroyFactoryArmyCost) return;
-
-        foreach (var army in armiesToSacrifice)
-        {
-            RemoveUnit(ctx, game, army);
-        }
-        tState.HasFactory = false;
-
-        GameLogger.LogFactoryDestruction(ctx, game, territoryId, nation, controller.BotName ?? "Bot");
-    }
-
-    // Internal so TcpTrainingServer can finish the RL-controlled Maneuver with the same flag-placement
-    // logic as deployed bots before it evaluates the whole-phase result.
-    internal async Task BotUpdateTerritoryControl(ApplicationDbContext? ctx, Game game, string botName)
-    {
-        var territoriesWithUnits = game.Units.Select(u => u.TerritoryId).Distinct().ToList();
-
-        foreach (var tId in territoriesWithUnits)
-        {
-            var unitsInTerritory = game.Units.Where(u => u.TerritoryId == tId).ToList();
-            if (!unitsInTerritory.Any()) continue;
-
-            var firstNation = unitsInTerritory.First().Nation;
-            if (unitsInTerritory.All(u => u.Nation == firstNation))
+            var result = ManeuverEngine.DestroyFactory(ctx, game, territoryId);
+            if (!result.Ok)
             {
-                var territoryDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == tId);
-
-                if (territoryDef != null)
-                {
-                    var states = game.TerritoryStates.Where(ts => ts.TerritoryId == tId).ToList();
-                    var tState = states.FirstOrDefault();
-
-                    if (states.Count > 1)
-                    {
-                        // Clean up duplicates caused by concurrent API calls
-                        for (int i = 1; i < states.Count; i++)
-                        {
-                            RemoveTerritoryState(ctx, game, states[i]);
-                        }
-                    }
-
-                    if (tState == null)
-                    {
-                        tState = new TerritoryState { TerritoryId = tId, GameId = game.Id };
-                        AddTerritoryState(ctx, game, tState);
-                    }
-
-                    bool isHomeProvince = territoryDef.Nation.HasValue;
-
-                    if (!isHomeProvince && tState.Controller != firstNation)
-                    {
-                        var oldController = tState.Controller;
-                        int flagCount = game.TerritoryStates.Count(ts => ts.Controller == firstNation);
-
-                        // Same 15-flag-per-nation limit ManeuverController enforces and
-                        // TaxationRules caps flag revenue at.
-                        if (flagCount >= TaxationRules.MaxFlagsPerNation)
-                        {
-                            if (oldController != null)
-                            {
-                                tState.Controller = null;
-                                GameLogger.LogTerritoryControlChange(ctx, game, territoryDef.Name, oldController, null, botName);
-                            }
-                        }
-                        else
-                        {
-                            tState.Controller = firstNation;
-                            GameLogger.LogTerritoryControlChange(ctx, game, territoryDef.Name, oldController, firstNation, botName);
-                        }
-                    }
-                }
+                throw new InvalidOperationException($"Bot {controller.BotName} could not destroy the factory in {territoryId}: {result.Error}");
             }
         }
     }
@@ -1311,61 +910,32 @@ public class BotService
             var defNs = game.NationStates.FirstOrDefault(ns => ns.Nation == defNation);
             var defController = defNs?.ControllerId != null ? game.Players.FirstOrDefault(p => p.Id == defNs.ControllerId) : null;
 
-            var pendingBattle = new PendingBattle
-            {
-                TerritoryId = game.PendingBattleTerritoryId ?? "",
-                AggressorNation = game.PendingBattleAggressorNation ?? defNation,
-                DefenderNations = game.PendingBattleDefenders.ToList()
-            };
-
             if (defController != null && !defController.IsBot)
             {
                 // Human player must respond manually
                 continue;
             }
 
-            bool retreat = defController == null ? true : GetStrategy(defController).RetreatFromBattle(game, pendingBattle);
-            string responderName = defController?.BotName ?? GameConstants.SystemPlayerName;
-
-            if (retreat)
+            var pendingBattle = new PendingBattle
             {
-                var defenders = game.PendingBattleDefenders.ToList();
-                defenders.Remove(defNation);
-                game.PendingBattleDefenders = defenders;
-                if (ctx != null) ctx.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
-                GameLogger.LogBattleResponsePeace(ctx, game, defNation, pendingBattle.AggressorNation, pendingBattle.TerritoryId, responderName);
-            }
-            else
-            {
-                // Fight!
-                var defenders = game.PendingBattleDefenders.ToList();
-                defenders.Remove(defNation); // It's no longer pending for them
-                game.PendingBattleDefenders = defenders;
-                if (ctx != null) ctx.Entry(game).Property(g => g.PendingBattleDefenders).IsModified = true;
+                TerritoryId = game.PendingBattleTerritoryId ?? "",
+                AggressorNation = game.PendingBattleAggressorNation ?? defNation,
+                DefenderNations = game.PendingBattleDefenders.ToList()
+            };
+            // An ungoverned defender has nobody to call for a battle.
+            bool retreat = defController == null || GetStrategy(defController).RetreatFromBattle(game, pendingBattle);
 
-                var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation && u.Id == game.PendingBattleAggressorUnitId)
-                    ?? game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == pendingBattle.AggressorNation);
-                var friendlyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == pendingBattle.TerritoryId && u.Nation == defNation);
-                if (enemyUnit != null && friendlyUnit != null)
-                {
-                    RemoveUnit(ctx, game, enemyUnit);
-                    RemoveUnit(ctx, game, friendlyUnit);
-                    GameLogger.LogBattleResponseDestruction(ctx, game, defNation, friendlyUnit.UnitType, pendingBattle.AggressorNation, enemyUnit.UnitType, pendingBattle.TerritoryId, responderName);
-                }
+            var result = ManeuverEngine.RespondToBattle(ctx, game, defNation, fight: !retreat);
+            if (!result.Ok)
+            {
+                throw new InvalidOperationException($"Bot {defController?.BotName ?? GameConstants.SystemPlayerName} could not answer the battle for {defNation}: {result.Error}");
             }
+            if (result.BattleClosed) break;
         }
 
-        // No BotUpdateTerritoryControl here: resolving these responses doesn't end the aggressor's
-        // maneuver, so its flags aren't settled yet (Imperial-2030-Rules.pdf p.8/p.10). The maneuver
-        // resumes afterwards and places them at its phase boundary.
-
-        if (!game.PendingBattleDefenders.Any() || !game.Units.Any(u => u.TerritoryId == (game.PendingBattleTerritoryId ?? "") && u.Nation == game.PendingBattleAggressorNation))
-        {
-            game.PendingBattleDefenders.Clear();
-            game.PendingBattleTerritoryId = null;
-            game.PendingBattleAggressorNation = null;
-            game.PendingBattleAggressorUnitId = null;
-        }
+        // No flag placement here: resolving these responses doesn't end the aggressor's maneuver, so
+        // its flags aren't settled yet (Imperial-2030-Rules.pdf p.8/p.10). The maneuver resumes
+        // afterwards and places them at its phase boundary.
 
         await SaveChangesAsync(ctx);
         await _hubContext.Clients.Group(game.Id.ToString()).SendAsync("GameUpdated", game.Id);
@@ -1420,29 +990,6 @@ public class BotService
             .FirstOrDefaultAsync(g => g.Id == gameId);
     }
 
-
-    private void RemoveUnit(ApplicationDbContext? ctx, Game game, Unit unit)
-    {
-        // Remove from the in-memory collection
-        game.Units.Remove(unit);
-        
-        // Explicitly notify EF Core to mark this entity for deletion from the database.
-        // Simply removing it from game.Units might just orphan the record (setting foreign key to null)
-        // depending on cascade settings, so ctx.Remove() safely ensures it is actually deleted.
-        if (ctx != null) ctx.Remove(unit);
-    }
-
-    private void AddTerritoryState(ApplicationDbContext? ctx, Game game, TerritoryState ts)
-    {
-        game.TerritoryStates.Add(ts);
-        if (ctx != null) ctx.Add(ts);
-    }
-
-    private void RemoveTerritoryState(ApplicationDbContext? ctx, Game game, TerritoryState ts)
-    {
-        game.TerritoryStates.Remove(ts);
-        if (ctx != null) ctx.Remove(ts);
-    }
 
     private async Task SaveChangesAsync(ApplicationDbContext? ctx)
     {

@@ -164,34 +164,4 @@ public static class RondelEngine
 
         return RondelMoveResult.Moved(currentSlot, cost);
     }
-
-    /// <summary>
-    /// After landing on a Maneuver slot: skip the Fleets phase if the nation has no unmoved fleet, then
-    /// the Armies phase if it has no unmoved army, logging each skip.
-    ///
-    /// Separate from <see cref="MoveNation"/> because only the HTTP path calls it: <c>BotManeuver</c>
-    /// walks both phases itself and logs <c>AutoEndPhase</c> for each, so calling this for a bot as well
-    /// would double-log the phase end.
-    /// </summary>
-    public static void AutoSkipEmptyManeuverPhases(ApplicationDbContext? context, Game game, Nation nation, string playerName)
-    {
-        if (game.CurrentManeuverPhase == ManeuverPhase.Fleets)
-        {
-            bool hasFleets = game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved);
-            if (!hasFleets)
-            {
-                game.CurrentManeuverPhase = ManeuverPhase.Armies;
-                GameLogger.LogAutoSkipManeuverPhase(context, game, "Fleets", nation, playerName);
-            }
-            if (game.CurrentManeuverPhase == ManeuverPhase.Armies)
-            {
-                bool hasArmies = game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved);
-                if (!hasArmies)
-                {
-                    game.CurrentManeuverPhase = ManeuverPhase.None;
-                    GameLogger.LogAutoSkipManeuverPhase(context, game, "Armies", nation, playerName);
-                }
-            }
-        }
-    }
 }

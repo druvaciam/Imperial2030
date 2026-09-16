@@ -1,3 +1,4 @@
+using Imperial2030.Server.Engine;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -269,7 +270,7 @@ public class BotLastFactoryBlockadeTests
 
         var botService = BuildBotService(Guid.NewGuid().ToString());
 
-        var candidates = botService.FindFactoryDestructionCandidates(game, Nation.Russia, attacker);
+        var candidates = ManeuverEngine.FactoryDestructionCandidates(game, Nation.Russia, attacker);
 
         Assert.DoesNotContain("Beijing", candidates);
     }
@@ -310,7 +311,7 @@ public class BotLastFactoryBlockadeTests
 
         var botService = BuildBotService(Guid.NewGuid().ToString());
 
-        var candidates = botService.FindFactoryDestructionCandidates(game, Nation.Russia, attacker);
+        var candidates = ManeuverEngine.FactoryDestructionCandidates(game, Nation.Russia, attacker);
 
         Assert.Contains("Beijing", candidates);
     }

@@ -13,9 +13,9 @@ public sealed record ProductionOutcome(bool Ok, string? Error = null, int Produc
 }
 
 /// <summary>
-/// The Production rondel action. Imperial-2030-Rules.pdf p.7: each of the nation's factories "may
-/// produce one army or one fleet" - an army from a brown-city factory, a fleet from a light-blue one -
-/// unless the factory city holds a hostile foreign army (p.11), and never beyond the nation's unit
+/// The Production rondel action. Imperial-2030-Rules.pdf p.7: "Each armament facility and shipyard of a
+/// nation may produce one army or one fleet respectively for free" - an army from a brown-city factory,
+/// a fleet from a light-blue one - unless the factory city holds a hostile foreign army, and never beyond the nation's unit
 /// supply (<see cref="NationData.GetMaxArmies"/> / <see cref="NationData.GetMaxFleets"/>).
 ///
 /// An empty production still counts as the turn's action: HasProducedThisTurn is set either way, and

@@ -1062,6 +1062,10 @@ public class GamesController : ControllerBase
             .Include(g => g.Players)
             .Include(g => g.Bonds)
             .Include(g => g.Units)
+            // Landing on Maneuver with nothing of a kind to move ends that phase at once, and a phase end
+            // places flags - which reads and writes TerritoryStates. Left unloaded, the pass sees an empty
+            // collection and creates a second state row for every occupied region.
+            .Include(g => g.TerritoryStates)
             .AsSplitQuery()
             .FirstOrDefaultAsync(g => g.Id == gameId);
 
@@ -1084,8 +1088,9 @@ public class GamesController : ControllerBase
             return Ok();
         }
 
-        // HTTP-only: see RondelEngine.AutoSkipEmptyManeuverPhases.
-        RondelEngine.AutoSkipEmptyManeuverPhases(_context, game, nation, controller.GetPlayerName(_context));
+        // A Maneuver landing with nothing of a kind to move ends that phase at once (p.10, step 3 for the
+        // flags). The bot walks its units first and ends the phases itself; here each move does.
+        ManeuverEngine.TryAutoAdvanceManeuver(_context, game, nation);
         await _context.SaveChangesAsync();
 
         if (!SuppressBroadcasts) { await _hubContext.Clients.All.SendAsync("GameUpdated", gameId); }

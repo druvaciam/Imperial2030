@@ -196,9 +196,9 @@ public class RondelEngineTests
         Assert.True(result.Ok, result.Error);
         Assert.Equal(ManeuverPhase.Fleets, game.CurrentManeuverPhase);
 
-        RondelEngine.AutoSkipEmptyManeuverPhases(null, game, Nation.Russia, "Gov");
+        ManeuverEngine.TryAutoAdvanceManeuver(null, game, Nation.Russia);
 
         Assert.Equal(ManeuverPhase.None, game.CurrentManeuverPhase);
-        Assert.Equal(2, game.Actions.Count(a => a.ActionType == "AutoSkipPhase"));
+        Assert.Equal(2, game.Actions.Count(a => a.ActionType == "AutoEndPhase"));
     }
 }

@@ -8,9 +8,10 @@ using Microsoft.EntityFrameworkCore;
 namespace Imperial2030.Server.Engine;
 
 /// <summary>
-/// The Import rondel action. Imperial-2030-Rules.pdf p.8: a nation "may buy up to three units at 1
-/// million each" from its treasury and place them "in its home provinces"; a fleet needs a harbor city;
-/// a province holding a hostile foreign army cannot receive units (p.11); and the nation's available pieces
+/// The Import rondel action. Imperial-2030-Rules.pdf p.8: "The nation may buy military units for 1
+/// million each from the bank. The number of military units, however, is limited to three in total. The
+/// military units may be placed in all home provinces that do not have hostile armies (standing upright).
+/// Fleets, however, may be placed only in light blue cities (harbors)." And the nation's available pieces
 /// (<see cref="NationData.GetMaxArmies"/> / <see cref="NationData.GetMaxFleets"/>) is a limit.
 ///
 /// <see cref="PlaceOne"/> is the primitive. <see cref="Import"/> is the whole action at once: it checks

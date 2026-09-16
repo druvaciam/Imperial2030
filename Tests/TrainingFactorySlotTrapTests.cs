@@ -187,9 +187,10 @@ public class TrainingFactorySlotTrapTests
 
     /// <summary>
     /// Landing on Factory by way of the Investor space (Maneuver 1 -> Factory is six spaces, crossing it)
-    /// activates the Investor turn, and Imperial-2030-Rules.pdf p.11 resolves that as part of the
-    /// MOVEMENT, before the nation acts on its destination. The decision is still owed - but not until the
-    /// Investor turn has cleared.
+    /// opens the Investor turn at once, and the engine allows no action while it is open - the same
+    /// refusal the endpoint gives a human. The decision is still owed, but not until the Investor turn has
+    /// cleared. (This is the codebase's order, not the rulebook's: p.11 has the landed action complete
+    /// first on a pass-over. See implementation_plan.md row 28.)
     /// </summary>
     [Fact]
     public void TheDecisionWaitsForAnOpenInvestorPhase()

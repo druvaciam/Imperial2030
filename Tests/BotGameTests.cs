@@ -987,15 +987,8 @@ namespace Imperial2030.Tests
                 .AsSplitQuery()
                 .FirstAsync(g => g.Id == gameId);
 
-            var botService = new Imperial2030.Server.Services.BotService(
-                new Mock<IServiceScopeFactory>().Object,
-                new Mock<IHubContext<Imperial2030.Server.Hubs.GameHub>>().Object,
-                new List<Imperial2030.Server.Services.Bots.IBotStrategy>(),
-                new Mock<ILogger<Imperial2030.Server.Services.BotService>>().Object);
-
-            var methodInfo = typeof(Imperial2030.Server.Services.BotService).GetMethod("BotUpdateTerritoryControl", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            var task = (Task)methodInfo!.Invoke(botService, new object[] { context, game, "Bot" })!;
-            await task;
+            // Flag placement is the engine's, shared by every caller.
+            Imperial2030.Server.Engine.ManeuverEngine.UpdateTerritoryControl(context, game);
 
             var targetState = context.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == targetTerritoryId);
             Assert.NotNull(targetState);

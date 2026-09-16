@@ -8,9 +8,9 @@ using Microsoft.EntityFrameworkCore;
 namespace Imperial2030.Server.Engine;
 
 /// <summary>
-/// Building a factory. Imperial-2030-Rules.pdf p.7: "The nation pays 5 million into the bank... a factory
-/// may be built in one of the nation's home cities. Only one factory may be built in each city", and
-/// p.11: a city holding a hostile foreign army cannot be built in.
+/// Building a factory. Imperial-2030-Rules.pdf p.7: "A factory may be built only in one of the nation's
+/// own cities if there are no hostile armies (standing upright) in its home province. Only one factory
+/// may be built in each city. The nation pays 5 million into the bank".
 /// </summary>
 public static class FactoryEngine
 {

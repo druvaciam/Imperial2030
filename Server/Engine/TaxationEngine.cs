@@ -26,8 +26,8 @@ public sealed record TaxationOutcome(
 /// <summary>
 /// The Taxation rondel action. The arithmetic - revenue from factories and flags, soldiers' pay, the
 /// government's bonus and the power gain - is <see cref="TaxationHelper"/>'s and is not repeated here;
-/// this is the turn around it: the checks, the log, the game-end test (p.12: the game ends when a
-/// nation reaches 25 power) and, otherwise, the turn advance. Taxation ends the turn by itself, without
+/// this is the turn around it: the checks, the log, the game-end test (p.6: "As soon as a nation has
+/// reached 25 power points, the game ends") and, otherwise, the turn advance. Taxation ends the turn by itself, without
 /// an <c>EndTurn</c> entry - both the endpoint and the bot have always done it that way, and replay
 /// relies on it.
 /// </summary>
