@@ -50,7 +50,8 @@ public class TcpTrainingServer : BackgroundService
         /// <summary>
         /// The nation whose turn the Import sequence belongs to, set by the rondel move like
         /// <see cref="FactoryDecisionOwedBy"/>. The sequence is dropped if the turn moves on without it
-        /// finishing (a government change in the Investor turn the move opened hands the nation to a bot).
+        /// finishing (a government change in an Investor turn a Swiss Bank's forced stop opened hands the
+        /// nation to a bot).
         /// </summary>
         public Nation? ImportSequenceNation { get; set; }
         /// <summary>
@@ -1969,10 +1970,9 @@ public class TcpTrainingServer : BackgroundService
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
         if (rlPlayer == null) return mask;
 
-        // The engine opens the Investor turn the moment a rondel move passes Investor, and no action may
-        // run while it is open. (The rulebook order is the reverse - p.11: on a pass-over "the action
-        // determined by the space landed on is completed first" - see implementation_plan.md row 28.)
-        // Until that is changed, the rondel-action blocks below yield and the investor block answers.
+        // No rondel action may run while an Investor turn is open (p.11: on a pass-over the nation's
+        // action completes first and the Investor turn follows; landing on Investor opens it at once).
+        // The rondel-action blocks below yield to an open one and the investor block answers.
         if (session.PendingFactoryDestructionTerritoryId != null && !game.IsInvestorTurn)
         {
             mask[RLBotStrategy.FactoryDestroyAction] = true;
@@ -2202,8 +2202,7 @@ public class TcpTrainingServer : BackgroundService
 
     /// <summary>
     /// Whether the step-by-step Import sequence is waiting for the agent's next placement: one is set up
-    /// for the nation whose turn it is, and no Investor turn is open - the engine opens one the moment the
-    /// move passes Investor, and no action may run while it is open. The sequence resumes once it clears.
+    /// for the nation whose turn it is, and no Investor turn is open (no action may run while one is).
     /// </summary>
     public static bool IsImportSequencePending(TrainingSession session, Game game)
         => session.PendingImportRemaining.HasValue
@@ -2211,8 +2210,9 @@ public class TcpTrainingServer : BackgroundService
            && !game.IsInvestorTurn;
 
     /// <summary>
-    /// Whether a resolved rondel action may end the turn now: not while an Investor turn is open. Once it
-    /// clears, BotService.ExecuteBotTurn finishes the turn on the RL agent's next step.
+    /// Whether a resolved rondel action may end the turn now: not while an Investor turn is open. Ending
+    /// the turn after a move that passed over Investor opens that Investor turn (p.11), and the rotation
+    /// moves on when it ends.
     /// </summary>
     public static bool MayRondelActionEndTheTurn(Game game)
         => game.Status == GameStatus.InProgress && !game.IsInvestorTurn;
@@ -2568,8 +2568,7 @@ public class TcpTrainingServer : BackgroundService
     public static bool IsFactoryDecisionPending(TrainingSession session, NationState? currentNs, Guid rlPlayerId)
         => currentNs != null && currentNs.ControllerId == rlPlayerId
            && session.FactoryDecisionOwedBy == currentNs.Nation && !currentNs.HasBuiltThisTurn
-           // No action may run while the Investor turn the move opened is still open (the engine opens it
-           // the moment the move passes Investor). The decision stays owed and is asked once it clears.
+           // No action may run while an Investor turn is open. The decision stays owed and is asked once it clears.
            && !session.Game.IsInvestorTurn;
 
     public const float AvoidableFactorySkipPenalty = 30.0f;

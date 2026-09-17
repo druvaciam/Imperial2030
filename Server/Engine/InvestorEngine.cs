@@ -405,7 +405,7 @@ public static class InvestorEngine
         var actorName = actingPlayer.GetPlayerName(context);
         GameLogger.LogInvestmentBuy(context, game, bond.Nation, bond.Cost, actorName, newControllerName, oldControllerName, isSwissBankKicked, tradeInCost);
 
-        AdvanceInvestorQueue(game);
+        AdvanceInvestorQueue(context, game);
 
         return new InvestmentOutcome(true,
             Nation: bond.Nation,
@@ -423,7 +423,7 @@ public static class InvestorEngine
         if (refusal != null) return EngineResult.Fail(refusal);
 
         GameLogger.LogInvestmentPass(context, game, actingPlayer.GetPlayerName(context));
-        AdvanceInvestorQueue(game);
+        AdvanceInvestorQueue(context, game);
         return EngineResult.Success;
     }
 
@@ -440,9 +440,11 @@ public static class InvestorEngine
 
     /// <summary>
     /// Next investor in the queue acts; when the queue is empty the Investor card passes to the next
-    /// player (p.11) and the Investor turn ends.
+    /// player (p.11) and the Investor turn ends. An Investor turn that a pass-over opened after the
+    /// nation's action (<see cref="Game.InvestorTurnPending"/>) was the last thing in that nation's turn,
+    /// so the rotation moves on with it.
     /// </summary>
-    private static void AdvanceInvestorQueue(Game game)
+    private static void AdvanceInvestorQueue(ApplicationDbContext? context, Game game)
     {
         if (game.PendingInvestorIds != null && game.PendingInvestorIds.Any())
         {
@@ -460,7 +462,24 @@ public static class InvestorEngine
             // End Investor Turn
             game.IsInvestorTurn = false;
             game.ActingPlayerId = null;
+
+            if (game.InvestorTurnPending) TurnEngine.MoveOn(context, game);
         }
+    }
+
+    /// <summary>
+    /// Replay only. Opens the Investor turn a pass-over owes at the point the log shows an investment,
+    /// wherever the recording placed it relative to the nation's action, without tying the rotation to
+    /// it: the log's own <c>EndTurn</c> entry moves the rotation on.
+    /// </summary>
+    public static void OpenPendingInvestorTurnForReplay(ApplicationDbContext? context, Game game)
+    {
+        if (!game.InvestorTurnPending || game.IsInvestorTurn) return;
+        var nationState = game.NationStates.First(n => n.Nation == game.CurrentTurnNation);
+        var controller = game.Players.First(p => p.Id == nationState.ControllerId);
+        game.InvestorTurnPending = false;
+        HandleInvestorPhase(context, game, nationState, controller, isLandedOn: false);
+        if (context != null) context.Entry(game).State = EntityState.Modified;
     }
 
     /// <summary>

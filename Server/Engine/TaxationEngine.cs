@@ -76,6 +76,12 @@ public static class TaxationEngine
             game.Status = GameStatus.Finished;
             game.FinishedAt = DateTime.UtcNow;
         }
+        else if (game.InvestorTurnPending)
+        {
+            // The move passed over Investor: the Investor turn opens now that the action is complete
+            // (p.11), and the rotation moves on when it ends.
+            TurnEngine.ActionComplete(context, game);
+        }
         else
         {
             // Taxation auto-advances the turn (resets all turn state flags automatically)

@@ -37,6 +37,10 @@ public class Game
     // Investor Logic
     public Guid? InvestorCardHolderId { get; set; }
     public bool IsInvestorTurn { get; set; } = false;
+    // The nation's rondel move passed over Investor this turn. Imperial-2030-Rules.pdf p.11: "the action
+    // determined by the space landed on is completed first", so the Investor turn opens when the action
+    // is complete (TurnEngine) and the rotation moves on when it ends (InvestorEngine).
+    public bool InvestorTurnPending { get; set; } = false;
     public Guid? ActingPlayerId { get; set; } // If set, this player must take action (e.g. Investor) instead of CurrentTurnNation controller
     // A plain list, mapped by EF as a primitive collection — the same shape as PendingBattleDefenders and
     // PendingSwissBankResponders below. It was previously a [NotMapped] accessor over a hand-serialised

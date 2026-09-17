@@ -186,11 +186,10 @@ public class TrainingFactorySlotTrapTests
     }
 
     /// <summary>
-    /// Landing on Factory by way of the Investor space (Maneuver 1 -> Factory is six spaces, crossing it)
-    /// opens the Investor turn at once, and the engine allows no action while it is open - the same
-    /// refusal the endpoint gives a human. The decision is still owed, but not until the Investor turn has
-    /// cleared. (This is the codebase's order, not the rulebook's: p.11 has the landed action complete
-    /// first on a pass-over. See implementation_plan.md row 28.)
+    /// The engine allows no action while an Investor turn is open - the same refusal the endpoint gives a
+    /// human. An owed factory decision is not offered while one is open, and is still owed once it clears.
+    /// (A move that passes over Investor no longer opens one before the action - p.11 - so this is the
+    /// guard, not the normal sequence.)
     /// </summary>
     [Fact]
     public void TheDecisionWaitsForAnOpenInvestorPhase()
@@ -204,7 +203,7 @@ public class TrainingFactorySlotTrapTests
         game.IsInvestorTurn = true;
 
         Assert.False(TcpTrainingServer.IsFactoryDecisionPending(session, china, rlPlayerId),
-            "The factory decision was offered while the Investor turn the move triggered was still open.");
+            "The factory decision was offered while an Investor turn was open.");
 
         game.IsInvestorTurn = false;
         Assert.True(TcpTrainingServer.IsFactoryDecisionPending(session, china, rlPlayerId),
@@ -212,8 +211,8 @@ public class TrainingFactorySlotTrapTests
     }
 
     /// <summary>
-    /// The same order applies to the Import sequence: a move to Import that crossed the Investor space
-    /// neither offers placements nor ends the turn until the Investor turn has cleared.
+    /// The same guard applies to the Import sequence: while an Investor turn is open it neither offers
+    /// placements nor ends the turn.
     /// </summary>
     [Fact]
     public void TheImportSequenceWaitsForAnOpenInvestorPhase()
@@ -229,9 +228,9 @@ public class TrainingFactorySlotTrapTests
         game.IsInvestorTurn = true;
 
         Assert.False(TcpTrainingServer.IsImportSequencePending(session, game),
-            "Import placements were offered while the Investor turn the move triggered was still open.");
+            "Import placements were offered while an Investor turn was open.");
         Assert.False(TcpTrainingServer.MayRondelActionEndTheTurn(game),
-            "The turn was ended while the Investor turn the move triggered was still open.");
+            "The turn was ended while an Investor turn was open.");
 
         game.IsInvestorTurn = false;
         Assert.True(TcpTrainingServer.IsImportSequencePending(session, game));
@@ -239,9 +238,8 @@ public class TrainingFactorySlotTrapTests
     }
 
     /// <summary>
-    /// The Import sequence belongs to the nation that landed on Import, for that turn. If a rival's
-    /// purchase in the Investor turn that move opened takes the government (p.12), the bot finishes the
-    /// turn and the rotation moves on - the sequence must not then be offered to the RL agent's next nation.
+    /// The Import sequence belongs to the nation that landed on Import, for that turn. If the rotation
+    /// moves on without it finishing, the sequence must not then be offered to the RL agent's next nation.
     /// </summary>
     [Fact]
     public void TheImportSequenceDoesNotOutliveTheNationThatStartedIt()
@@ -256,7 +254,7 @@ public class TrainingFactorySlotTrapTests
         session.ImportSequenceNation = Nation.China;
         Assert.True(TcpTrainingServer.IsImportSequencePending(session, game));
 
-        // The government changes hands during the Investor turn and the turn moves on without the RL agent finishing.
+        // The turn moves on without the RL agent finishing.
         game.AdvanceTurn();
         Assert.Equal(Nation.India, game.CurrentTurnNation);
 

@@ -1148,6 +1148,7 @@ public class GamesController : ControllerBase
             .Include(g => g.Bonds)
             .Include(g => g.NationStates)
             .Include(g => g.Players)
+            .Include(g => g.Units) // the last investor of a passed-over Investor turn ends the nation's turn, which resets its units
             .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
 
         if (game == null) return NotFound();

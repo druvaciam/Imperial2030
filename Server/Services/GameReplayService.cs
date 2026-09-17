@@ -963,7 +963,20 @@ public class GameReplayService
                             result = await maneuverController.DestroyFactory(replayGameId, new DestroyFactoryRequest { TerritoryId = dfMeta.TerritoryId, UnitIds = dfArmies.Select(u => u.Id).ToList() });
                             break;
                         case "Investment":
-                            var invGame = context.Games.First(g => g.Id == replayGameId);
+                            var invGame = await context.Games
+                                .Include(g => g.NationStates)
+                                .Include(g => g.Players)
+                                .AsSplitQuery()
+                                .FirstAsync(g => g.Id == replayGameId);
+                            if (!invGame.IsInvestorTurn && invGame.InvestorTurnPending)
+                            {
+                                // The move passed over Investor and the log has reached its investments:
+                                // open the Investor turn here, whether the recording placed it before the
+                                // nation's action (games played before the p.11 order was implemented) or
+                                // after it. The log's own EndTurn entry moves the rotation on.
+                                Engine.InvestorEngine.OpenPendingInvestorTurnForReplay(context, invGame);
+                                context.SaveChanges();
+                            }
                             if (!invGame.IsInvestorTurn)
                             {
                                 result = new OkResult();
@@ -1054,6 +1067,13 @@ public class GameReplayService
                             break;
                         case "EndTurn":
                             var etGame = context.Games.First(g => g.Id == replayGameId);
+                            if (action.Nation.HasValue && etGame.CurrentTurnNation != action.Nation.Value)
+                            {
+                                // The rotation already moved on with the last investor of a passed-over
+                                // Investor turn (Taxation opened it, so no EndTurn call preceded it).
+                                result = new OkResult();
+                                break;
+                            }
                             await maneuverController.UpdateTerritoryControl(etGame);
                             etGame.PendingBattleTerritoryId = null;
                             etGame.PendingBattleAggressorNation = null;

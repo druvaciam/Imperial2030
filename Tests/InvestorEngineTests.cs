@@ -210,7 +210,9 @@ public class InvestorEngineTests
         Assert.True(result.MoveResolved);
         Assert.Equal(RondelData.ImportSlot, russia.RondelPosition);
         Assert.Null(game.PendingSwissBankForceNation);
-        Assert.True(game.IsInvestorTurn); // the move still crossed Investor, so the investor is activated
+        // The move still crossed Investor: the investor is activated once the Import action is complete (p.11).
+        Assert.False(game.IsInvestorTurn);
+        Assert.True(game.InvestorTurnPending);
         Assert.Contains(game.Actions, x => x.ActionType == "SwissBankResponse" && x.Metadata.Contains("\"IsForceStop\":false"));
     }
 

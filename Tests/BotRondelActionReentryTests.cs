@@ -18,12 +18,12 @@ namespace Imperial2030.Tests;
 /// <summary>
 /// A bot that takes over a nation MID-TURN must not repeat the rondel action that was already taken.
 ///
-/// How a turn gets a second government: the rondel move crosses the Investor space, the Investor turn
-/// it opens lets a rival outbid the sitting government (Imperial-2030-Rules.pdf p.12), and the nation's
-/// turn then continues under its new player. BotService.ExecuteBotTurn re-enters with HasMovedThisTurn
-/// set, skips the move, and runs the slot's action - which the previous government may already have
-/// completed. The bot must recognise a completed action and simply end the turn; repeating it would be
-/// a second import, factory or production in one turn (p.7: one action per turn).
+/// BotService.ExecuteBotTurn re-enters a turn with HasMovedThisTurn set, skips the move, and runs the
+/// slot's action - which may already have been completed. (A government change in the Investor turn
+/// of a pass-over used to do this; in the p.11 order that Investor turn follows the action and the
+/// rotation moves on with it, so the re-entry with a new player no longer arises - the guard stays.)
+/// The bot must recognise a completed action and simply end the turn; repeating it would be a second
+/// import, factory or production in one turn (p.7: one action per turn).
 /// </summary>
 public class BotRondelActionReentryTests
 {

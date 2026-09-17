@@ -10,7 +10,8 @@ namespace Imperial2030.Server.Engine;
 /// <summary>
 /// The rondel move. Imperial-2030-Rules.pdf p.6: the marker moves clockwise, staying put is not allowed,
 /// the first three spaces are free and each further space costs the government's player money; p.11:
-/// passing the Investor space activates the investor, landing on it also pays interest; p.12: a Swiss
+/// passing the Investor space activates the investor once the nation's action is complete, landing on it
+/// also pays interest and does so at once; p.12: a Swiss
 /// Bank may force a stop on Investor when the nation can pay its interest.
 /// </summary>
 public static class RondelEngine
@@ -20,9 +21,10 @@ public static class RondelEngine
     ///
     /// On a forced stop by a Swiss Bank the result is <see cref="RondelMoveResult.SwissBankForcedStop"/> and
     /// NOTHING has moved: the pending-force state is set on the game and the caller must stop and wait
-    /// for the responders. Otherwise the move is applied, logged, and any Investor slot crossed or landed
-    /// on has already been handled by <see cref="InvestorEngine.HandleInvestorPhase"/> - so the caller
-    /// should check <see cref="Game.IsInvestorTurn"/> before continuing with the slot's action.
+    /// for the responders. Otherwise the move is applied and logged. Landing on Investor opens the Investor
+    /// turn at once (<see cref="InvestorEngine.HandleInvestorPhase"/>), so the caller should check
+    /// <see cref="Game.IsInvestorTurn"/> before continuing; passing over it only records
+    /// <see cref="Game.InvestorTurnPending"/>, and the slot's action goes ahead (p.11).
     ///
     /// Does not save, broadcast or trigger anything. The acting player is the nation's government, found
     /// from <see cref="NationState.ControllerId"/>; authorising that the HTTP caller IS that player is
@@ -151,12 +153,18 @@ public static class RondelEngine
 
         if (triggeredInvestor)
         {
-            // Calculate if landed on
-            // Note: The loop logic above is slightly flawed if we just check targetSlot==Investor for "landedOn"
-            // because distinct "pass through" vs "land on" matters for 2M bonus.
-            // But for now, sticking to existing logic structure.
-            bool landedOn = (targetSlot == RondelData.InvestorSlot);
-            InvestorEngine.HandleInvestorPhase(context, game, nationState, controller, landedOn);
+            if (targetSlot == RondelData.InvestorSlot)
+            {
+                // Landed on: the Investor turn is the action - interest, then the investors (p.11).
+                InvestorEngine.HandleInvestorPhase(context, game, nationState, controller, isLandedOn: true);
+            }
+            else
+            {
+                // Passed over. p.11: "the action determined by the space landed on is completed first" -
+                // the Investor turn opens when the action is complete (TurnEngine.EndTurn, Taxation).
+                game.InvestorTurnPending = true;
+                if (context != null) context.Entry(game).State = EntityState.Modified;
+            }
         }
 
         // Initialize the phase for the slot the move actually reached.

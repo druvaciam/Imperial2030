@@ -152,7 +152,8 @@ public class BotService
                             if (!SkipDelays)
                             {
                                 // Beat BEFORE the decision rather than after it. An Investor turn is opened
-                                // by the rondel move that just landed on (or passed over) Investor, so acting
+                                // by the rondel move that just landed on Investor, or by the end of the
+                                // turn of a nation whose move passed over it, so acting
                                 // straight away made that move and the resulting investment land in the same
                                 // instant, followed by a dead pause with nothing to watch. Same placement and
                                 // reasoning as the Swiss Bank branch below. One delay per action either way,
@@ -516,8 +517,9 @@ public class BotService
     // internal for the same reason as BotManeuver: Tests drives this one rondel action directly.
     internal async Task BotBuildFactory(ApplicationDbContext? ctx, Game game, NationState ns, Player controller)
     {
-        // A government that took over mid-turn (p.12: outbid in the Investor turn the rondel move opened)
-        // re-enters with the slot's action possibly already taken by its predecessor. The turn then just ends.
+        // Re-entry guard: the slot's action is taken once per turn (p.7). Nothing re-enters here in the
+        // p.11 order - a passed-over Investor turn follows the action and ends the turn - but a re-entry
+        // must not repeat it.
         if (ns.HasBuiltThisTurn) return;
 
         var strategy = GetStrategy(controller);
@@ -574,8 +576,9 @@ public class BotService
 
     internal async Task BotProduction(ApplicationDbContext? ctx, Game game, NationState ns)
     {
-        // A government that took over mid-turn (p.12: outbid in the Investor turn the rondel move opened)
-        // re-enters with the slot's action possibly already taken by its predecessor. The turn then just ends.
+        // Re-entry guard: the slot's action is taken once per turn (p.7). Nothing re-enters here in the
+        // p.11 order - a passed-over Investor turn follows the action and ends the turn - but a re-entry
+        // must not repeat it.
         if (ns.HasProducedThisTurn) return;
 
         var result = ProductionEngine.ExecuteProduction(ctx, game);
@@ -816,8 +819,9 @@ public class BotService
 
     internal async Task BotImport(ApplicationDbContext? ctx, Game game, NationState ns)
     {
-        // A government that took over mid-turn (p.12: outbid in the Investor turn the rondel move opened)
-        // re-enters with the slot's action possibly already taken by its predecessor. The turn then just ends.
+        // Re-entry guard: the slot's action is taken once per turn (p.7). Nothing re-enters here in the
+        // p.11 order - a passed-over Investor turn follows the action and ends the turn - but a re-entry
+        // must not repeat it.
         if (ns.HasImportedThisTurn) return;
 
         var nation = ns.Nation;

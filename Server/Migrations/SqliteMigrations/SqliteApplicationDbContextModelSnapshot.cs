@@ -138,6 +138,9 @@ namespace Imperial2030.Server.Migrations.SqliteMigrations
                     b.Property<Guid?>("InvestorCardHolderId")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("InvestorTurnPending")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsInvestorTurn")
                         .HasColumnType("INTEGER");
 
