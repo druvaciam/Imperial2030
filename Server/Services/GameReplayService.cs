@@ -1155,13 +1155,6 @@ public class GameReplayService
         }
     }
 
-    /// <summary>The whole game graph an engine call may read or write, tracked by <paramref name="context"/>.</summary>
-    private static Task<Game> LoadGame(ApplicationDbContext context, Guid gameId) => context.Games
-        .Include(g => g.Players)
-        .Include(g => g.NationStates)
-        .Include(g => g.Bonds)
-        .Include(g => g.Units)
-        .Include(g => g.TerritoryStates)
-        .AsSplitQuery()
-        .FirstAsync(g => g.Id == gameId);
+    private static async Task<Game> LoadGame(ApplicationDbContext context, Guid gameId)
+        => await context.LoadGameGraphAsync(gameId) ?? throw new InvalidOperationException($"Replay game {gameId} not found.");
 }

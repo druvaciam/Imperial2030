@@ -114,12 +114,7 @@ public static class GameSetupHelper
     /// </summary>
     public static async Task<Dictionary<Nation, Player>> InitializeGameAsync(ApplicationDbContext context, Guid gameId, Dictionary<Nation, Guid>? forcedDistribution = null, string? startedBy = null, List<PlayerRosterEntry>? roster = null)
     {
-        var game = await context.Games
-            .Include(g => g.Players)
-            .Include(g => g.NationStates)
-            .Include(g => g.Bonds)
-            .AsSplitQuery()
-            .FirstAsync(g => g.Id == gameId);
+        var game = await context.LoadGameGraphAsync(gameId) ?? throw new InvalidOperationException($"Game {gameId} not found.");
 
         var started = Engine.GameLifecycle.Start(context, game, forcedDistribution, startedBy ?? GameConstants.SystemPlayerName, roster);
         if (!started.Ok) throw new InvalidOperationException(started.Error);

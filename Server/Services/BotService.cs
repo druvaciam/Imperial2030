@@ -984,14 +984,7 @@ public class BotService
     private async Task<Game?> LoadGame(ApplicationDbContext? ctx, Guid gameId)
     {
         if (ctx == null) return null;
-        return await ctx.Games
-            .Include(g => g.Players)
-            .Include(g => g.NationStates)
-            .Include(g => g.Bonds)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Units)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        return await ctx.LoadGameGraphAsync(gameId);
     }
 
 
