@@ -742,7 +742,7 @@ else
                         @onchange="@(e => { if (Guid.TryParse(e.Value?.ToString(), out var g)) selectedPlayerId = g; })">
                             @foreach (var p in game.Players)
                             {
-                                             <option value="@p.Id" selected="@(p.Id == selectedPlayerId)">@p.UserName</option>
+                                             <option @key="p.Id" value="@p.Id" selected="@(p.Id == selectedPlayerId)">@p.UserName</option>
                             }
                                 </select>
                     }

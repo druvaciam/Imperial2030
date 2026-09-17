@@ -376,7 +376,8 @@ public class ReplaySessionManager : IDisposable
                     token.ThrowIfCancellationRequested();
                     session.CurrentActionIndex = index;
 
-                    // Skipped entries (JoinGame/LeaveGame/StartGame/Investor/InvestorBonus) are purely
+                    // Skipped entries (JoinGame/LeaveGame/StartGame/Investor/InvestorBonus, and a derived
+                    // Battle/FlagPlacement the replayed move already produced) are purely
                     // informational — GameReplayService applies no state change for them, so pausing a full
                     // beat on each just stalls playback with nothing to look at. They were making the gap
                     // between two consecutive *visible* events run several times PacingMs (e.g. an investor

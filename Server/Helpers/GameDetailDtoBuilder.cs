@@ -30,7 +30,10 @@ public static class GameDetailDtoBuilder
             JoinCode = game.Players.Any(p => p.UserId == userId && p.IsHost) ? game.JoinCode : null,
             CurrentTurnNation = game.CurrentTurnNation,
             PlayerCount = game.Players.Count,
-            Players = game.Players.Select(p => new PlayerDto
+            // Seating order (Player.Id, as everywhere else). EF returns a collection in no fixed order and
+            // the replay's in-memory copy changes it between polls; a roster that reshuffles under a
+            // <select> leaves the browser showing one player's name for another's assets.
+            Players = game.Players.GetOrderedPlayers().Select(p => new PlayerDto
             {
                 Id = p.Id,
                 UserId = p.IsBot ? $"bot-{p.Id}" : p.UserId!,

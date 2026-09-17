@@ -272,7 +272,8 @@ public class GameReplayService
         ApplicationDbContext context, Guid gameId,
         IReadOnlyList<GameActionDto> actions,
         // Invoked once per action with (action, index, wasSkipped). wasSkipped is true for the informational
-        // entries the skip-list below treats as no-ops — they advance the index but change no state, so a
+        // entries the skip-list below treats as no-ops, and for a derived entry (Battle, FlagPlacement) the
+        // preceding replayed move already produced — they advance the index but change no state, so a
         // paced viewer (ReplaySessionManager) can advance past them instantly instead of spending a full
         // beat showing nothing.
         Func<GameActionDto, int, bool, Task>? onActionReplayed = null)
@@ -334,6 +335,9 @@ public class GameReplayService
                 }
 
                 EngineResult? result = null;
+                // A derived entry whose effect the preceding replayed move already applied and logged: it
+                // advances the index like a skipped entry, with nothing new for a viewer to see.
+                bool alreadyApplied = false;
                 try
                 {
                     switch (action.ActionType)
@@ -619,6 +623,8 @@ public class GameReplayService
                             }
                             else
                             {
+                                // The replayed move auto-resolved the battle; there is nothing to answer.
+                                alreadyApplied = true;
                                 result = EngineResult.Success;
                             }
                             break;
@@ -678,6 +684,7 @@ public class GameReplayService
                             // its still-present counterpart must still be removed, not left stranded on the board.
                             if (aggUnit != null) context.Units.Remove(aggUnit);
                             if (defUnit != null) context.Units.Remove(defUnit);
+                            alreadyApplied = aggUnit == null && defUnit == null;
                             if (aggUnit != null || defUnit != null)
                             {
                                 // Only when this case actually performed a removal — if it was fully
@@ -712,6 +719,7 @@ public class GameReplayService
                                 // that is a change no replayed move accounted for, and dropping it would leave
                                 // the board wrong. See the "Production"/"Import" cases for why the replay
                                 // target's own log needs these entries at all.
+                                alreadyApplied = fpTerr != null && fpTerr.Controller == fpMeta.NewController;
                                 if (fpTerr != null && fpTerr.Controller != fpMeta.NewController)
                                 {
                                     fpTerr.Controller = fpMeta.NewController;
@@ -947,6 +955,7 @@ public class GameReplayService
                             }
                             if (!invGame.IsInvestorTurn)
                             {
+                                alreadyApplied = true;
                                 result = EngineResult.Success;
                                 break;
                             }
@@ -1002,6 +1011,8 @@ public class GameReplayService
                             }
                             break;
                         case "SwissBankResponse":
+                            // The replayed Move bypasses the Swiss Bank question and goes straight to its logged target.
+                            alreadyApplied = true;
                             result = EngineResult.Success;
                             break;
                         case "EndPhase":
@@ -1144,7 +1155,7 @@ public class GameReplayService
                 //var postReplayGame = context.Games.First(g => g.Id == replayGameId);
                 //_logger.LogTrace($"  -> IsInvestorTurn={postReplayGame.IsInvestorTurn}, Pending=[{string.Join(", ", postReplayGame.PendingInvestorIds)}]");
 
-                if (onActionReplayed != null) await onActionReplayed(action, i, false);
+                if (onActionReplayed != null) await onActionReplayed(action, i, alreadyApplied);
             }
 
             return new GameReplayResult { Success = true };
