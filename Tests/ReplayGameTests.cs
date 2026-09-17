@@ -179,11 +179,6 @@ namespace Imperial2030.Tests
             replayContext.Units.AddRange(replayRussiaArmy, replayIndiaArmy);
             await replayContext.SaveChangesAsync();
 
-            var replayManeuverController = new ManeuverController(replayContext, mockHub.Object, botService);
-            var replayStore = new Mock<Microsoft.AspNetCore.Identity.IUserStore<ApplicationUser>>();
-            var replayMockUserManager = new Mock<Microsoft.AspNetCore.Identity.UserManager<ApplicationUser>>(replayStore.Object, null, null, null, null, null, null, null, null);
-            var replayMockPresenceTracker = new Mock<PresenceTracker>();
-            var replayGamesController = new GamesController(replayContext, replayMockUserManager.Object, mockHub.Object, replayMockPresenceTracker.Object, botService, new Mock<INotificationService>().Object);
 
             var replayService = new GameReplayService();
 
@@ -196,7 +191,7 @@ namespace Imperial2030.Tests
             // battle immediately, defeating the point of this repro.
             var moveActionDto = new GameActionDto { Id = moveAction.Id, OrderIndex = moveAction.OrderIndex, Timestamp = moveAction.Timestamp, PlayerName = moveAction.PlayerName, Nation = moveAction.Nation, ActionType = moveAction.ActionType, Message = moveAction.Message, Metadata = moveAction.Metadata };
             var battleResponseActionDto = new GameActionDto { Id = battleResponseAction.Id, OrderIndex = battleResponseAction.OrderIndex, Timestamp = battleResponseAction.Timestamp, PlayerName = battleResponseAction.PlayerName, Nation = battleResponseAction.Nation, ActionType = battleResponseAction.ActionType, Message = battleResponseAction.Message, Metadata = battleResponseAction.Metadata };
-            var replayResult = await replayService.ReplayActionsAsync(replayContext, gameId, replayGamesController, replayManeuverController, new List<GameActionDto> { moveActionDto, battleResponseActionDto }, suppressBroadcasts: false);
+            var replayResult = await replayService.ReplayActionsAsync(replayContext, gameId, new List<GameActionDto> { moveActionDto, battleResponseActionDto });
             // This is the exact regression this test guards: if MoveArmy's replay had recorded the wrong
             // pending defender (e.g. China instead of India), the subsequent BattleResponse call above would
             // have returned Forbid/BadRequest (India wouldn't be an authorized pending defender), which
@@ -338,11 +333,6 @@ namespace Imperial2030.Tests
             replayContext.Units.AddRange(replayStagingArmies);
             await replayContext.SaveChangesAsync();
 
-            var replayManeuverController = new ManeuverController(replayContext, mockHub.Object, botService);
-            var replayStore = new Mock<Microsoft.AspNetCore.Identity.IUserStore<ApplicationUser>>();
-            var replayMockUserManager = new Mock<Microsoft.AspNetCore.Identity.UserManager<ApplicationUser>>(replayStore.Object, null, null, null, null, null, null, null, null);
-            var replayMockPresenceTracker = new Mock<PresenceTracker>();
-            var replayGamesController = new GamesController(replayContext, replayMockUserManager.Object, mockHub.Object, replayMockPresenceTracker.Object, botService, new Mock<INotificationService>().Object);
 
             var actionDtos = originalActions.Select(a => new GameActionDto
             {
@@ -357,7 +347,7 @@ namespace Imperial2030.Tests
             }).ToList();
 
             var replayService = new GameReplayService();
-            var replayResult = await replayService.ReplayActionsAsync(replayContext, gameId, replayGamesController, replayManeuverController, actionDtos, suppressBroadcasts: false);
+            var replayResult = await replayService.ReplayActionsAsync(replayContext, gameId, actionDtos);
             Assert.True(replayResult.Success, $"Replay failed at action {replayResult.FailedActionOrderIndex} ({replayResult.FailedActionType}): {replayResult.ErrorMessage}");
 
             // The actual regression this test guards: Beijing must end completely unoccupied (the surviving
@@ -454,14 +444,12 @@ namespace Imperial2030.Tests
             replayContext.Bonds.AddRange(replayRussia4M, replayRussia9M);
             await replayContext.SaveChangesAsync();
 
-            var replayGamesController = new GamesController(replayContext, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, new Mock<INotificationService>().Object);
-            var replayManeuverController = new ManeuverController(replayContext, mockHub.Object, botService);
 
             // Replay "Investment" through the exact production replay path (GameReplayService) that
             // TestReplayabilityFromActions exercises, instead of a hand-rolled call.
             var investmentActionDto = new GameActionDto { Id = investmentAction.Id, OrderIndex = investmentAction.OrderIndex, Timestamp = investmentAction.Timestamp, PlayerName = investmentAction.PlayerName, Nation = investmentAction.Nation, ActionType = investmentAction.ActionType, Message = investmentAction.Message, Metadata = investmentAction.Metadata };
             var replayService = new GameReplayService();
-            var replayResult = await replayService.ReplayActionsAsync(replayContext, gameId, replayGamesController, replayManeuverController, new List<GameActionDto> { investmentActionDto }, suppressBroadcasts: false);
+            var replayResult = await replayService.ReplayActionsAsync(replayContext, gameId, new List<GameActionDto> { investmentActionDto });
             Assert.True(replayResult.Success, $"Replayed Investment failed at action {replayResult.FailedActionOrderIndex} ({replayResult.FailedActionType}): {replayResult.ErrorMessage}");
 
             var afterReplayInvest = await replayContext.NationStates.FirstAsync(n => n.GameId == gameId && n.Nation == Nation.Russia);
@@ -677,8 +665,6 @@ namespace Imperial2030.Tests
             _output.WriteLine($"[TEST {totalPlayerCount}p] Setup reconstructed from action log matches the original exactly.");
 
             // Set up Replay Controllers
-            var replayGamesController = new GamesController(replayContext, mockUserManager.Object, mockHub.Object, mockPresenceTracker.Object, botService, new Moq.Mock<Imperial2030.Server.Services.INotificationService>().Object);
-            var replayManeuverController = new ManeuverController(replayContext, mockHub.Object, botService);
             
             // The acting-player/auth-context resolution, the per-action-type switch, and the
             // BadRequest/Forbid/Unauthorized failure handling all now live in the production
@@ -697,7 +683,7 @@ namespace Imperial2030.Tests
                 Message = a.Message,
                 Metadata = a.Metadata
             }).ToList();
-            var replayResult = await replayService.ReplayActionsAsync(replayContext, replayGameId, replayGamesController, replayManeuverController, actionDtos, suppressBroadcasts: false);
+            var replayResult = await replayService.ReplayActionsAsync(replayContext, replayGameId, actionDtos);
             Assert.True(replayResult.Success, $"Replay failed at action {replayResult.FailedActionOrderIndex} ({replayResult.FailedActionType}): {replayResult.ErrorMessage}");
 
             // 10. Compare Final States
@@ -1104,7 +1090,7 @@ namespace Imperial2030.Tests
             // log as a side effect of replaying the source's actions; ImportGame must log one explicitly
             // (remapped onto the fresh Player/nation IDs this import created) or StartReplay can never
             // reconstruct anything from it.
-            var replaySessionManager = new Imperial2030.Server.Services.ReplaySessionManager(mockScopeFactory.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<Imperial2030.Server.Services.ReplaySessionManager>.Instance) { PacingMs = 0 };
+            var replaySessionManager = new Imperial2030.Server.Services.ReplaySessionManager(Microsoft.Extensions.Logging.Abstractions.NullLogger<Imperial2030.Server.Services.ReplaySessionManager>.Instance) { PacingMs = 0 };
             var startReplayResult = await importGamesController.StartReplay(importedGame.Id, replaySessionManager);
             if (startReplayResult is BadRequestObjectResult startReplayBad)
             {
@@ -1139,7 +1125,6 @@ namespace Imperial2030.Tests
         /// endpoint place Russia's flag there via UpdateTerritoryControl and log that as a side effect.
         /// </summary>
         private async Task<(ApplicationDbContext ReplayContext, Guid GameId, GameReplayService Service,
-                           GamesController GamesController, ManeuverController ManeuverController,
                            GameActionDto MoveAction, GameActionDto FlagAction)>
             ArrangeDerivedFlagPlacementReplay(bool preSeedFleetOnReplayBoard)
         {
@@ -1243,13 +1228,7 @@ namespace Imperial2030.Tests
             }
             await replayContext.SaveChangesAsync();
 
-            var userStore = new Mock<IUserStore<ApplicationUser>>();
-            var userManager = new Mock<UserManager<ApplicationUser>>(userStore.Object, null, null, null, null, null, null, null, null);
-            var gamesController = new GamesController(replayContext, userManager.Object, mockHub.Object,
-                new Mock<PresenceTracker>().Object, botService, new Mock<INotificationService>().Object);
-
             return (replayContext, gameId, new GameReplayService(new XunitLogger<GameReplayService>(_output)),
-                    gamesController, new ManeuverController(replayContext, mockHub.Object, botService),
                     ToDto(originalActions.First(a => a.ActionType == "MoveFleet")), ToDto(flagActions[0]));
         }
 
@@ -1265,12 +1244,11 @@ namespace Imperial2030.Tests
         [Fact]
         public async Task ReplayDerivedFlagPlacement_IsNotLoggedTwice()
         {
-            var (replayContext, gameId, service, gamesController, maneuverController, moveAction, flagAction) =
+            var (replayContext, gameId, service, moveAction, flagAction) =
                 await ArrangeDerivedFlagPlacementReplay(preSeedFleetOnReplayBoard: true);
 
             // Both in one call, in their original order - exactly how a replay feeds them through.
-            var result = await service.ReplayActionsAsync(replayContext, gameId, gamesController, maneuverController,
-                new List<GameActionDto> { moveAction, flagAction }, suppressBroadcasts: true);
+            var result = await service.ReplayActionsAsync(replayContext, gameId, new List<GameActionDto> { moveAction, flagAction });
             Assert.True(result.Success, $"Replay failed at action {result.FailedActionOrderIndex} ({result.FailedActionType}): {result.ErrorMessage}");
 
             var replayedFlagActions = await replayContext.GameActions
@@ -1294,14 +1272,13 @@ namespace Imperial2030.Tests
         [Fact]
         public async Task ReplayUnaccountedFlagPlacement_IsStillAppliedAndLogged()
         {
-            var (replayContext, gameId, service, gamesController, maneuverController, _, flagAction) =
+            var (replayContext, gameId, service, _, flagAction) =
                 await ArrangeDerivedFlagPlacementReplay(preSeedFleetOnReplayBoard: false);
 
             var before = await replayContext.TerritoryStates.FirstAsync(ts => ts.GameId == gameId && ts.TerritoryId == "SeaOfJapan");
             Assert.Null(before.Controller);
 
-            var result = await service.ReplayActionsAsync(replayContext, gameId, gamesController, maneuverController,
-                new List<GameActionDto> { flagAction }, suppressBroadcasts: true);
+            var result = await service.ReplayActionsAsync(replayContext, gameId, new List<GameActionDto> { flagAction });
             Assert.True(result.Success, $"Replay failed at action {result.FailedActionOrderIndex} ({result.FailedActionType}): {result.ErrorMessage}");
 
             var seaOfJapan = await replayContext.TerritoryStates.FirstAsync(ts => ts.GameId == gameId && ts.TerritoryId == "SeaOfJapan");
@@ -1309,6 +1286,96 @@ namespace Imperial2030.Tests
 
             Assert.Single(await replayContext.GameActions
                 .Where(a => a.GameId == gameId && a.ActionType == "FlagPlacement")
+                .ToListAsync());
+        }
+
+        /// <summary>
+        /// A replayed <c>ToggleHostility</c> must land in the replay target's own log, and stay there.
+        /// The replay loop clears the change tracker before every action, so an entry added after the
+        /// handler's save and never saved itself was dropped: the board was right, but a replay of the
+        /// replay (an imported game watched back) had no record of the posture change.
+        /// </summary>
+        [Fact]
+        public async Task ReplayedToggleHostility_IsKeptInTheTargetsLog()
+        {
+            var (replayContext, gameId, service, moveAction, _) =
+                await ArrangeDerivedFlagPlacementReplay(preSeedFleetOnReplayBoard: true);
+
+            var toggle = new GameActionDto
+            {
+                Id = Guid.NewGuid(),
+                OrderIndex = moveAction.OrderIndex + 1,
+                Timestamp = moveAction.Timestamp,
+                PlayerName = moveAction.PlayerName,
+                Nation = Nation.Russia,
+                ActionType = "ToggleHostility",
+                Message = string.Empty,
+                Metadata = JsonSerializer.Serialize(new HostilityMetadata { UnitType = UnitType.Fleet, TerritoryId = "SeaOfJapan", IsHostile = true })
+            };
+            // A second action after the toggle, so the loop's change-tracker clear runs before the end.
+            var endPhase = new GameActionDto
+            {
+                Id = Guid.NewGuid(),
+                OrderIndex = toggle.OrderIndex + 1,
+                Timestamp = moveAction.Timestamp,
+                PlayerName = moveAction.PlayerName,
+                Nation = Nation.Russia,
+                ActionType = "EndPhase",
+                Message = string.Empty,
+                Metadata = JsonSerializer.Serialize(new PhaseMetadata { PhaseName = "Fleets" })
+            };
+
+            var result = await service.ReplayActionsAsync(replayContext, gameId, new List<GameActionDto> { moveAction, toggle, endPhase });
+            Assert.True(result.Success, $"Replay failed at action {result.FailedActionOrderIndex} ({result.FailedActionType}): {result.ErrorMessage}");
+
+            var fleet = await replayContext.Units.FirstAsync(u => u.GameId == gameId && u.Nation == Nation.Russia && u.UnitType == UnitType.Fleet);
+            Assert.True(fleet.IsHostile);
+            Assert.Single(await replayContext.GameActions
+                .Where(a => a.GameId == gameId && a.ActionType == "ToggleHostility")
+                .ToListAsync());
+        }
+
+        /// <summary>
+        /// Same for a <c>Battle</c> the dispatcher applies itself (one no preceding replayed move already
+        /// resolved): both units go, and the entry stays in the target's log.
+        /// </summary>
+        [Fact]
+        public async Task ReplayedBattle_IsKeptInTheTargetsLog()
+        {
+            var (replayContext, gameId, service, moveAction, _) =
+                await ArrangeDerivedFlagPlacementReplay(preSeedFleetOnReplayBoard: true);
+            replayContext.Units.Add(new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.China, UnitType = UnitType.Fleet, TerritoryId = "Vladivostok", IsHostile = true });
+            await replayContext.SaveChangesAsync();
+
+            var battle = new GameActionDto
+            {
+                Id = Guid.NewGuid(),
+                OrderIndex = moveAction.OrderIndex,
+                Timestamp = moveAction.Timestamp,
+                PlayerName = moveAction.PlayerName,
+                Nation = Nation.Russia,
+                ActionType = "Battle",
+                Message = string.Empty,
+                Metadata = JsonSerializer.Serialize(new ActionMetadata { TerritoryId = "Vladivostok", AggressorNation = Nation.Russia, DefenderNation = Nation.China, UnitType = UnitType.Fleet, DefenderUnitType = UnitType.Fleet })
+            };
+            var endPhase = new GameActionDto
+            {
+                Id = Guid.NewGuid(),
+                OrderIndex = battle.OrderIndex + 1,
+                Timestamp = moveAction.Timestamp,
+                PlayerName = moveAction.PlayerName,
+                Nation = Nation.Russia,
+                ActionType = "EndPhase",
+                Message = string.Empty,
+                Metadata = JsonSerializer.Serialize(new PhaseMetadata { PhaseName = "Fleets" })
+            };
+
+            var result = await service.ReplayActionsAsync(replayContext, gameId, new List<GameActionDto> { battle, endPhase });
+            Assert.True(result.Success, $"Replay failed at action {result.FailedActionOrderIndex} ({result.FailedActionType}): {result.ErrorMessage}");
+
+            Assert.Empty(await replayContext.Units.Where(u => u.GameId == gameId && u.TerritoryId == "Vladivostok").ToListAsync());
+            Assert.Single(await replayContext.GameActions
+                .Where(a => a.GameId == gameId && a.ActionType == "Battle")
                 .ToListAsync());
         }
 
@@ -1427,7 +1494,7 @@ namespace Imperial2030.Tests
                     $"Action log names '{name}', but StartGame's roster snapshot does not contain it - replay cannot resolve who acted.");
             }
 
-            var replayManager = new ReplaySessionManager(mockScopeFactory.Object,
+            var replayManager = new ReplaySessionManager(
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<ReplaySessionManager>.Instance) { PacingMs = 0 };
             var startRes = await gamesController.StartReplay(gameId, replayManager);
             if (startRes is BadRequestObjectResult startBad) Assert.Fail($"StartReplay failed: {startBad.Value}");

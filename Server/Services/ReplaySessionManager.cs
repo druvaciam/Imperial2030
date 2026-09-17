@@ -1,15 +1,10 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
-using Imperial2030.Server.Controllers;
 using Imperial2030.Server.Data;
 using Imperial2030.Server.Helpers;
-using Imperial2030.Server.Hubs;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Models;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Imperial2030.Server.Services;
@@ -117,7 +112,6 @@ public class ReplaySessionManager : IDisposable
     /// </summary>
     public int MaxSessionsPerOwner { get; set; } = 5;
 
-    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ReplaySessionManager> _logger;
     private readonly ConcurrentDictionary<Guid, ReplaySession> _sessions = new();
     private readonly Timer _idleSweepTimer;
@@ -133,9 +127,8 @@ public class ReplaySessionManager : IDisposable
 
     private bool _disposed;
 
-    public ReplaySessionManager(IServiceScopeFactory scopeFactory, ILogger<ReplaySessionManager> logger)
+    public ReplaySessionManager(ILogger<ReplaySessionManager> logger)
     {
-        _scopeFactory = scopeFactory;
         _logger = logger;
         _idleSweepTimer = new Timer(_ => _ = EvictIdleSessionsAsync(), null, IdleSweepInterval, IdleSweepInterval);
     }
@@ -371,23 +364,13 @@ public class ReplaySessionManager : IDisposable
 
     private async Task RunReplayLoopAsync(ReplaySession session)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
-        var presenceTracker = scope.ServiceProvider.GetRequiredService<PresenceTracker>();
-        var botService = scope.ServiceProvider.GetRequiredService<BotService>();
-        var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
-        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-
-        var replayGamesController = new GamesController(session.Context, userManager, hubContext, presenceTracker, botService, notificationService) { SuppressBroadcasts = true };
-        var replayManeuverController = new ManeuverController(session.Context, hubContext, botService) { SuppressBroadcasts = true };
         var replayService = new GameReplayService();
         var token = session.Cts.Token;
 
         try
         {
             var result = await replayService.ReplayActionsAsync(
-                session.Context, session.ReplayGameId, replayGamesController, replayManeuverController,
-                session.Actions, suppressBroadcasts: true,
+                session.Context, session.ReplayGameId, session.Actions,
                 onActionReplayed: async (_, index, wasSkipped) =>
                 {
                     token.ThrowIfCancellationRequested();
@@ -401,7 +384,7 @@ public class ReplaySessionManager : IDisposable
                     // one 5s beat). Advance the index so progress still counts them, then move straight on.
                     if (wasSkipped) return;
 
-                    await CaptureSnapshotAsync(session, replayGamesController);
+                    await CaptureSnapshotAsync(session);
                     await WaitForNextStepAsync(session, token);
                 });
 
@@ -413,7 +396,7 @@ public class ReplaySessionManager : IDisposable
             }
             else
             {
-                await CaptureSnapshotAsync(session, replayGamesController);
+                await CaptureSnapshotAsync(session);
             }
         }
         catch (OperationCanceledException)
@@ -455,7 +438,7 @@ public class ReplaySessionManager : IDisposable
         }
     }
 
-    private static async Task CaptureSnapshotAsync(ReplaySession session, GamesController gamesController)
+    private static async Task CaptureSnapshotAsync(ReplaySession session)
     {
         var game = await session.Context.Games
             .Include(g => g.Players).ThenInclude(p => p.User)
@@ -468,7 +451,7 @@ public class ReplaySessionManager : IDisposable
             .FirstOrDefaultAsync(g => g.Id == session.ReplayGameId);
         if (game != null)
         {
-            session.LatestSnapshot = gamesController.BuildGameDetailDto(game, null);
+            session.LatestSnapshot = GameDetailDtoBuilder.Build(game, null, session.Context, presence: null);
         }
     }
 }

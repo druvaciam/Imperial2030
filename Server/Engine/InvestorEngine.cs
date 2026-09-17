@@ -305,7 +305,7 @@ public static class InvestorEngine
                 // Reaching it needs the tied leaders to exclude the sitting government, and that cannot
                 // happen: this method runs after each SINGLE bond purchase, so exactly one player's credit
                 // sum changes per call, and the government always already holds the maximum (it is seeded
-                // that way at setup - GameSetupHelper assigns it from the nation's 2M bond holder - and
+                // that way at setup - GameLifecycle.Start assigns it from the nation's 2M bond holder - and
                 // every branch here preserves it). Let M be the old maximum, held by the government, and V
                 // the buyer's new sum: V > M makes the buyer the sole candidate; V == M or V < M leaves the
                 // government among the candidates and it retains. No path leaves it out.

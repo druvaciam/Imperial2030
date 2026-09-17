@@ -50,7 +50,6 @@ builder.Services.AddScoped<Imperial2030.Server.Services.GameReplayService>();
 builder.Services.AddSingleton(sp =>
 {
     var manager = new Imperial2030.Server.Services.ReplaySessionManager(
-        sp.GetRequiredService<IServiceScopeFactory>(),
         sp.GetRequiredService<ILogger<Imperial2030.Server.Services.ReplaySessionManager>>());
 
     var configured = builder.Configuration.GetValue<int?>("Replay:MaxConcurrentSessions");

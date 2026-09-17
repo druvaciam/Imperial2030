@@ -24,13 +24,6 @@ public class ManeuverController : ControllerBase
     private readonly Imperial2030.Server.Services.BotService _botService;
     private readonly ILogger<ManeuverController> _logger;
 
-    /// <summary>
-    /// When true, suppresses all SignalR broadcasts from this controller instance. Set by
-    /// GameReplayService while replaying actions (e.g. during ImportGame) so a large replay doesn't
-    /// spam every connected browser with GameUpdated/etc. events for a game they can't see yet.
-    /// </summary>
-    public bool SuppressBroadcasts { get; set; } = false;
-
     // logger is optional so the many direct `new ManeuverController(...)` constructions in Tests/ keep
     // working; DI supplies the real one in production.
     public ManeuverController(ApplicationDbContext context, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, Imperial2030.Server.Services.BotService botService, ILogger<ManeuverController>? logger = null)
@@ -64,7 +57,7 @@ public class ManeuverController : ControllerBase
 
     private async Task Broadcast(Guid gameId)
     {
-        if (!SuppressBroadcasts) { await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId); }
+        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("GameUpdated", gameId);
     }
 
     [HttpPost("{gameId}/move-fleet")]
@@ -224,13 +217,10 @@ public class ManeuverController : ControllerBase
         var result = ManeuverEngine.RespondToBattle(_context, game, respondingNation, request.IsFight);
         if (!result.Ok) return BadRequest(result.Error);
 
-        if (!SuppressBroadcasts)
-        {
-            var toast = result.Fought
-                ? ToastBuilder.BuildBattleResponseToast(result.RespondingNation, result.AggressorNation, isFight: true)
-                : ToastBuilder.BuildBattleResponseToast(result.RespondingNation, result.RespondingNation, isFight: false);
-            await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", toast, false);
-        }
+        var toast = result.Fought
+            ? ToastBuilder.BuildBattleResponseToast(result.RespondingNation, result.AggressorNation, isFight: true)
+            : ToastBuilder.BuildBattleResponseToast(result.RespondingNation, result.RespondingNation, isFight: false);
+        await _hubContext.Clients.Group(gameId.ToString()).SendAsync("ShowToast", toast, false);
 
         // The aggressor's maneuver resumes once the battle is closed; flags are settled at its phase end.
         if (result.BattleClosed) ManeuverEngine.TryAutoAdvanceManeuver(_context, game, result.AggressorNation);

@@ -146,11 +146,6 @@ public class PresenceTracker
         return _userConnections.TryGetValue(userId, out var count) && count > 0;
     }
 
-    public IEnumerable<string> GetOnlineUsers()
-    {
-        return _userConnections.Where(kvp => kvp.Value > 0).Select(kvp => kvp.Key);
-    }
-
     /// <summary>
     /// Forgets a game outright. Called when a game is deleted: nobody has disconnected, so the
     /// per-connection cleanup paths above would never reach these entries.
