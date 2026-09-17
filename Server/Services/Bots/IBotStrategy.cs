@@ -17,6 +17,8 @@ public interface IBotStrategy
     
     // Core decision weighting
     double ScoreRondelSlot(int slot, Game game, NationState ns, Player controller, int factories, int units);
+
+    double GetRondelSelectionWeight(double candidateScore, double highestCandidateScore);
     
     // Specific actions
     Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds);

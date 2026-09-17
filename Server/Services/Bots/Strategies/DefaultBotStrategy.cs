@@ -24,16 +24,23 @@ public class DefaultBotStrategy : BotStrategyBase
     private const int LowerUnitCountImportWeight = 10;
     private const int NeededHomeDefenderScoreBonus = 160;
     private const int MaximumEmergencyRondelScore = 150;
+    private const int MaximumUnitsAboveFactoryCount = 3;
+    private const double RondelSelectionTemperature = 10.0;
     private const string LondonTerritoryId = "London";
 
     public override string Name => "Default";
+
+    public override double GetRondelSelectionWeight(double candidateScore, double highestCandidateScore) =>
+        Math.Exp((candidateScore - highestCandidateScore) / RondelSelectionTemperature);
 
     public override double ScoreRondelSlot(int slot, Game game, NationState ns, Player controller, int factories, int units)
     {
         return slot switch
         {
             1 => (ns.Treasury >= 5 && CanBuildFactory(game, ns.Nation)) ? 25 : 0,       // Factory
-            2 or 6 => ScoreProduction(game, ns, controller),                  // Production
+            2 or 6 => units >= factories + MaximumUnitsAboveFactoryCount
+                ? 0
+                : ScoreProduction(game, ns, controller),                     // Production
             0 => ScoreTaxation(game, ns),                                      // Taxation
             3 or 7 => HasExpandableTargets(game, ns.Nation, controller) ? 15 : 0, // Maneuver
             5 => ScoreImport(game, ns, controller),                            // Import
@@ -228,56 +235,6 @@ public class DefaultBotStrategy : BotStrategyBase
         }
 
         return imports;
-    }
-
-    internal static bool IsProjectedWinningGameEndingTaxation(
-        Game game,
-        NationState nationState,
-        Player controller)
-    {
-        var preview = TaxationHelper.PreviewTaxation(game, nationState);
-        int projectedPower = Math.Min(
-            GameConstants.MaxPowerPoints,
-            nationState.Power + preview.ExpectedPowerGain);
-        if (projectedPower < GameConstants.MaxPowerPoints) return false;
-        int moveCost = RondelData.GetMoveCost(
-            nationState.RondelPosition,
-            RondelData.TaxationSlot,
-            nationState.Power);
-
-        int ProjectedPower(NationState state) => state.Nation == nationState.Nation
-            ? projectedPower
-            : state.Power;
-        int ProjectedScore(Player player) => player.Cash
-            + (player.Id == controller.Id ? preview.ExpectedBonus - moveCost : 0)
-            + game.Bonds.Where(bond => bond.HolderId == player.Id).Sum(bond =>
-            {
-                var state = game.NationStates.FirstOrDefault(item => item.Nation == bond.Nation);
-                return state == null ? 0 : bond.Interest * RondelData.GetPowerFactor(ProjectedPower(state));
-            });
-
-        var rankedNations = game.NationStates
-            .OrderByDescending(ProjectedPower)
-            .Select(state => state.Nation)
-            .ToList();
-        var scores = game.Players.ToDictionary(player => player.Id, ProjectedScore);
-        var credits = game.Players.ToDictionary(player => player.Id, player => rankedNations.ToDictionary(
-            nation => nation,
-            nation => game.Bonds.Where(bond => bond.HolderId == player.Id && bond.Nation == nation).Sum(bond => bond.Cost)));
-
-        var projectedWinner = game.Players.OrderBy(player => player, Comparer<Player>.Create((left, right) =>
-        {
-            int scoreDifference = scores[right.Id].CompareTo(scores[left.Id]);
-            if (scoreDifference != 0) return scoreDifference;
-            foreach (var nation in rankedNations)
-            {
-                int creditDifference = credits[right.Id][nation].CompareTo(credits[left.Id][nation]);
-                if (creditDifference != 0) return creditDifference;
-            }
-            return 0;
-        })).FirstOrDefault();
-
-        return projectedWinner?.Id == controller.Id;
     }
 
     private static int CountUsableFactories(Game game, Nation nation, CityType cityType)

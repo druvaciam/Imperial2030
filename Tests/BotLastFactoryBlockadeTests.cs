@@ -1,3 +1,4 @@
+using Imperial2030.Server.Engine;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,6 +8,7 @@ using Imperial2030.Server.Models;
 using Imperial2030.Server.Services;
 using Imperial2030.Server.Services.Bots;
 using Imperial2030.Server.Services.Bots.Strategies;
+using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -215,5 +217,102 @@ public class BotLastFactoryBlockadeTests
         Assert.Contains(invader, game.Units);
         Assert.True(invader.IsHostile);
         Assert.DoesNotContain(game.Actions, a => a.ActionType == "Battle");
+    }
+
+    /// <summary>
+    /// The same last-unoccupied-factory protection applies when a bot considers destroying a factory.
+    /// Two factories on the board are not necessarily two available factories: if one is already
+    /// blockaded, the other is the nation's last unoccupied factory and cannot be destroyed.
+    ///
+    /// This is the exact shape that made replay fail in CI: live bot play logged destruction of Beijing
+    /// while a hostile Indian army blockaded Shanghai. Replay routed that action through the correctly
+    /// guarded human endpoint and rejected the illegal action.
+    /// </summary>
+    [Fact]
+    public void ABotCannotDestroyTheLastUnoccupiedFactoryWhenAnotherFactoryIsBlockaded()
+    {
+        var attacker = new Player { Id = Guid.NewGuid(), IsBot = true, BotType = "Default", BotName = "Russia Bot" };
+        var defender = new Player { Id = Guid.NewGuid(), UserId = "china-player" };
+        var game = new Game
+        {
+            Id = Guid.NewGuid(),
+            Status = GameStatus.InProgress,
+            CurrentTurnNation = Nation.Russia,
+            Players = new List<Player> { attacker, defender },
+            NationStates = new List<NationState>
+            {
+                new() { Nation = Nation.Russia, ControllerId = attacker.Id },
+                new() { Nation = Nation.China, ControllerId = defender.Id }
+            },
+            TerritoryStates = new List<TerritoryState>
+            {
+                new() { TerritoryId = "Beijing", HasFactory = true },
+                new() { TerritoryId = "Shanghai", HasFactory = true }
+            },
+            Units = new List<Unit>(),
+            Actions = new List<GameAction>()
+        };
+
+        for (int index = 0; index < ManeuverRules.DestroyFactoryArmyCost; index++)
+        {
+            game.Units.Add(new Unit
+            {
+                Id = Guid.NewGuid(), Nation = Nation.Russia, UnitType = UnitType.Army,
+                TerritoryId = "Beijing", IsHostile = false
+            });
+        }
+
+        game.Units.Add(new Unit
+        {
+            Id = Guid.NewGuid(), Nation = Nation.India, UnitType = UnitType.Army,
+            TerritoryId = "Shanghai", IsHostile = true
+        });
+
+        var botService = BuildBotService(Guid.NewGuid().ToString());
+
+        var candidates = ManeuverEngine.FactoryDestructionCandidates(game, Nation.Russia, attacker);
+
+        Assert.DoesNotContain("Beijing", candidates);
+    }
+
+    [Fact]
+    public void ABotCanDestroyAFactoryWhenTheDefenderHasAnotherUnoccupiedFactory()
+    {
+        var attacker = new Player { Id = Guid.NewGuid(), IsBot = true, BotType = "Default", BotName = "Russia Bot" };
+        var defender = new Player { Id = Guid.NewGuid(), UserId = "china-player" };
+        var game = new Game
+        {
+            Id = Guid.NewGuid(),
+            Status = GameStatus.InProgress,
+            CurrentTurnNation = Nation.Russia,
+            Players = new List<Player> { attacker, defender },
+            NationStates = new List<NationState>
+            {
+                new() { Nation = Nation.Russia, ControllerId = attacker.Id },
+                new() { Nation = Nation.China, ControllerId = defender.Id }
+            },
+            TerritoryStates = new List<TerritoryState>
+            {
+                new() { TerritoryId = "Beijing", HasFactory = true },
+                new() { TerritoryId = "Shanghai", HasFactory = true }
+            },
+            Units = new List<Unit>(),
+            Actions = new List<GameAction>()
+        };
+
+        for (int index = 0; index < ManeuverRules.DestroyFactoryArmyCost; index++)
+        {
+            game.Units.Add(new Unit
+            {
+                Id = Guid.NewGuid(), Nation = Nation.Russia, UnitType = UnitType.Army,
+                TerritoryId = "Beijing", IsHostile = false
+            });
+        }
+
+        var botService = BuildBotService(Guid.NewGuid().ToString());
+
+        var candidates = ManeuverEngine.FactoryDestructionCandidates(game, Nation.Russia, attacker);
+
+        Assert.Contains("Beijing", candidates);
     }
 }

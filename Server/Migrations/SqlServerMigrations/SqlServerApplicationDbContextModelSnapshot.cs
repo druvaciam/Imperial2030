@@ -144,6 +144,9 @@ namespace Imperial2030.Server.Migrations
                     b.Property<Guid?>("InvestorCardHolderId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<bool>("InvestorTurnPending")
+                        .HasColumnType("bit");
+
                     b.Property<bool>("IsInvestorTurn")
                         .HasColumnType("bit");
 

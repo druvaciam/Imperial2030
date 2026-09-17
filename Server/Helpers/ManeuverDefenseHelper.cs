@@ -5,7 +5,7 @@ using Imperial2030.Shared.Models;
 namespace Imperial2030.Server.Helpers;
 
 /// <summary>
-/// Shared maneuver evaluation used by both heuristic bots and RL training rewards.
+/// Maneuver evaluation used by heuristic bots to avoid low-value neutral-region stacking.
 /// </summary>
 public static class ManeuverDefenseHelper
 {

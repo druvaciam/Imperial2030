@@ -11,6 +11,32 @@ namespace Imperial2030.Tests;
 public class DefaultBotRondelScoringTests
 {
     [Fact]
+    public void ProductionScoresZeroAtFactoriesPlusThreeUnits()
+    {
+        var controller = new Player { Cash = 10, IsBot = true, BotType = "Default" };
+        var nationState = new NationState
+        {
+            Nation = Nation.Europe,
+            ControllerId = controller.Id,
+            Treasury = 10
+        };
+        var game = NewGame(controller, new Player(), nationState);
+        foreach (string territoryId in new[] { "Berlin", "Paris", "Rome" })
+        {
+            game.TerritoryStates.Add(new TerritoryState { TerritoryId = territoryId, HasFactory = true });
+        }
+
+        double production = new DefaultBotStrategy().ScoreRondelSlot(
+            RondelData.ProductionSlot1,
+            game,
+            nationState,
+            controller,
+            factories: 3,
+            units: 6);
+        Assert.Equal(0, production);
+    }
+
+    [Fact]
     public void DefaultBotGivesNearbyMaximumTaxationVeryHighWeight()
     {
         var controller = new Player { Cash = 10, IsBot = true, BotType = "Default" };

@@ -44,7 +44,7 @@ public class RLBotStrategy : BotStrategyBase
     // Import decision: asked once per unit while on the Import rondel slot, up to MaxImportUnits times.
     // ImportPlaceActionBase + (homeSlotIndex * 2) + (0=Army, 1=Fleet), homeSlotIndex in [0,3] over the
     // nation's 4 home territories ordered by Id (same ordering used elsewhere for per-nation home-territory encoding).
-    public const int MaxImportUnits = 3;
+    public const int MaxImportUnits = GameConstants.MaxImportUnits;
     public const int ImportStopAction = 191;
     public const int ImportPlaceActionBase = 192;
     public const int ImportPlaceActionCount = 8;

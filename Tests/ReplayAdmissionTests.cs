@@ -97,7 +97,7 @@ namespace Imperial2030.Tests
         }
 
         private static ReplaySessionManager NewManager(ApplicationDbContext context, int globalCap, int perOwnerCap) =>
-            new(ScopeFactory(context), NullLogger<ReplaySessionManager>.Instance)
+            new(NullLogger<ReplaySessionManager>.Instance)
             {
                 PacingMs = 0,
                 MaxConcurrentSessions = globalCap,

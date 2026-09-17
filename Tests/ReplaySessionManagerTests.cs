@@ -140,7 +140,7 @@ namespace Imperial2030.Tests
             var finishedNationStates = await context.NationStates.AsNoTracking().Where(n => n.GameId == gameId).OrderBy(n => n.Nation).ToListAsync();
 
             // 3. Start a replay session against it, sped up so the test doesn't wait in real time.
-            var replaySessionManager = new ReplaySessionManager(mockScopeFactory.Object, NullLogger<ReplaySessionManager>.Instance) { PacingMs = 0 };
+            var replaySessionManager = new ReplaySessionManager(NullLogger<ReplaySessionManager>.Instance) { PacingMs = 0 };
             SetControllerUser(gamesController, hostUserId);
             var startResult = await gamesController.StartReplay(gameId, replaySessionManager);
             var startOk = Assert.IsType<OkObjectResult>(startResult);
@@ -260,7 +260,7 @@ namespace Imperial2030.Tests
             await gamesController.ExecuteTaxation(gameId);
 
             // Deliberately slow-paced this time so we can catch it mid-replay before it completes.
-            var replaySessionManager = new ReplaySessionManager(mockScopeFactory.Object, NullLogger<ReplaySessionManager>.Instance) { PacingMs = 300 };
+            var replaySessionManager = new ReplaySessionManager(NullLogger<ReplaySessionManager>.Instance) { PacingMs = 300 };
             SetControllerUser(gamesController, hostUserId);
             var startResult = await gamesController.StartReplay(gameId, replaySessionManager);
             var startOk = Assert.IsType<OkObjectResult>(startResult);
@@ -352,7 +352,6 @@ namespace Imperial2030.Tests
             await gamesController.ExecuteTaxation(gameId);
 
             var replaySessionManager = new Imperial2030.Server.Services.ReplaySessionManager(
-                mockScopeFactory.Object,
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<Imperial2030.Server.Services.ReplaySessionManager>.Instance) { PacingMs = 0 };
 
             SetControllerUser(gamesController, hostUserId);
@@ -545,7 +544,7 @@ namespace Imperial2030.Tests
             SetControllerUser(gamesController, russiaController.UserId!);
             await gamesController.ExecuteTaxation(gameId);
 
-            var replaySessionManager = new ReplaySessionManager(mockScopeFactory.Object, NullLogger<ReplaySessionManager>.Instance) { PacingMs = 0 };
+            var replaySessionManager = new ReplaySessionManager(NullLogger<ReplaySessionManager>.Instance) { PacingMs = 0 };
             SetControllerUser(gamesController, hostUserId);
 
             // Two independent viewers of the same finished game.

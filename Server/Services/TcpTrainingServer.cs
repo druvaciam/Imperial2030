@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Imperial2030.Server.Data;
+using Imperial2030.Server.Engine;
 using Imperial2030.Server.Models;
 using Imperial2030.Server.Services.Bots.Strategies;
 using Imperial2030.Shared.Constants;
@@ -38,23 +39,33 @@ public class TcpTrainingServer : BackgroundService
         public HashSet<string> DecidedFactoryDestructionTerritoriesThisTurn { get; set; } = new();
         /// <summary>
         /// The nation that landed on the Factory slot THIS TURN and still owes a build/skip decision, or
-        /// null. Armed by the rondel move, cleared the moment the decision resolves.
-        ///
-        /// This has to be session state, exactly like <see cref="PendingImportRemaining"/> below, and
-        /// cannot be re-derived from the nation itself: RondelPosition persists across turns by design and
-        /// Game.AdvanceTurn clears HasBuiltThisTurn every turn, so a gate built from those two re-arms on
-        /// the nation's every later turn and traps it on the slot for the rest of the game. See
-        /// Tests/TrainingFactorySlotTrapTests.cs.
+        /// null. Set by the rondel move, cleared when the decision is made or the turn moves on. Kept as
+        /// session state on purpose: RondelPosition persists across turns and HasBuiltThisTurn is cleared
+        /// every turn, so deriving "decision owed" from those two would say yes on every later turn too.
         /// </summary>
         public Nation? FactoryDecisionOwedBy { get; set; }
 
         public int? PendingImportRemaining { get; set; } // Non-null while stepping through an Import decision sequence
-        public int ImportUnitsPlacedThisSequence { get; set; } = 0; // Tracks whether the current Import sequence placed anything, for the wasted-import-with-money penalty
 
-        // Where each unit moved FROM on its previous maneuver, so a move straight back to it can be
-        // recognised as a reversal. Keyed by unit id and kept for the whole game: the two halves of an
-        // oscillation land in different maneuver turns, so per-turn state cannot see it.
-        public Dictionary<Guid, string> PreviousMoveOrigin { get; set; } = new();
+        /// <summary>
+        /// The nation whose turn the Import sequence belongs to, set by the rondel move like
+        /// <see cref="FactoryDecisionOwedBy"/>. The sequence is dropped if the turn moves on without it
+        /// finishing (a government change in an Investor turn a Swiss Bank's forced stop opened hands the
+        /// nation to a bot).
+        /// </summary>
+        public Nation? ImportSequenceNation { get; set; }
+        /// <summary>
+        /// Units placed so far by the current step-by-step Import sequence: its count feeds the
+        /// wasted-import-with-money penalty, its contents are what ImportEngine.CompleteImport logs.
+        /// </summary>
+        public List<(UnitType UnitType, string TerritoryId)> ImportPlacedThisSequence { get; set; } = new();
+
+        /// <summary>
+        /// Board-position baseline for the RL-controlled nation's current Maneuver. Set on arriving on
+        /// either Maneuver rondel slot and cleared only after the complete phase, including battles,
+        /// territory control, and factory-destruction decisions, has resolved.
+        /// </summary>
+        public ManeuverOutcomeSnapshot? ManeuverOutcome { get; set; }
 
         /// <summary>
         /// Multiplier applied to every shaping term before it is folded into the reward, set per episode
@@ -71,7 +82,7 @@ public class TcpTrainingServer : BackgroundService
         /// hold at most one factory in each (Imperial-2030-Rules.pdf p.7, "Only one factory may be built in
         /// each city"), two of which are already built at setup (p.4) - so the USUAL number of builds
         /// available across a game is two, after which landing on the slot does nothing and is penalised.
-        /// Not a hard cap: three armies can destroy a foreign factory (p.11), which frees that city to be
+        /// Not a limit: three armies can destroy a foreign factory (p.11), which frees that city to be
         /// built in again - GetFactoryBuildOptions gates only on !HasFactory, so the engine allows the
         /// rebuild. It is rare rather than impossible (one destruction across the 260-move exported game),
         /// which is enough to make the slot mostly-dead late without ever being reliably dead.
@@ -88,42 +99,13 @@ public class TcpTrainingServer : BackgroundService
         public int ConsecutiveSameTurnSteps { get; set; } = 0;
     }
 
-    /// <summary>
-    /// Penalty for shuffling a unit back to the territory it just came from without gaining anything.
-    /// Sized above the small flag/positioning rewards so an agent cannot farm them by oscillating, but
-    /// well below the wasted-Rondel-turn penalties: the move is pointless, not actively damaging.
-    /// </summary>
-    private const float PointlessReversalPenalty = 4.0f;
-
-    /// <summary>
-    /// Whether this move walks a unit straight back to the territory it left on its previous maneuver
-    /// without gaining anything - the Kazakhstan -&gt; Chongqing -&gt; Kazakhstan pattern, two full turns
-    /// spent to end up exactly where it started.
-    ///
-    /// Nothing else in the reward function objects to it: moving costs no money, so the wasted-Rondel
-    /// penalties never fire, and the flag and hostile-clearing rewards simply pay nothing - leaving a
-    /// zero-signal action the agent has no reason to avoid.
-    ///
-    /// Deliberately narrow, so purposeful returns stay unpenalized:
-    ///   - staying put is not a reversal at all;
-    ///   - a hostile move is an attack, whichever direction it goes;
-    ///   - returning to a territory this nation does NOT already hold can win a flag, which is a real
-    ///     gain even though the unit has been there before.
-    /// </summary>
-    /// <param name="previousMoveOrigin">Unit id -&gt; where it moved FROM last maneuver (TrainingSession.PreviousMoveOrigin).</param>
-    public static bool IsPointlessReversal(
-        Game game, Unit unit, string origin, string target, bool isHostileMove,
-        IReadOnlyDictionary<Guid, string> previousMoveOrigin)
+    public sealed class ManeuverOutcomeSnapshot
     {
-        if (target == origin) return false;
-        if (isHostileMove) return false;
-        if (!previousMoveOrigin.TryGetValue(unit.Id, out var previousOrigin) || previousOrigin != target) return false;
-
-        // Home provinces are never flagged, so returning to one can never win a flag either.
-        var targetDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
-        if (targetDef?.Nation == unit.Nation) return true;
-
-        return game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == target)?.Controller == unit.Nation;
+        public Nation Nation { get; set; }
+        public int TurnCount { get; set; }
+        public float InitialStrategicPotential { get; set; }
+        public bool AnyUnitChangedTerritory { get; set; }
+        public bool DirectEventOccurred { get; set; }
     }
 
     public class TcpRequest
@@ -163,11 +145,8 @@ public class TcpTrainingServer : BackgroundService
         [JsonPropertyName("actionMask")]
         public bool[] ActionMask { get; set; } = Array.Empty<bool>();
 
-        // The shapes the Python env should declare, sent so it does not have to hardcode them a second
-        // time. Rule #17 encourages APPENDING to the state vector, which silently invalidates any figure
-        // duplicated on the far side of the socket: the env would keep declaring the old width while the
-        // server sent the new one, and SB3 would either throw somewhere unhelpful or train on misaligned
-        // feature indices. Reporting them here makes RLBotStrategy the single source of truth.
+        // The shapes the Python env should declare. Reported rather than hardcoded on both sides, so an
+        // appended state float (rule #17) cannot leave the env declaring a stale width.
         [JsonPropertyName("stateSize")]
         public int StateSize { get; set; } = RLBotStrategy.StateSize;
 
@@ -307,191 +286,11 @@ public class TcpTrainingServer : BackgroundService
         game.Players = players;
         game.ActingPlayerId = rlPlayer.Id; // Starts acting
 
-        // --- Official Imperial 2030 Initialization Logic ---
-        var newBonds = new List<Bond>();
-        var newNationStates = new List<NationState>();
-
-        foreach (Nation nation in Enum.GetValues(typeof(Nation)))
-        {
-            newNationStates.Add(new NationState { Nation = nation, Treasury = 0, Power = 0, GameId = gameId });
-        }
-
-        var startingFactories = new HashSet<string>
-        {
-            "Moscow", "Vladivostok",       // Russia
-            "Beijing", "Shanghai",         // China
-            "NewDelhi", "Mumbai",          // India
-            "Brasilia", "RioDeJaneiro",    // Brazil
-            "Chicago", "NewOrleans",       // USA
-            "Paris", "London"              // Europe
-        };
-        var territories = TerritoryData.AllTerritories;
-        var newTerritoryStates = new List<TerritoryState>();
-        foreach (var t in territories)
-        {
-            newTerritoryStates.Add(new TerritoryState { TerritoryId = t.Id, GameId = gameId, HasFactory = startingFactories.Contains(t.Id) });
-        }
-        game.TerritoryStates = newTerritoryStates;
-
-        var bondDefinitions = new[]
-        {
-            new { Cost = 2, Interest = 1 }, new { Cost = 4, Interest = 2 }, new { Cost = 6, Interest = 3 },
-            new { Cost = 9, Interest = 4 }, new { Cost = 12, Interest = 5 }, new { Cost = 16, Interest = 6 },
-            new { Cost = 20, Interest = 7 }, new { Cost = 25, Interest = 8 }, new { Cost = 30, Interest = 9 }
-        };
-
-        foreach (Nation nation in Enum.GetValues(typeof(Nation)))
-        {
-            foreach (var def in bondDefinitions)
-            {
-                newBonds.Add(new Bond { Nation = nation, Cost = def.Cost, Interest = def.Interest, GameId = gameId });
-            }
-        }
-
-        game.NationStates = newNationStates;
-        game.Bonds = newBonds;
-        var bonds = newBonds;
-        var nationStates = newNationStates;
-        var allPlayers = players;
-
-        var random = new Random();
-        var shuffledPlayers = allPlayers.OrderBy(p => random.Next()).ToList();
-
-        var packages = new List<(Nation Primary, Nation Secondary)>
-        {
-            (Nation.Russia, Nation.China),
-            (Nation.China, Nation.India),
-            (Nation.India, Nation.Brazil),
-            (Nation.Brazil, Nation.USA),
-            (Nation.USA, Nation.Europe),
-            (Nation.Europe, Nation.Russia)
-        };
-
-        var distribution = new Dictionary<Nation, Player>();
-        var shuffledPackages = packages.OrderBy(x => random.Next()).ToList();
-        for (int i = 0; i < allPlayers.Count; i++)
-        {
-            var pkg = shuffledPackages[i];
-            distribution[pkg.Primary] = shuffledPlayers[i];
-        }
-
-        foreach (var kvp in distribution)
-        {
-            var primaryNation = kvp.Key;
-            var player = kvp.Value;
-            var def = packages.First(p => p.Primary == primaryNation);
-
-            var bond9M = bonds.First(b => b.Nation == def.Primary && b.Cost == 9);
-            bond9M.HolderId = player.Id;
-
-            var nsPrimary = nationStates.First(ns => ns.Nation == def.Primary);
-            nsPrimary.Treasury += 9;
-
-            var bond2M = bonds.First(b => b.Nation == def.Secondary && b.Cost == 2);
-            bond2M.HolderId = player.Id;
-
-            var nsSecondary = nationStates.First(ns => ns.Nation == def.Secondary);
-            nsSecondary.Treasury += 2;
-        }
-
-
-        var bondsHeld = bonds.Where(b => b.HolderId != null).ToList();
-        var nationStatesToUpdate = nationStates;
-
-        foreach (var ns in nationStatesToUpdate)
-        {
-            Player? controller = null;
-            if (distribution.ContainsKey(ns.Nation))
-            {
-                controller = distribution[ns.Nation];
-            }
-            else
-            {
-                var bond2M = bondsHeld.FirstOrDefault(b => b.Nation == ns.Nation && b.Cost == 2);
-                if (bond2M != null)
-                {
-                    ns.ControllerId = bond2M.HolderId;
-                    continue;
-                }
-            }
-
-            ns.RondelPosition = null;
-            if (controller != null)
-            {
-                ns.ControllerId = controller.Id;
-            }
-        }
-
-
-        if (allPlayers.Any())
-        {
-            var sorted = allPlayers.GetOrderedPlayers().ToList();
-            var gameToInit = game;
-            if (gameToInit != null)
-            {
-                var russiaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.Russia);
-                var chinaNs = gameToInit.NationStates.FirstOrDefault(ns => ns.Nation == Nation.China);
-
-                if (russiaNs != null && russiaNs.ControllerId.HasValue)
-                {
-                    var index = sorted.FindIndex(p => p.Id == russiaNs.ControllerId.Value);
-                    var nextIndex = (index + 1) % sorted.Count;
-                    gameToInit.InvestorCardHolderId = sorted[nextIndex].Id;
-                }
-                else if (chinaNs != null && chinaNs.ControllerId.HasValue)
-                {
-                    var index = sorted.FindIndex(p => p.Id == chinaNs.ControllerId.Value);
-                    var nextIndex = (index + 1) % sorted.Count;
-                    gameToInit.InvestorCardHolderId = sorted[nextIndex].Id;
-                }
-                else
-                {
-                    gameToInit.InvestorCardHolderId = sorted[0].Id;
-                }
-            }
-        }
-
-        var gameToUpdate = game;
-        var playersToUpdate = players;
-
-        if (gameToUpdate != null)
-        {
-            gameToUpdate.Status = GameStatus.InProgress;
-            var firstNs = gameToUpdate.NationStates.FirstOrDefault(ns => ns.Nation == gameToUpdate.CurrentTurnNation);
-            if (firstNs == null || !firstNs.ControllerId.HasValue)
-            {
-                gameToUpdate.AdvanceTurn();
-            }
-        }
-
-        int startingCash = 13;
-        foreach (var p in playersToUpdate)
-        {
-            p.Cash = startingCash;
-            int pkgCount = distribution.Values.Count(v => v.Id == p.Id);
-            p.Cash -= pkgCount * 11;
-        }
-
-
-        // Log the roster/setup snapshot the same way a real StartGame does. Training games are built here
-        // rather than through GamesController.StartGame, so they never carried one - which made a halted
-        // session's export unimportable ("missing its StartGame roster/setup metadata") and therefore
-        // unreplayable, exactly when someone most wants to watch it back.
-        GameLogger.LogStartGame(
-            null,
-            game,
-            GameConstants.SystemPlayerName,
-            distribution.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Id),
-            game.Players.Select(pl => new Imperial2030.Shared.Models.PlayerRosterEntry
-            {
-                PlayerId = pl.Id,
-                UserId = pl.UserId,
-                IsHost = pl.IsHost,
-                IsBot = pl.IsBot,
-                BotName = pl.BotName,
-                BotType = pl.BotType,
-                DisplayName = pl.BotName ?? GameConstants.SystemPlayerName
-            }).ToList());
+        // Set up like a real game (GamesController.StartGame): the deal, governments, investor card, cash,
+        // and the StartGame entry with the roster/setup snapshot - without it a halted session's export
+        // is unimportable and so unreplayable, exactly when someone most wants to watch it back.
+        var started = GameLifecycle.Start(null, game, forcedDistribution: null, GameConstants.SystemPlayerName);
+        if (!started.Ok) throw new InvalidOperationException($"Training game set-up failed: {started.Error}");
 
         var sessionId = Guid.NewGuid().ToString();
         // Curriculum values arrive per episode rather than once per connection, so a schedule can move
@@ -585,6 +384,16 @@ public class TcpTrainingServer : BackgroundService
         if (!_sessions.TryGetValue(req.SessionId, out var session)) return null;
         var game = session.Game;
         if (game == null) return null;
+
+        // A Maneuver snapshot is valid for exactly one nation turn. Normal completion clears it below;
+        // this guard handles episode end or any defensive recovery path that moved the turn on first.
+        if (session.ManeuverOutcome is { } staleManeuver
+            && (game.Status != GameStatus.InProgress
+                || staleManeuver.Nation != game.CurrentTurnNation
+                || staleManeuver.TurnCount != game.TurnCount))
+        {
+            session.ManeuverOutcome = null;
+        }
 
         session.TotalSessionSteps++;
         if (session.LastTurnCount == game.TurnCount)
@@ -696,9 +505,16 @@ public class TcpTrainingServer : BackgroundService
         );
         float explicitBonusReward = 0f;
 
-        bool wasManeuverAction = false;
         bool wasImportAction = false;
         bool wasFactoryBuildAction = false;
+        ManeuverOutcomeSnapshot? completedManeuver = null;
+        float completedManeuverPotential = 0f;
+
+        void MarkDirectManeuverEvent(Nation actingNation)
+        {
+            var snapshot = completedManeuver ?? session.ManeuverOutcome;
+            if (snapshot?.Nation == actingNation) snapshot.DirectEventOccurred = true;
+        }
 
         // The flag is scoped to one turn of one nation. If the turn has moved on without it resolving
         // (a bot turn played inside AdvanceUntilRLTurn, a battle interposing, an episode reset), drop it
@@ -706,6 +522,13 @@ public class TcpTrainingServer : BackgroundService
         if (session.FactoryDecisionOwedBy.HasValue && session.FactoryDecisionOwedBy != game.CurrentTurnNation)
         {
             session.FactoryDecisionOwedBy = null;
+        }
+        // Same for an Import sequence the turn moved past.
+        if (session.PendingImportRemaining.HasValue && session.ImportSequenceNation != game.CurrentTurnNation)
+        {
+            session.PendingImportRemaining = null;
+            session.ImportSequenceNation = null;
+            session.ImportPlacedThisSequence = new();
         }
 
         var factoryBuildNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
@@ -730,14 +553,12 @@ public class TcpTrainingServer : BackgroundService
                 if (slotIndex < orderedHome.Count && canBuild[slotIndex])
                 {
                     var cityId = orderedHome[slotIndex].Id;
-                    var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == cityId);
-                    if (ts == null)
+                    var build = FactoryEngine.BuildFactory(null, game, cityId);
+                    if (!build.Ok)
                     {
-                        ts = new TerritoryState { TerritoryId = cityId, GameId = game.Id };
-                        game.TerritoryStates.Add(ts);
+                        // The mask said this slot was legal; the engine disagreeing is a bug in the mask.
+                        throw new InvalidOperationException($"Training step: mask allowed a factory in {cityId} for {ns.Nation} but the engine refused: {build.Error}");
                     }
-                    ns.Treasury -= 5;
-                    ts.HasFactory = true;
 
                     // Immediate reward for growing production capacity. Without this, the only reward signal for
                     // a new factory comes from the dense VP term's factoryScore, discounted by Power/5 — which is
@@ -758,14 +579,11 @@ public class TcpTrainingServer : BackgroundService
                 }
             }
 
-            // Landed on Factory, could build, chose not to. RLBotStrategy.ChooseCityForFactory keeps the
-            // skip action unmasked at all times (it has to — with no buildable city the mask would
-            // otherwise be entirely false), so nothing else made this cost anything: the wasted-Factory
-            // penalty on the rondel move only fires when the nation COULDN'T build, and a skip simply
-            // earned no reward rather than losing any. Observed live as Europe moving to Factory with a
-            // healthy treasury and ending its turn without building.
+            // Landed on Factory, could build, chose not to. The skip action is always unmasked (with no
+            // buildable city the mask would otherwise be empty), and the wasted-Factory penalty on the
+            // rondel move only fires when the nation COULDN'T build - so this is the only cost of skipping.
             // The reduced tier applies when the treasury could not have covered a factory AND a full
-            // Import — there the skip may be the agent saving for imports rather than wasting the turn.
+            // Import: the skip may then be saving for imports rather than wasting the turn.
             if (!built && skipPenalty > 0f)
             {
                 explicitBonusReward -= skipPenalty * session.FactoryPenaltyScale;
@@ -779,7 +597,7 @@ public class TcpTrainingServer : BackgroundService
             ns.HasBuiltThisTurn = true; // Resolved either way (built, or explicitly/implicitly skipped)
             session.FactoryDecisionOwedBy = null;
         }
-        else if (session.PendingImportRemaining.HasValue)
+        else if (IsImportSequencePending(session, game))
         {
             wasImportAction = true;
             var ns = game.NationStates.First(n => n.Nation == game.CurrentTurnNation);
@@ -793,16 +611,22 @@ public class TcpTrainingServer : BackgroundService
 
                 if (slotIndex < orderedHome.Count && ((unitType == UnitType.Army && canArmy[slotIndex]) || (unitType == UnitType.Fleet && canFleet[slotIndex])))
                 {
-                    game.Units.Add(new Unit { GameId = game.Id, Nation = ns.Nation, TerritoryId = orderedHome[slotIndex].Id, UnitType = unitType, IsHostile = false });
-                    ns.Treasury -= 1;
+                    var territoryId = orderedHome[slotIndex].Id;
+                    var place = ImportEngine.PlaceOne(null, game, territoryId, unitType);
+                    if (!place.Ok)
+                    {
+                        // The mask said this placement was legal; the engine disagreeing is a bug in the mask.
+                        throw new InvalidOperationException($"Training step: mask allowed importing a {unitType} to {territoryId} for {ns.Nation} but the engine refused: {place.Error}");
+                    }
                     session.PendingImportRemaining--;
-                    session.ImportUnitsPlacedThisSequence++;
+                    session.ImportPlacedThisSequence.Add((unitType, territoryId));
                 }
 
                 if (session.PendingImportRemaining <= 0)
                 {
-                    ns.HasImportedThisTurn = true;
+                    ImportEngine.CompleteImport(null, game, session.ImportPlacedThisSequence);
                     session.PendingImportRemaining = null;
+                    session.ImportSequenceNation = null;
                 }
             }
             else
@@ -812,16 +636,17 @@ public class TcpTrainingServer : BackgroundService
                 // remaining slots" branch above can only be reached right after a successful placement), and
                 // the sequence only ever starts when treasury >= 1 (see where PendingImportRemaining is set),
                 // so reaching here with zero placed unambiguously means affordable Import got wasted entirely.
-                if (session.ImportUnitsPlacedThisSequence == 0)
+                if (session.ImportPlacedThisSequence.Count == 0)
                 {
                     _logger.LogWarning($"[RL PENALTY] Wasted Import action by {ns.Nation}. Had money but imported 0 units.");
                     explicitBonusReward -= 7.0f;
                 }
-                ns.HasImportedThisTurn = true;
+                ImportEngine.CompleteImport(null, game, session.ImportPlacedThisSequence);
                 session.PendingImportRemaining = null;
+                session.ImportSequenceNation = null;
             }
         }
-        else if (session.PendingFactoryDestructionTerritoryId != null)
+        else if (session.PendingFactoryDestructionTerritoryId != null && !game.IsInvestorTurn)
         {
             // Resolve a pending Destroy/Keep decision for a factory currently held under siege
             var pendingTerritoryId = session.PendingFactoryDestructionTerritoryId;
@@ -830,28 +655,33 @@ public class TcpTrainingServer : BackgroundService
 
             if (req.Action == RLBotStrategy.FactoryDestroyAction)
             {
-                _botService.ExecuteFactoryDestruction(null, game, pendingTerritoryId, game.CurrentTurnNation, player);
+                var destroyed = ManeuverEngine.DestroyFactory(null, game, pendingTerritoryId);
+                if (!destroyed.Ok)
+                {
+                    // The territory came from FactoryDestructionCandidates; the engine disagreeing is a bug there.
+                    throw new InvalidOperationException($"Training step: could not destroy the factory in {pendingTerritoryId}: {destroyed.Error}");
+                }
             }
 
             // More stacks may still be awaiting a decision (e.g. multiple sieges resolved in the same move).
             // Excludes anything already decided this turn — Keep doesn't change the board, so the same
             // territory would otherwise keep re-qualifying and get re-offered forever.
-            session.PendingFactoryDestructionTerritoryId = _botService
-                .FindFactoryDestructionCandidates(game, game.CurrentTurnNation, player)
+            session.PendingFactoryDestructionTerritoryId = ManeuverEngine
+                .FactoryDestructionCandidates(game, game.CurrentTurnNation, player)
                 .FirstOrDefault(t => !session.DecidedFactoryDestructionTerritoriesThisTurn.Contains(t));
         }
-        else if (req.Action == 63 && game.CurrentManeuverPhase != ManeuverPhase.None)
+        // Action 63 is both "pass investment" and "end maneuver phase"; with an Investor turn open it is
+        // the former and belongs to the base-actions branch below.
+        else if (req.Action == 63 && game.CurrentManeuverPhase != ManeuverPhase.None && !game.IsInvestorTurn)
         {
-            wasManeuverAction = true;
             // Pass Maneuver
             if (game.CurrentManeuverPhase == ManeuverPhase.Fleets) game.CurrentManeuverPhase = ManeuverPhase.Armies;
             else game.CurrentManeuverPhase = ManeuverPhase.None;
 
             session.ManeuverSelectedTerritoryId = null;
         }
-        else if (req.Action >= 64 && req.Action <= 125)
+        else if (req.Action >= 64 && req.Action <= 125 && !game.IsInvestorTurn)
         {
-            wasManeuverAction = true;
             // Stage 1: Select Unit Territory
             int idx = req.Action - 64;
             if (idx >= 0 && idx < RLBotStrategy.AllManeuverTerritories.Length)
@@ -859,168 +689,56 @@ public class TcpTrainingServer : BackgroundService
                 session.ManeuverSelectedTerritoryId = RLBotStrategy.AllManeuverTerritories[idx];
             }
         }
-        else if (req.Action >= 126 && req.Action <= 188)
+        else if (req.Action >= 126 && req.Action <= 188 && !game.IsInvestorTurn)
         {
-            wasManeuverAction = true;
             // Stage 2: Select Destination
             var unitType = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? UnitType.Fleet : UnitType.Army;
             var unit = game.Units.FirstOrDefault(u => u.TerritoryId == session.ManeuverSelectedTerritoryId && u.UnitType == unitType && u.Nation == game.CurrentTurnNation && !u.HasMoved);
 
             if (unit != null)
             {
-                unit.HasMoved = true;
+                int destIdx = req.Action - 127;
+                string? target = req.Action != 126 && destIdx >= 0 && destIdx < RLBotStrategy.AllManeuverTerritories.Length
+                    ? RLBotStrategy.AllManeuverTerritories[destIdx]
+                    : null;
 
-                // Evaluated here, before the move resolves: the unit is still standing at its origin, which
-                // is where reachability has to be measured from. Covers "Do Not Move" too - declining is
-                // exactly the case this exists for.
-                string? chosenDestinationId = null;
-                if (req.Action != 126)
+                if (target == null || target == unit.TerritoryId)
                 {
-                    int chosenIdx = req.Action - 127;
-                    if (chosenIdx >= 0 && chosenIdx < RLBotStrategy.AllManeuverTerritories.Length)
+                    // "Do Not Move" (126), or a destination that is where the unit already stands.
+                    var stay = ManeuverEngine.Stay(null, game, unit.Id);
+                    if (!stay.Ok) throw new InvalidOperationException($"Training step: could not keep {unit.Nation}'s {unitType} in {unit.TerritoryId}: {stay.Error}");
+                }
+                else
+                {
+                    if (session.ManeuverOutcome?.Nation == unit.Nation)
                     {
-                        chosenDestinationId = RLBotStrategy.AllManeuverTerritories[chosenIdx];
+                        session.ManeuverOutcome.AnyUnitChangedTerritory = true;
                     }
-                }
 
-                var rlControlledNations = game.NationStates
-                    .Where(n => n.ControllerId == session.RLPlayerId)
-                    .Select(n => n.Nation)
-                    .ToHashSet();
+                    var friendlyNations = game.NationStates.Where(n => n.ControllerId == session.RLPlayerId).Select(n => n.Nation).ToHashSet();
+                    bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
+                    var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
+                    bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
 
-                if (chosenDestinationId != null && ManeuverDefenseHelper.IsRedundantStackMove(game, unit, chosenDestinationId, rlControlledNations))
-                {
-                    _logger.LogWarning(
-                        $"[RL PENALTY] {unit.Nation} stacked another army onto '{chosenDestinationId}', which a " +
-                        $"friendly army already holds and nothing contests - no flag, no battle. Penalty: -{RedundantStackPenalty}");
-                    explicitBonusReward -= RedundantStackPenalty;
-                }
+                    var strategy = _botService.GetStrategy(player);
+                    bool isHostileMove = strategy.DetermineHostility(hasEnemy, isForeignHome);
+                    // p.10: a nation's last unoccupied factory province may only be entered peacefully.
+                    if (isHostileMove && ManeuverEngine.MustEnterPeacefully(game, unit.Nation, target, unit.Id)) isHostileMove = false;
 
-                float declinedRelief = DeclinedHomeReliefPenaltyFor(game, unit, chosenDestinationId);
-                if (declinedRelief > 0f)
-                {
-                    _logger.LogWarning(
-                        $"[RL PENALTY] {unit.Nation} left '{ReachableBlockadedHomeProvince(game, unit)}' blockaded: " +
-                        $"the army in '{unit.TerritoryId}' could have relieved it and went to " +
-                        $"'{chosenDestinationId ?? "nowhere"}' instead. Penalty: -{declinedRelief}");
-                    explicitBonusReward -= declinedRelief;
-                }
-
-                if (req.Action != 126) // Not "Do Not Move"
-                {
-                    int destIdx = req.Action - 127;
-                    if (destIdx >= 0 && destIdx < RLBotStrategy.AllManeuverTerritories.Length)
+                    var move = unitType == UnitType.Fleet
+                        ? ManeuverEngine.MoveFleet(null, game, unit.Id, target, isHostileMove)
+                        : ManeuverEngine.MoveArmy(null, game, unit.Id, target, isHostileMove);
+                    if (!move.Ok)
                     {
-                        var target = RLBotStrategy.AllManeuverTerritories[destIdx];
+                        // The mask said this destination was legal; the engine disagreeing is a bug in the mask.
+                        throw new InvalidOperationException($"Training step: mask allowed moving {unit.Nation}'s {unitType} from {session.ManeuverSelectedTerritoryId} to {target} but the engine refused: {move.Error}");
+                    }
 
-                        var friendlyNations = game.NationStates.Where(n => n.ControllerId == session.RLPlayerId).Select(n => n.Nation).ToHashSet();
-                        bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
-                        var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
-                        bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
-
-                        var strategy = _botService.GetStrategy(player);
-                        bool isHostileMove = strategy.DetermineHostility(hasEnemy, isForeignHome);
-
-                        if (isHostileMove && def != null && def.Nation.HasValue && def.Nation.Value != unit.Nation)
-                        {
-                            var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == target);
-                            if (tState != null && tState.HasFactory)
-                            {
-                                var defenderNation = def.Nation.Value;
-                                var defenderFactoryCount = game.TerritoryStates.Count(s =>
-                                {
-                                    if (!s.HasFactory) return false;
-                                    var t = TerritoryData.AllTerritories.FirstOrDefault(td => td.Id == s.TerritoryId);
-                                    if (t == null || t.Nation != defenderNation) return false;
-                                    bool isOccupied = game.Units.Any(u => u.TerritoryId == s.TerritoryId && u.Nation != defenderNation && u.IsHostile);
-                                    return !isOccupied;
-                                });
-                                bool isTargetOccupied = game.Units.Any(u => u.TerritoryId == target && u.Nation != defenderNation && u.IsHostile);
-                                if (defenderFactoryCount <= 1 && !isTargetOccupied)
-                                {
-                                    isHostileMove = false;
-                                }
-                            }
-                        }
-
-                        // Penalize walking a unit straight back where it came from when the round trip
-                        // achieves nothing - see IsPointlessReversal.
-                        string moveOrigin = session.ManeuverSelectedTerritoryId!;
-                        if (IsPointlessReversal(game, unit, moveOrigin, target, isHostileMove, session.PreviousMoveOrigin))
-                        {
-                            _logger.LogWarning($"[RL PENALTY] {unit.Nation} moved {unitType} back to '{target}', the territory it left last maneuver, gaining nothing. Penalty: -{PointlessReversalPenalty}");
-                            explicitBonusReward -= PointlessReversalPenalty;
-                        }
-                        // Staying put is not a move and must not overwrite the history: origin == target
-                        // there, which would make the next stay look like a reversal.
-                        if (target != moveOrigin) session.PreviousMoveOrigin[unit.Id] = moveOrigin;
-
-                        unit.TerritoryId = target;
-                        unit.IsHostile = isHostileMove;
-
-                        if (unitType == UnitType.Army)
-                        {
-                            var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, session.ManeuverSelectedTerritoryId, unit.Nation);
-                            var destInfo = destinations.FirstOrDefault(d => d.TerritoryId == target);
-                            if (destInfo == null)
-                            {
-                                // Chosen destination isn't among the freshly-recomputed reachable set (e.g. board
-                                // state shifted between when the mask was built and when this move resolves) —
-                                // root cause not yet confirmed. Logged at Error (not Warning) so it surfaces
-                                // the same way the crash this replaced did, since it's still worth tracking down:
-                                // the move itself (unit.TerritoryId = target above) already happened regardless,
-                                // but skipping convoy-fleet bookkeeping here means a fleet that convoyed this
-                                // army won't be marked HasConvoyed=true, which could let it convoy a second army
-                                // later this turn — a rules deviation, not just a cosmetic gap. Goes to both
-                                // console and the rolling log file (see nlog.config) — checkable on demand
-                                // instead of relying on catching one line scrolling past live.
-                                _logger.LogError($"[RL DIAGNOSTIC] Maneuver destination '{target}' for {unit.Nation} army not found among {destinations.Count} reachable destinations from '{session.ManeuverSelectedTerritoryId}' ({string.Join(", ", destinations.Select(d => d.TerritoryId))}).");
-                            }
-                            else if (destInfo.IsConvoy && destInfo.ConvoyFleets != null)
-                            {
-                                foreach (var f in destInfo.ConvoyFleets) f.HasConvoyed = true;
-                            }
-                        }
-
-                        if (hasEnemy)
-                        {
-                            var foreignDefenders = game.Units
-                                .Where(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation))
-                                .Where(u => u.UnitType == unit.UnitType || (isForeignHome && def != null && u.Nation == def.Nation.Value && isHostileMove))
-                                .Select(u => u.Nation)
-                                .Distinct()
-                                .ToList();
-
-                            if (foreignDefenders.Any())
-                            {
-                                if (isHostileMove && foreignDefenders.Count == 1)
-                                {
-                                    var targetNation = foreignDefenders.First();
-                                    var enemyUnit = game.Units.FirstOrDefault(u => u.TerritoryId == target && u.Nation == targetNation &&
-                                        (u.UnitType == unit.UnitType || (isForeignHome && def != null && u.Nation == def.Nation.Value)));
-
-                                    if (enemyUnit != null)
-                                    {
-                                        game.Units.Remove(unit);
-                                        game.Units.Remove(enemyUnit);
-                                    }
-                                }
-                                else
-                                {
-                                    game.PendingBattleTerritoryId = target;
-                                    game.PendingBattleAggressorNation = unit.Nation;
-                                    game.PendingBattleAggressorUnitId = unit.Id;
-                                    game.PendingBattleDefenders = foreignDefenders.ToList();
-                                }
-                            }
-                        }
-
-                        if (!game.PendingBattleDefenders.Any())
-                        {
-                            session.PendingFactoryDestructionTerritoryId = _botService
-                                .FindFactoryDestructionCandidates(game, unit.Nation, player)
-                                .FirstOrDefault(t => !session.DecidedFactoryDestructionTerritoriesThisTurn.Contains(t));
-                        }
+                    if (!game.PendingBattleDefenders.Any())
+                    {
+                        session.PendingFactoryDestructionTerritoryId = ManeuverEngine
+                            .FactoryDestructionCandidates(game, unit.Nation, player)
+                            .FirstOrDefault(t => !session.DecidedFactoryDestructionTerritoriesThisTurn.Contains(t));
                     }
                 }
             }
@@ -1037,12 +755,23 @@ public class TcpTrainingServer : BackgroundService
             await TryPlayBotTurnAsync(game);
             RLBotStrategy.TrainingActionOverride.Value = null;
 
+            // BotService initializes the actual rondel phase before its RL training early-return. At that
+            // point no maneuver unit has moved yet, so this is the whole-phase positional baseline. This
+            // also covers a Maneuver reached after an Investor pass-through finishes.
+            var maneuverNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
+            if (game.CurrentManeuverPhase != ManeuverPhase.None
+                && maneuverNs?.ControllerId == session.RLPlayerId
+                && maneuverNs.RondelPosition is int maneuverSlot)
+            {
+                TryArmManeuverOutcome(session, game, maneuverNs.Nation, maneuverSlot);
+            }
+
             // A rondel move that landed on Factory owes a build/skip decision on the NEXT step, for this
-            // turn only. Armed here rather than re-derived from RondelPosition later - see
-            // IsFactoryDecisionPending for why that difference is the whole bug.
+            // turn only (see IsFactoryDecisionPending). Set only on the step that made the move: a later
+            // investor step of the same turn must not reset a sequence that is waiting for the phase to clear.
             var postFactoryNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-            if (postFactoryNs != null && postFactoryNs.ControllerId == session.RLPlayerId
-                && postFactoryNs.RondelPosition == RondelData.FactorySlot && !postFactoryNs.HasBuiltThisTurn)
+            if (!isInvestorTurn && postFactoryNs != null && postFactoryNs.ControllerId == session.RLPlayerId
+                && LandedThisTurn(postFactoryNs, RondelData.FactorySlot) && !postFactoryNs.HasBuiltThisTurn)
             {
                 session.FactoryDecisionOwedBy = postFactoryNs.Nation;
             }
@@ -1050,29 +779,29 @@ public class TcpTrainingServer : BackgroundService
             // A rondel move that landed on Import starts the step-by-step Import decision sequence
             // (BotService.BotImport is a no-op for RL during training; see its early return).
             var postMoveNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
-            if (postMoveNs != null && postMoveNs.ControllerId == session.RLPlayerId && postMoveNs.RondelPosition == RondelData.ImportSlot && !postMoveNs.HasImportedThisTurn)
+            if (!isInvestorTurn && postMoveNs != null && postMoveNs.ControllerId == session.RLPlayerId && LandedThisTurn(postMoveNs, RondelData.ImportSlot) && !postMoveNs.HasImportedThisTurn)
             {
                 wasImportAction = true;
-                if (postMoveNs.Treasury >= 1)
+                if (postMoveNs.Treasury >= GameConstants.ImportUnitCost)
                 {
                     session.PendingImportRemaining = Math.Min(RLBotStrategy.MaxImportUnits, postMoveNs.Treasury);
-                    session.ImportUnitsPlacedThisSequence = 0;
+                    session.ImportSequenceNation = postMoveNs.Nation;
+                    session.ImportPlacedThisSequence = new();
                 }
                 else
                 {
-                    postMoveNs.HasImportedThisTurn = true; // Nothing to import; nothing to decide
+                    // Nothing to import; nothing to decide. Logged so the game log says why the turn did nothing.
+                    GameLogger.LogImportNotAfforded(null, game, postMoveNs.Nation, player.BotName ?? "Bot");
+                    postMoveNs.HasImportedThisTurn = true;
                 }
             }
 
             if (isInvestorTurn && oldMask != null)
             {
-                // Graduated replacement for the old hard "Power >= 15" cliff: a nation starts contributing an
-                // investment signal once it's a credible growth bet (Power > InvestmentRampStart), ramping up
-                // to the original full-strength signal at Power >= InvestmentRampEnd (still "practically a
-                // winner"), instead of only ever firing once the nation is already almost certain to win — by
-                // which point its cheap early bonds are long since bought up by other players. See the RL-3
-                // worst-loss export investigation: the old cliff never rewarded buying a nation's $2-$12 bonds
-                // while it was still cheap, only its $25-$30 ones once Power hit 15.
+                // A nation contributes an investment signal once it is a credible growth bet
+                // (Power > InvestmentRampStart), ramping to full strength at Power >= InvestmentRampEnd.
+                // A hard cutoff at 15 would only ever reward buying a nation's expensive late bonds; the ramp
+                // rewards buying its cheap early ones while they are still available.
                 const int InvestmentRampStart = 5;
                 const int InvestmentRampEnd = 15;
                 float BondInvestmentWeight(int power)
@@ -1144,24 +873,33 @@ public class TcpTrainingServer : BackgroundService
             }
         }
 
-        // If we were manually stepping through maneuver, and the maneuver phase just ended, we must advance the turn
-        if (wasManeuverAction && game.CurrentManeuverPhase == ManeuverPhase.None && game.Status == GameStatus.InProgress)
+        // Finalize only after the WHOLE Maneuver is resolved. A last-unit move can leave a battle or a
+        // factory decision pending even though CurrentManeuverPhase is already None; those continuations
+        // belong to this same Maneuver and must affect its post-position and direct-event record.
+        if (game.Status == GameStatus.InProgress && IsManeuverOutcomeReady(session, game))
         {
-            var nationState = game.NationStates.First(ns => ns.Nation == game.CurrentTurnNation);
-            game.AdvanceTurn();
+            ManeuverEngine.UpdateTerritoryControl(null, game);
+            var snapshot = session.ManeuverOutcome!;
+            completedManeuver = snapshot;
+            var completedNationState = game.NationStates.First(state => state.Nation == snapshot.Nation);
+            completedManeuverPotential = CalculateManeuverStrategicPotential(
+                game,
+                snapshot.Nation,
+                completedNationState.ControllerId);
+            EndTrainingTurn(game);
             session.DecidedFactoryDestructionTerritoriesThisTurn.Clear();
         }
 
         // Same for the step-by-step Import decision sequence, once it's fully resolved
-        if (wasImportAction && !session.PendingImportRemaining.HasValue && game.Status == GameStatus.InProgress)
+        if (wasImportAction && !session.PendingImportRemaining.HasValue && MayRondelActionEndTheTurn(game))
         {
-            game.AdvanceTurn();
+            EndTrainingTurn(game);
         }
 
         // Same for the Factory build decision, which always resolves in a single step
-        if (wasFactoryBuildAction && game.Status == GameStatus.InProgress)
+        if (wasFactoryBuildAction && MayRondelActionEndTheTurn(game))
         {
-            game.AdvanceTurn();
+            EndTrainingTurn(game);
         }
 
         // Calculate destruction explicit rewards before AdvanceUntilRLTurn (so we don't reward for other bots' actions)
@@ -1171,12 +909,21 @@ public class TcpTrainingServer : BackgroundService
             int postCount = game.Units.Count(u => u.Nation == nation);
             if (postCount < preCount)
             {
+                var maneuverSnapshot = completedManeuver ?? session.ManeuverOutcome;
+                var destroyedNationState = game.NationStates.FirstOrDefault(state => state.Nation == nation);
+                if (maneuverSnapshot != null
+                    && nation != maneuverSnapshot.Nation
+                    && destroyedNationState?.ControllerId != session.RLPlayerId)
+                {
+                    MarkDirectManeuverEvent(maneuverSnapshot.Nation);
+                }
+
                 var rlInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId == session.RLPlayerId).Sum(b => b.Interest);
                 var leaderInterest = game.Players.Select(p => game.Bonds.Where(b => b.Nation == nation && b.HolderId == p.Id).Sum(b => b.Interest)).DefaultIfEmpty(0).Max();
 
                 if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
                 {
-                    explicitBonusReward += 1.0f * (preCount - postCount);
+                    explicitBonusReward += EnemyUnitDestroyedReward * (preCount - postCount);
                     //_logger.LogInformation($"[RL REWARD] Destroyed unit of {nation}. +{1.0f * (preCount - postCount)}");
                 }
             }
@@ -1191,13 +938,19 @@ public class TcpTrainingServer : BackgroundService
                 int postCount = postFactoryCounts.ContainsKey(nation) ? postFactoryCounts[nation] : 0;
                 if (postCount < preCount)
                 {
+                    var maneuverSnapshot = completedManeuver ?? session.ManeuverOutcome;
+                    if (maneuverSnapshot != null && nation != maneuverSnapshot.Nation)
+                    {
+                        MarkDirectManeuverEvent(maneuverSnapshot.Nation);
+                    }
+
                     var rlInterest = game.Bonds.Where(b => b.Nation == nation && b.HolderId == session.RLPlayerId).Sum(b => b.Interest);
                     var leaderInterest = game.Players.Select(p => game.Bonds.Where(b => b.Nation == nation && b.HolderId == p.Id).Sum(b => b.Interest)).DefaultIfEmpty(0).Max();
 
                     if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
                     {
-                        explicitBonusReward += 3.0f * (preCount - postCount);
-                        _logger.LogInformation($"[RL REWARD] Destroyed factory of {nation}. +{3.0f * (preCount - postCount)}");
+                        explicitBonusReward += EnemyFactoryDestroyedReward * (preCount - postCount);
+                        _logger.LogInformation($"[RL REWARD] Destroyed factory of {nation}. +{EnemyFactoryDestroyedReward * (preCount - postCount)}");
                     }
                 }
             }
@@ -1223,9 +976,11 @@ public class TcpTrainingServer : BackgroundService
 
                         if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
                         {
-                            explicitBonusReward += 2.0f;
+                            explicitBonusReward += EnemyFactoryOccupiedReward;
                             //_logger.LogInformation($"[RL REWARD] Occupied factory of {nation}. +2.0f");
                         }
+
+                        MarkDirectManeuverEvent(occupyingNs.Nation);
                     }
                 }
             }
@@ -1235,9 +990,7 @@ public class TcpTrainingServer : BackgroundService
 
         float newVP = CalculateRelativeVP(game, session.RLPlayerId);
         // Shaping is accumulated in explicitBonusReward and folded in ONCE, at the single point below,
-        // after every shaping term has been computed. It used to be added here instead, which silently
-        // discarded the two Investor penalties further down (they subtract from explicitBonusReward
-        // after this line, so they never reached the agent despite being logged as [RL PENALTY]).
+        // after every shaping term has been computed - terms added after that point would be lost.
         float reward = newVP - prevVP;
 
         if (preNs != null && preNs.ControllerId == session.RLPlayerId)
@@ -1248,12 +1001,14 @@ public class TcpTrainingServer : BackgroundService
 
             if (postFlags > preFlags)
             {
-                explicitBonusReward += (postFlags - preFlags) * 1.0f; // Small reward for placing flag
+                explicitBonusReward += (postFlags - preFlags) * FlagPlacementReward;
+                MarkDirectManeuverEvent(preNs.Nation);
                 //_logger.LogInformation($"[RL REWARD] Flag placed by {preNs.Nation}. +{(postFlags - preFlags) * 1.0f}");
             }
             if (postHostilesInHome < preHostilesInHome)
             {
                 explicitBonusReward += (preHostilesInHome - postHostilesInHome) * HomeReliefReward;
+                MarkDirectManeuverEvent(preNs.Nation);
                 //_logger.LogInformation($"[RL REWARD] Hostiles cleared from home by {preNs.Nation}. +{(preHostilesInHome - postHostilesInHome) * 5.0f}");
             }
 
@@ -1424,6 +1179,26 @@ public class TcpTrainingServer : BackgroundService
             }
         }
 
+        if (completedManeuver != null)
+        {
+            float maneuverOutcomeReward = CompleteManeuverOutcome(session, completedManeuverPotential);
+            explicitBonusReward += maneuverOutcomeReward;
+            if (maneuverOutcomeReward > 0f)
+            {
+                _logger.LogInformation(
+                    $"[RL REWARD] {completedManeuver.Nation} completed Maneuver with a better strategic position. " +
+                    $"Potential: {completedManeuver.InitialStrategicPotential:F2} -> {completedManeuverPotential:F2}. " +
+                    $"Reward: +{maneuverOutcomeReward:F2}");
+            }
+            else if (maneuverOutcomeReward < 0f)
+            {
+                _logger.LogWarning(
+                    $"[RL PENALTY] {completedManeuver.Nation} completed Maneuver with no useful net result. " +
+                    $"Potential: {completedManeuver.InitialStrategicPotential:F2} -> {completedManeuverPotential:F2}. " +
+                    $"Penalty: {maneuverOutcomeReward:F2}");
+            }
+        }
+
         // The single fold point. Everything above this line is shaping; everything below (the final VP
         // margin and the flat win/loss bonus) is the actual objective and is deliberately NOT scaled -
         // decaying shaping must make the terminal signal relatively STRONGER, not weaker.
@@ -1458,12 +1233,26 @@ public class TcpTrainingServer : BackgroundService
 
             var stateResponse = GetStateVector(game, session.RLPlayerId);
 
+            session.ManeuverOutcome = null;
             _sessions.TryRemove(req.SessionId, out _);
             _botService.ClearStrategyCache(game.Players);
             return new StepResponse { State = stateResponse, Reward = reward, Done = true, ActionMask = new bool[RLBotStrategy.TotalActionSize] };
         }
 
         return new StepResponse { State = GetStateVector(game, session.RLPlayerId, session.ManeuverSelectedTerritoryId), Reward = reward, Done = false, ActionMask = GetActionMask(game, session) };
+    }
+
+    /// <summary>
+    /// Ends the RL agent's turn through the engine. A rejection means the step handler's own "the turn is
+    /// finished" condition disagrees with the engine's - a bug to surface, not to advance past.
+    /// </summary>
+    private static void EndTrainingTurn(Game game)
+    {
+        var result = TurnEngine.EndTurn(null, game);
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"Training step tried to end {game.CurrentTurnNation}'s turn but the engine refused: {result.Error}");
+        }
     }
 
     private async Task<bool> AdvanceUntilRLTurn(Game g, Guid rlPlayerId)
@@ -1494,7 +1283,7 @@ public class TcpTrainingServer : BackgroundService
             catch (Bots.Strategies.RlTrainingPauseException) { throw; }
             catch (Exception ex)
             {
-                // Every call here is for an OPPONENT bot's decision, never the RL trainee's own (the loop
+                // Every call here is for an OPPONENT bot's decision, never the RL agent's own (the loop
                 // only reaches this line when the "it's the RL player's turn" exit checks above are false).
                 // Log rich context before it propagates and kills this TCP session/SubprocVecEnv worker, so
                 // an exact repro (bot type, nation, decision point) is available on the next occurrence
@@ -2001,7 +1790,10 @@ public class TcpTrainingServer : BackgroundService
         var rlPlayer = game.Players.FirstOrDefault(p => p.Id == rlPlayerId);
         if (rlPlayer == null) return mask;
 
-        if (session.PendingFactoryDestructionTerritoryId != null)
+        // No rondel action may run while an Investor turn is open (p.11: on a pass-over the nation's
+        // action completes first and the Investor turn follows; landing on Investor opens it at once).
+        // The rondel-action blocks below yield to an open one and the investor block answers.
+        if (session.PendingFactoryDestructionTerritoryId != null && !game.IsInvestorTurn)
         {
             mask[RLBotStrategy.FactoryDestroyAction] = true;
             mask[RLBotStrategy.FactoryKeepAction] = true;
@@ -2024,7 +1816,7 @@ public class TcpTrainingServer : BackgroundService
             return mask;
         }
 
-        if (session.PendingImportRemaining.HasValue)
+        if (IsImportSequencePending(session, game))
         {
             mask[RLBotStrategy.ImportStopAction] = true;
 
@@ -2113,36 +1905,12 @@ public class TcpTrainingServer : BackgroundService
 
                 if (selectedUnit != null)
                 {
-                    // Copy heuristic adjacency logic (simplified)
+                    // Legal destinations are the engine's, so the mask cannot offer a move it would refuse.
                     if (MapConnectivity.Adjacency.TryGetValue(selectedUnit.TerritoryId, out var neighbors))
                     {
-                        var validNeighbors = neighbors.ToList();
-
                         if (unitType == UnitType.Fleet)
                         {
-                            validNeighbors = validNeighbors.Where(n =>
-                            {
-                                if (!TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)) return false;
-
-                                var canal = MapConnectivity.CanalLinks.FirstOrDefault(c =>
-                                    (c.Region1 == selectedUnit.TerritoryId && c.Region2 == n) ||
-                                    (c.Region1 == n && c.Region2 == selectedUnit.TerritoryId));
-
-                                if (canal != default)
-                                {
-                                    var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == canal.ControllerId);
-                                    if (tState != null && tState.Controller != null && tState.Controller != selectedUnit.Nation)
-                                    {
-                                        var canalNationState = game.NationStates.FirstOrDefault(ns => ns.Nation == tState.Controller.Value);
-                                        if (canalNationState == null || canalNationState.ControllerId != session.RLPlayerId)
-                                        {
-                                            return false; // Canal blocked
-                                        }
-                                    }
-                                }
-                                return true;
-                            }).ToList();
-                            foreach (var dest in validNeighbors)
+                            foreach (var dest in neighbors.Where(n => ManeuverEngine.FleetDestinationRefusal(game, selectedUnit, n, rlPlayer) == null))
                             {
                                 int idx = Array.IndexOf(RLBotStrategy.AllManeuverTerritories, dest);
                                 if (idx >= 0) mask[127 + idx] = true;
@@ -2191,96 +1959,269 @@ public class TcpTrainingServer : BackgroundService
     // legality of importing an Army or a Fleet there right now.
     private (List<Territory> OrderedHome, bool[] CanArmy, bool[] CanFleet) GetImportOptions(Game game, NationState ns)
     {
+        // The ORDER is the action-space layout (ImportPlaceActionBase + index * 2) and must not change -
+        // rule #17. Legality per slot is the engine's.
         var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation).OrderBy(t => t.Id).ToList();
-        int currentArmies = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Army);
-        int currentFleets = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Fleet);
 
         var canArmy = new bool[orderedHome.Count];
         var canFleet = new bool[orderedHome.Count];
         for (int i = 0; i < orderedHome.Count; i++)
         {
-            var t = orderedHome[i];
-            bool occupied = game.Units.Any(u => u.TerritoryId == t.Id && u.Nation != ns.Nation && u.UnitType == UnitType.Army && u.IsHostile);
-            if (occupied) continue;
-
             // No London exclusion here: that's a heuristic-only guard in BotStrategyBase to keep the
             // simple AI from stranding an army in a coastal city — the real game rules allow it, and the
             // RL policy should be free to judge that trade-off itself (it may even be the only open slot).
-            canArmy[i] = currentArmies < NationData.GetMaxArmies(ns.Nation);
-            canFleet[i] = t.CityType == CityType.LightBlue && currentFleets < NationData.GetMaxFleets(ns.Nation);
+            canArmy[i] = ImportEngine.CanPlace(game, ns.Nation, orderedHome[i].Id, UnitType.Army);
+            canFleet[i] = ImportEngine.CanPlace(game, ns.Nation, orderedHome[i].Id, UnitType.Fleet);
         }
         return (orderedHome, canArmy, canFleet);
     }
 
-    // Home territories (ordered by Id, same convention as GetImportOptions) with per-slot legality of
-    // building a factory there right now (not already built, not blocked by a hostile foreign army).
-    /// <summary>
-    /// Cost of landing on Factory with a build genuinely available and declining it.
-    ///
-    /// Deliberately much larger than the +10 a successful build earns. Unlike the "wasted Factory action"
-    /// penalty on the rondel move — whose magnitude had to be halved because it taught the agent to avoid
-    /// the Factory slot outright — this one cannot cause slot avoidance: it only fires once the nation is
-    /// already standing on Factory AND could build, so the agent's way out is simply to build, which is
-    /// the behaviour being trained. Skipping in that position is never forced.
-    /// </summary>
-    /// <summary>
-    /// Charged for marching an army into a neutral region a friendly army of the same nation already
-    /// holds, when nothing hostile is there to fight.
-    ///
-    /// A flag goes to the first army: p.10, "A nation's flag is placed in newly occupied land or sea
-    /// regions that don't contain foreign military units." The second and third gain no flag, no battle
-    /// and no blockade - they are a spent maneuver. Observed live as "Bot Charlie (RL-4) USA army moved
-    /// to Alaska from Chicago" three times in a row, claiming one flag with three armies.
-    ///
-    /// The reward function only ever paid +1 per flag gained, which prices the good move but never the
-    /// wasted one, and the agent never sees the counterfactual three flags it did not take.
-    ///
-    /// Deliberately narrow, because stacking is often correct and the rules say why:
-    ///   - foreign home provinces are exempt - three armies destroy a factory (p.11), and armies
-    ///     blockade (p.10), both of which need numbers;
-    ///   - a destination holding any foreign unit is exempt - that is reinforcement for a fight;
-    ///   - the nation's own home provinces are exempt - massing to defend a factory city is sound.
-    /// Sized like PointlessReversalPenalty, for the same reason given there: above the small
-    /// flag/positioning rewards so the waste cannot be farmed, well below the wasted-Rondel-turn
-    /// penalties, because the move is pointless rather than actively damaging.
-    /// </summary>
-    public const float RedundantStackPenalty = 4.0f;
+    // Objective event rewards stay separate from the holistic positional term. They are named here so
+    // their established magnitudes are explicit and regression-tested while the Maneuver shaping changes.
+    public const float FlagPlacementReward = 1.0f;
+    public const float EnemyUnitDestroyedReward = 1.0f;
+    public const float HomeReliefReward = 15.0f;
+    public const float EnemyFactoryDestroyedReward = 3.0f;
+    public const float EnemyFactoryOccupiedReward = 2.0f;
 
-    /// <summary>
-    /// True when moving <paramref name="unit"/> to <paramref name="targetTerritoryId"/> piles it onto a
-    /// neutral region that friendly armies already hold in sufficient strength.
-    ///
-    /// "Sufficient" is decided by the combat rule, not by a count of one. Battles destroy 1:1 (p.10,
-    /// "the active nation may destroy armies in land regions 1:1"), so an attacker arriving with A armies
-    /// trades away A defenders and A of its own.
-    ///
-    /// MATCHING the reachable threat is therefore enough, not exceeding it: with equal numbers both sides
-    /// are wiped out and the region ends up empty, and p.10 says "A flag remains in a region until the
-    /// region is occupied EXCLUSIVELY by another nation" - an empty region is occupied exclusively by
-    /// nobody, so the flag stays with its owner. The engine agrees: BotUpdateTerritoryControl skips any
-    /// territory with no units in it (`if (!unitsInTerritory.Any()) continue;`), leaving the controller
-    /// untouched. So two enemies one hop away justify a second defender, and no more.
-    ///
-    /// The move is redundant once the armies already present match or beat the reachable threat.
-    /// With no enemy able to reach, one defender is already enough and every further army is spent for
-    /// nothing - which is the observed case, three armies walking into an uncontested Alaska for one flag.
-    ///
-    /// The threat count is deliberately the LAST check: it walks reachability for every enemy army, so it
-    /// only runs once the cheap structural conditions have already established the move looks redundant.
-    /// </summary>
-    public static bool IsRedundantStackMove(Game game, Unit unit, string targetTerritoryId, ISet<Nation>? friendlyNations = null)
+    // Holistic Maneuver weights. The whole result is capped below one home-relief event, so positional
+    // shaping cannot dominate the direct military/economic outcome or the terminal game objective.
+    public const float MaxManeuverOutcomeReward = 8.0f;
+    public const float WastedManeuverResultPenalty = 2.0f;
+    private const float OccupiedHomePenalty = 3.0f;
+    private const float CoveredHomeThreatReward = 1.5f;
+    private const float HomeDefenseDeficitPenalty = 2.0f;
+    private const float FactoryDefenseDeficitPenalty = 2.0f;
+    private const float ForwardStagingArmyReward = 1.0f;
+    private const float UsefulReachObjectiveReward = 0.25f;
+    private const int MaxUsefulReachObjectives = 12;
+    private const float ManeuverPotentialEqualityTolerance = 0.0001f;
+
+    public static bool TryArmManeuverOutcome(
+        TrainingSession session,
+        Game game,
+        Nation nation,
+        int targetSlot)
     {
-        return ManeuverDefenseHelper.IsRedundantStackMove(game, unit, targetTerritoryId, friendlyNations);
+        if (!RondelData.IsManeuverSlot(targetSlot) || session.ManeuverOutcome != null) return false;
+
+        var nationState = game.NationStates.FirstOrDefault(state => state.Nation == nation);
+        if (nationState?.ControllerId != session.RLPlayerId) return false;
+
+        session.ManeuverOutcome = new ManeuverOutcomeSnapshot
+        {
+            Nation = nation,
+            TurnCount = game.TurnCount,
+            InitialStrategicPotential = CalculateManeuverStrategicPotential(
+                game,
+                nation,
+                nationState.ControllerId)
+        };
+        return true;
     }
 
     /// <summary>
-    /// Paid when a maneuver clears a hostile army out of the acting nation's own home province.
-    ///
-    /// Raised from 5. A hostile army standing in a home province blocks production, import, factory
-    /// building, taxation AND rail there (Imperial-2030-Rules.pdf p.10), so relieving one is worth far
-    /// more than the -40 this same function charges for a merely inefficient rondel move. At 5 it was
-    /// the smallest term in the reward function, describing one of the largest swings on the board.
+    /// Whether the step-by-step Import sequence is waiting for the agent's next placement: one is set up
+    /// for the nation whose turn it is, and no Investor turn is open (no action may run while one is).
     /// </summary>
+    public static bool IsImportSequencePending(TrainingSession session, Game game)
+        => session.PendingImportRemaining.HasValue
+           && session.ImportSequenceNation == game.CurrentTurnNation
+           && !game.IsInvestorTurn;
+
+    /// <summary>
+    /// Whether a resolved rondel action may end the turn now: not while an Investor turn is open. Ending
+    /// the turn after a move that passed over Investor opens that Investor turn (p.11), and the rotation
+    /// moves on when it ends.
+    /// </summary>
+    public static bool MayRondelActionEndTheTurn(Game game)
+        => game.Status == GameStatus.InProgress && !game.IsInvestorTurn;
+
+    /// <summary>
+    /// Whether the nation's rondel move this turn ended on <paramref name="slot"/>. A move a Swiss Bank
+    /// stopped for its answer has not happened: HasMovedThisTurn is still false and the marker is where it
+    /// was, which may already be <paramref name="slot"/> from an earlier turn.
+    /// </summary>
+    public static bool LandedThisTurn(NationState ns, int slot)
+        => ns.HasMovedThisTurn && ns.RondelPosition == slot;
+
+    public static bool IsManeuverOutcomeReady(TrainingSession session, Game game)
+    {
+        var snapshot = session.ManeuverOutcome;
+        return snapshot != null
+            && game.Status == GameStatus.InProgress
+            && snapshot.Nation == game.CurrentTurnNation
+            && snapshot.TurnCount == game.TurnCount
+            && game.CurrentManeuverPhase == ManeuverPhase.None
+            && !game.IsInvestorTurn
+            && !game.PendingBattleDefenders.Any()
+            && game.PendingSwissBankForceNation == null
+            && session.PendingFactoryDestructionTerritoryId == null;
+    }
+
+    public static float CompleteManeuverOutcome(TrainingSession session, float finalStrategicPotential)
+    {
+        var snapshot = session.ManeuverOutcome;
+        if (snapshot == null) return 0f;
+
+        float reward = CalculateManeuverOutcomeReward(snapshot, finalStrategicPotential);
+        session.ManeuverOutcome = null;
+        return reward;
+    }
+
+    public static float CalculateManeuverOutcomeReward(
+        ManeuverOutcomeSnapshot snapshot,
+        float finalStrategicPotential)
+    {
+        float delta = finalStrategicPotential - snapshot.InitialStrategicPotential;
+        if (snapshot.AnyUnitChangedTerritory
+            && !snapshot.DirectEventOccurred
+            && delta <= ManeuverPotentialEqualityTolerance)
+        {
+            // This is one whole-phase verdict, not another per-move penalty: a rearrangement that did
+            // not improve anything costs at least the small wasted-result amount, while a genuinely
+            // damaging result keeps its larger (bounded) positional loss.
+            delta = Math.Min(delta, -WastedManeuverResultPenalty);
+        }
+
+        if (MathF.Abs(delta) <= ManeuverPotentialEqualityTolerance) return 0f;
+        return Math.Clamp(delta, -MaxManeuverOutcomeReward, MaxManeuverOutcomeReward);
+    }
+
+    /// <summary>
+    /// Positional value used only at the two boundaries of one completed Maneuver. It deliberately omits
+    /// flag, kill, factory-destruction, factory-occupation, and home-relief event counts: those retain
+    /// their immediate rewards. Instead it measures whether the resulting board is safer and whether its
+    /// forces are usefully placed for the next Maneuver.
+    /// </summary>
+    public static float CalculateManeuverStrategicPotential(Game game, Nation nation, Guid? controllerId)
+    {
+        var friendlyNations = game.NationStates
+            .Where(state => controllerId.HasValue && state.ControllerId == controllerId)
+            .Select(state => state.Nation)
+            .Append(nation)
+            .ToHashSet();
+
+        float potential = 0f;
+        foreach (var defense in HomeDefenseHelper.Assess(game, nation, controllerId))
+        {
+            int coveredThreat = Math.Min(defense.FriendlyArmyDefenders, defense.LandThreat);
+            potential += coveredThreat * CoveredHomeThreatReward;
+            potential -= defense.HostileOccupiers * OccupiedHomePenalty;
+            potential -= defense.LandDefenseDeficit * HomeDefenseDeficitPenalty;
+
+            bool hasFactory = game.TerritoryStates.Any(state =>
+                state.TerritoryId == defense.Territory.Id && state.HasFactory);
+            if (hasFactory)
+            {
+                potential -= defense.LandDefenseDeficit * FactoryDefenseDeficitPenalty;
+            }
+        }
+
+        // Convoy carriers are marked used until AdvanceTurn. The potential describes the next Maneuver,
+        // when that transient flag is reset, so temporarily normalize it and restore it in a finally.
+        var convoyedFleets = game.Units.Where(unit => unit.HasConvoyed).ToList();
+        foreach (var fleet in convoyedFleets) fleet.HasConvoyed = false;
+        try
+        {
+            var usefulObjectives = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var unit in game.Units.Where(unit => unit.Nation == nation))
+            {
+                foreach (string destinationId in ReachableDestinationsForPotential(game, unit))
+                {
+                    if (IsUsefulManeuverObjective(game, destinationId, nation, friendlyNations))
+                    {
+                        usefulObjectives.Add(destinationId);
+                    }
+                }
+            }
+
+            potential += Math.Min(usefulObjectives.Count, MaxUsefulReachObjectives)
+                * UsefulReachObjectiveReward;
+
+            var neutralStagingGroups = game.Units
+                .Where(unit => unit.Nation == nation && unit.UnitType == UnitType.Army)
+                .GroupBy(unit => unit.TerritoryId)
+                .Where(group => IsControlledNeutralStagingRegion(game, group.Key, nation));
+
+            foreach (var group in neutralStagingGroups)
+            {
+                bool reachesObjective = ManeuverHelper.GetAllReachableArmyDestinations(game, group.Key, nation)
+                    .Any(destination => IsUsefulManeuverObjective(
+                        game,
+                        destination.TerritoryId,
+                        nation,
+                        friendlyNations));
+                if (!reachesObjective) continue;
+
+                potential += Math.Min(group.Count(), ManeuverRules.DestroyFactoryArmyCost)
+                    * ForwardStagingArmyReward;
+            }
+        }
+        finally
+        {
+            foreach (var fleet in convoyedFleets) fleet.HasConvoyed = true;
+        }
+
+        return potential;
+    }
+
+    private static IEnumerable<string> ReachableDestinationsForPotential(Game game, Unit unit)
+    {
+        if (unit.UnitType == UnitType.Army)
+        {
+            return ManeuverHelper.GetAllReachableArmyDestinations(game, unit.TerritoryId, unit.Nation)
+                .Select(destination => destination.TerritoryId);
+        }
+
+        return MapConnectivity.GetNeighbors(unit.TerritoryId, isFleet: true);
+    }
+
+    private static bool IsControlledNeutralStagingRegion(Game game, string territoryId, Nation nation)
+    {
+        var territory = TerritoryData.AllTerritories.FirstOrDefault(candidate => candidate.Id == territoryId);
+        if (territory == null || territory.Type != TerritoryType.Land || territory.Nation.HasValue) return false;
+
+        var occupyingUnits = game.Units.Where(unit => unit.TerritoryId == territoryId).ToList();
+        if (occupyingUnits.Any(unit => unit.Nation != nation)) return false;
+
+        var state = game.TerritoryStates.FirstOrDefault(candidate => candidate.TerritoryId == territoryId);
+        if (state?.Controller == nation) return true;
+
+        return occupyingUnits.Count > 0 && occupyingUnits.All(unit => unit.Nation == nation);
+    }
+
+    private static bool IsUsefulManeuverObjective(
+        Game game,
+        string territoryId,
+        Nation nation,
+        ISet<Nation> friendlyNations)
+    {
+        var territory = TerritoryData.AllTerritories.FirstOrDefault(candidate => candidate.Id == territoryId);
+        if (territory == null) return false;
+
+        if (territory.Nation == nation)
+        {
+            return game.Units.Any(unit =>
+                unit.TerritoryId == territoryId
+                && !friendlyNations.Contains(unit.Nation)
+                && unit.IsHostile);
+        }
+
+        if (territory.Nation.HasValue)
+        {
+            return !friendlyNations.Contains(territory.Nation.Value);
+        }
+
+        var occupyingUnits = game.Units.Where(unit => unit.TerritoryId == territoryId).ToList();
+        if (occupyingUnits.Any(unit => !friendlyNations.Contains(unit.Nation))) return true;
+
+        var state = game.TerritoryStates.FirstOrDefault(candidate => candidate.TerritoryId == territoryId);
+        if (state?.Controller is Nation controller && friendlyNations.Contains(controller)) return false;
+
+        return occupyingUnits.Count == 0;
+    }
+
     /// <summary>
     /// Hard cap on how many agent steps one training episode may take. Measured ep_len_mean is ~61, so
     /// this is roughly 30x a normal game - only a genuinely pathological session reaches it.
@@ -2437,84 +2378,18 @@ public class TcpTrainingServer : BackgroundService
     }
 
     /// <summary>
-    /// Whether the RL trainee still owes a Factory build/skip decision for the nation whose turn it is.
+    /// Whether the RL agent still owes a Factory build/skip decision for the nation whose turn it is.
     /// </summary>
     /// <remarks>
-    /// Gated on <see cref="TrainingSession.FactoryDecisionOwedBy"/> - armed by the rondel move that landed
-    /// here - and NOT on <c>RondelPosition == FactorySlot</c>. The rondel position persists across turns
-    /// while Game.AdvanceTurn clears HasBuiltThisTurn every turn, so the latter pair re-arms on the
-    /// nation's every subsequent turn and consumes each of them as a factory decision it already made,
-    /// leaving it unable to move off the slot for the rest of the game. That is the same shape
-    /// BotService uses (its <c>buildPending</c> reads the slot moved to on THIS turn) and the same shape
-    /// the Import sequence here already used (<see cref="TrainingSession.PendingImportRemaining"/>).
-    /// See Tests/TrainingFactorySlotTrapTests.cs.
+    /// Gated on <see cref="TrainingSession.FactoryDecisionOwedBy"/>, which the rondel move sets on landing
+    /// here - not on <c>RondelPosition == FactorySlot</c>, which persists across turns and would say the
+    /// decision is owed again on every later turn (Tests/TrainingFactorySlotTrapTests.cs).
     /// </remarks>
     public static bool IsFactoryDecisionPending(TrainingSession session, NationState? currentNs, Guid rlPlayerId)
         => currentNs != null && currentNs.ControllerId == rlPlayerId
-           && session.FactoryDecisionOwedBy == currentNs.Nation && !currentNs.HasBuiltThisTurn;
-
-    public const float HomeReliefReward = 15.0f;
-
-    /// <summary>
-    /// Charged when the army being maneuvered could have moved into a blockaded home province of its own
-    /// nation and went somewhere else - or nowhere at all.
-    ///
-    /// <see cref="HomeReliefReward"/> only ever pays for acting; nothing cost anything for declining, and
-    /// "Do Not Move" is unconditionally legal at every maneuver step. Observed live as "Bot Delta (RL-4)
-    /// China army stayed in Korea" twice in a row while a hostile army sat in Beijing, which Korea
-    /// borders. That choice was free.
-    ///
-    /// Deliberately the same magnitude as the reward rather than larger: this is the symmetric half of an
-    /// existing term, not a new deterrent, and rule #25's warning about stacking penalties for one
-    /// outcome applies - the two are mutually exclusive, since a step either relieved the province or did
-    /// not.
-    /// </summary>
-    public const float DeclinedHomeReliefPenalty = 15.0f;
-
-    /// <summary>
-    /// The blockaded home province this army could relieve this step, or null if there is none.
-    ///
-    /// "Relieve" is exact rather than hopeful: moving an army into its own home province while foreign
-    /// units are there is forced hostile by the engine, which resolves as a battle and removes an
-    /// occupier. Armies only - p.7's blockade is caused by "hostile armies (standing upright)", and a
-    /// fleet cannot enter a land province to contest one.
-    ///
-    /// Reachability comes from ManeuverHelper.GetAllReachableArmyDestinations, the same call the action
-    /// mask uses to decide which destinations to unmask, so the penalty can never fire for a move the
-    /// agent was not actually offered.
-    /// </summary>
-    public static string? ReachableBlockadedHomeProvince(Game game, Unit unit)
-    {
-        if (unit.UnitType != UnitType.Army) return null;
-
-        var homeProvinceIds = TerritoryData.AllTerritories
-            .Where(t => t.Nation == unit.Nation)
-            .Select(t => t.Id)
-            .ToHashSet();
-
-        if (homeProvinceIds.Count == 0) return null;
-
-        bool IsBlockaded(string territoryId) => game.Units.Any(u =>
-            u.TerritoryId == territoryId && u.UnitType == UnitType.Army && u.Nation != unit.Nation && u.IsHostile);
-
-        return Helpers.ManeuverHelper
-            .GetAllReachableArmyDestinations(game, unit.TerritoryId, unit.Nation)
-            .Select(d => d.TerritoryId)
-            .FirstOrDefault(id => homeProvinceIds.Contains(id) && IsBlockaded(id));
-    }
-
-    /// <summary>
-    /// The penalty owed for this maneuver decision: <see cref="DeclinedHomeReliefPenalty"/> when relief
-    /// was available and not taken, otherwise zero. <paramref name="chosenDestinationId"/> is null when
-    /// the agent chose "Do Not Move", which is the case that prompted this.
-    /// </summary>
-    public static float DeclinedHomeReliefPenaltyFor(Game game, Unit unit, string? chosenDestinationId)
-    {
-        var relief = ReachableBlockadedHomeProvince(game, unit);
-        if (relief == null) return 0f;
-
-        return chosenDestinationId == relief ? 0f : DeclinedHomeReliefPenalty;
-    }
+           && session.FactoryDecisionOwedBy == currentNs.Nation && !currentNs.HasBuiltThisTurn
+           // No action may run while an Investor turn is open. The decision stays owed and is asked once it clears.
+           && !session.Game.IsInvestorTurn;
 
     public const float AvoidableFactorySkipPenalty = 30.0f;
 
@@ -2577,7 +2452,7 @@ public class TcpTrainingServer : BackgroundService
     /// True when the acting nation declined a factory it could actually have built: treasury covers the
     /// 5M cost and at least one home city is free and unblockaded.
     ///
-    /// Scoped narrowly on purpose. "No treasury" and "every city built or blockaded" are already covered,
+    /// Scoped narrowly on purpose. "No treasury" and "every city built or occupied" are already covered,
     /// more precisely, by the wasted-Factory-action penalty applied to the rondel move itself, and firing
     /// for those here would double-penalize one event (.agents/AGENTS.md rule #25). Reuses
     /// GetFactoryBuildOptions rather than re-deriving buildability so the two cannot drift.
@@ -2593,102 +2468,19 @@ public class TcpTrainingServer : BackgroundService
     /// <summary>The rulebook's factory price (Imperial-2030-Rules.pdf p.7: "The nation pays 5 million").</summary>
     private const int FactoryCost = GameConstants.FactoryCost;
 
-    /// <summary>
-    /// True when <paramref name="unit"/> leaving <paramref name="vacatedTerritoryId"/> for
-    /// <paramref name="target"/> strips the last army defender from one of its own factory cities while
-    /// an enemy army is in range — and the move is not itself an answer to that threat.
-    ///
-    /// Reachability is full maneuver reachability (land adjacency, rail, convoy), not plain adjacency: a
-    /// fleet-convoyed army several sea zones away is just as much of a threat. It is deliberately not
-    /// filtered by IsHostile, which describes how a unit is sitting where it already is, not whether it
-    /// could turn hostile next turn.
-    ///
-    /// Two moves are exempt, because both REMOVE the risk rather than ignoring it — penalizing them
-    /// would teach the agent to sit still and let an enemy walk into the city:
-    ///
-    ///   * moving onto the very enemy army that could have reached the city (a preventative strike — the
-    ///     threat being counted is the thing being attacked);
-    ///   * moving onto one of the nation's own home provinces that an enemy is occupying (defending home
-    ///     ground). Any enemy unit counts here, not just an army: an enemy fleet sitting in a home city's
-    ///     harbour is still an enemy on home soil worth clearing.
-    ///
-    /// The two exemptions treat the hostility flag differently, because the engine does:
-    ///
-    ///   * Into the nation's OWN home province holding a foreign unit, a battle is guaranteed whatever
-    ///     the caller asked for — ManeuverController overrides the flag ("Foreign armies in your home
-    ///     territory are always hostile. You cannot peacefully coexist."). This exemption therefore does
-    ///     not read isHostileMove at all. It matches Imperial-2030-Rules.pdf, where the hostile/friendly
-    ///     choice (p.10) is about entering the home province of ANOTHER Great Power.
-    ///   * Anywhere else, the flag decides. A hostile move resolves as combat, but a FRIENDLY move only
-    ///     opens battle negotiation, which the inactive defender may decline (FAQ p.14: they are
-    ///     *allowed* to fight, not obliged) — both units then simply coexist in the region and the threat
-    ///     to the vacated city is completely untouched. So a friendly move onto the threat answers
-    ///     nothing and earns no exemption.
-    ///
-    /// This split is what keeps the predicate correct once the hostility decision is handed to the model.
-    /// RLBotStrategy currently hardcodes DetermineHostility to true whenever an enemy is present ("like
-    /// it did before"), so today the flag is always true here; other strategies already vary, with
-    /// BotStrategyBase choosing randomly. Reading the flag where it genuinely changes the outcome, and
-    /// ignoring it where the engine overrides it, means neither a future model policy nor a different
-    /// strategy can silently change what this reward means.
-    /// </summary>
-    public static bool IsRecklessFactoryCityVacation(Game game, Unit unit, string vacatedTerritoryId, string target, bool isHostileMove)
-    {
-        if (unit.UnitType != UnitType.Army) return false;
-        if (target == vacatedTerritoryId) return false;
-
-        var originDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == vacatedTerritoryId);
-        if (originDef == null || originDef.Nation != unit.Nation) return false;
-
-        var originTState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == vacatedTerritoryId);
-        if (originTState == null || !originTState.HasFactory) return false;
-
-        bool remainingDefenders = game.Units.Any(u => u.Id != unit.Id
-            && u.TerritoryId == vacatedTerritoryId && u.Nation == unit.Nation && u.UnitType == UnitType.Army);
-        if (remainingDefenders) return false;
-
-        // Kept as the threatening units themselves, not just a bool: the preventative-strike exemption
-        // below has to ask whether the destination holds one of them.
-        var threats = game.Units
-            .Where(u => u.Nation != unit.Nation && u.UnitType == UnitType.Army)
-            .Where(enemy => Imperial2030.Server.Helpers.ManeuverHelper
-                .GetAllReachableArmyDestinations(game, enemy.TerritoryId, enemy.Nation)
-                .Any(d => d.TerritoryId == vacatedTerritoryId))
-            .ToList();
-
-        if (threats.Count == 0) return false;
-
-        // Defending home ground: an enemy of any kind sitting in one of this nation's own home provinces.
-        // No hostility check — the engine forces the battle here. Any foreign unit counts, not just an
-        // army: an enemy fleet in a home city's harbour is still an enemy on home soil worth clearing.
-        var targetDef = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
-        bool targetIsOwnHome = targetDef != null && targetDef.Nation == unit.Nation;
-        bool enemyAtTarget = game.Units.Any(u => u.TerritoryId == target && u.Nation != unit.Nation);
-        if (targetIsOwnHome && enemyAtTarget) return false;
-
-        // Preventative strike: the destination holds one of the very armies counted as a threat above.
-        // Hostile only — a friendly arrival can end in the defender declining battle and both units
-        // sitting there together, leaving the threat free to take the vacated city next turn.
-        if (isHostileMove && threats.Any(t => t.TerritoryId == target)) return false;
-
-        return true;
-    }
-
     private (List<Territory> OrderedHome, bool[] CanBuild) GetFactoryBuildOptions(Game game, NationState ns)
         => GetFactoryBuildOptionsFor(game, ns);
 
     private static (List<Territory> OrderedHome, bool[] CanBuild) GetFactoryBuildOptionsFor(Game game, NationState ns)
     {
+        // The ORDER is the action-space layout (FactoryBuildActionBase + index) and must not change - rule
+        // #17: every home province by Id, as the deployed models were trained on. Legality per slot is the
+        // engine's (which also requires a city; on this map every home province is one).
         var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation).OrderBy(t => t.Id).ToList();
         var canBuild = new bool[orderedHome.Count];
         for (int i = 0; i < orderedHome.Count; i++)
         {
-            var t = orderedHome[i];
-            var ts = game.TerritoryStates.FirstOrDefault(x => x.TerritoryId == t.Id);
-            if (ts != null && ts.HasFactory) continue;
-
-            bool hasHostileForeignArmy = game.Units.Any(u => u.TerritoryId == t.Id && u.UnitType == UnitType.Army && u.Nation != ns.Nation && u.IsHostile);
-            canBuild[i] = !hasHostileForeignArmy;
+            canBuild[i] = FactoryEngine.IsBuildableSite(game, ns.Nation, orderedHome[i].Id);
         }
         return (orderedHome, canBuild);
     }

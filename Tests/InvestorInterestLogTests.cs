@@ -1,3 +1,4 @@
+using Imperial2030.Server.Engine;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -90,7 +91,7 @@ namespace Imperial2030.Tests
             context.Games.Add(game);
             await context.SaveChangesAsync();
 
-            GamesController.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
+            InvestorEngine.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
 
             var entries = InterestPaidEntries(game);
 
@@ -142,7 +143,7 @@ namespace Imperial2030.Tests
             context.Games.Add(game);
             await context.SaveChangesAsync();
 
-            GamesController.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
+            InvestorEngine.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
 
             var entries = InterestPaidEntries(game);
             Assert.NotEmpty(entries);
@@ -193,7 +194,7 @@ namespace Imperial2030.Tests
             context.Games.Add(game);
             await context.SaveChangesAsync();
 
-            GamesController.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
+            InvestorEngine.HandleInvestorPhase(context, game, game.NationStates.First(), controller, isLandedOn: true);
 
             var contribution = game.Actions
                 .Where(a => a.ActionType == "Investor" && !string.IsNullOrEmpty(a.Metadata))

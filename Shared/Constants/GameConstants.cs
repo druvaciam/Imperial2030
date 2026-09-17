@@ -34,6 +34,9 @@ public static class GameConstants
     /// </summary>
     public const int ImportUnitCost = 1;
 
+    /// <summary>How many units one Import action may buy. Same p.8 sentence: "up to three units".</summary>
+    public const int MaxImportUnits = 3;
+
     // Role claim carried by tokens from AuthController.GuestLogin. A guest is a throwaway identity with no
     // backing ApplicationUser row, so it may browse and spectate but not create or join games.
     //

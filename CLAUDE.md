@@ -21,7 +21,12 @@ independent pieces:
 
 - **`Server/`** — ASP.NET Core Web host: REST API (`Controllers/`), SignalR hub (`Hubs/GameHub.cs`),
   business logic (`Services/`, `Helpers/`), EF Core data access (`Data/`), Identity/JWT auth, and the RL
-  training TCP server (`Services/TcpTrainingServer.cs`).
+  training TCP server (`Services/TcpTrainingServer.cs`). `Engine/` holds every game operation once —
+  set-up, rondel move, each rondel action, the Investor turn, maneuver, turn end — as static classes
+  with the `(ApplicationDbContext? context, Game game, …)` shape returning `EngineResult`; the engine
+  mutates and logs, never saves, broadcasts or triggers bots. Controllers authorise → load → engine →
+  save → broadcast; `BotService`, `TcpTrainingServer` and `GameReplayService` call the same engines.
+  A rule change goes in the engine, nowhere else (`implementation_plan.md` records the extraction).
 - **`Client/`** — Blazor WebAssembly UI (`Pages/`, `Components/`, `Shared/`).
 - **`Shared/`** — DTOs, models, and game constants (`Constants/`) referenced by both `Server` and
   `Client`, and mirrored by hand into the Vue viewer's TypeScript types (see below).
@@ -51,7 +56,7 @@ dotnet build
 dotnet run --project Server/Imperial2030.Server.csproj
 # HTTPS dev URL used by VueReplayViewer's proxy and local launch configs: https://localhost:7180
 
-# Run the server in RL training mode (starts TcpTrainingServer on port 5005, uses in-memory DB)
+# Run the server in RL training mode (starts TcpTrainingServer on port 5295, uses in-memory DB)
 dotnet run --project Server/Imperial2030.Server.csproj -c Release -- --training
 
 # Run all tests
@@ -126,7 +131,7 @@ manually-normalized state tensor, runs inference, and applies an action mask to 
 
 ### RL training loop
 
-`TcpTrainingServer.cs` (hosted service, only registered under `--training`) listens on TCP port 5005,
+`TcpTrainingServer.cs` (hosted service, only registered under `--training`) listens on TCP port 5295,
 manages isolated in-memory game instances, and exchanges game state/actions/rewards with the Python
 `imperial_env.py` Gymnasium environment. Trained PPO models (`.zip` + `vec_normalize.pkl`) are exported to
 ONNX (`export_onnx.py`) and copied into `Server/` for zero-dependency native inference. **Backward
