@@ -182,12 +182,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.Players)
-            .Include(g => g.Bonds)
-            .Include(g => g.NationStates)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -226,23 +221,14 @@ public class GamesController : ControllerBase
 
         if (!hasHumanPlayers && game.Status != GameStatus.Finished)
         {
-            var fullGame = await _context.Games
-                .Include(g => g.TerritoryStates)
-                .Include(g => g.Units)
-                .AsSplitQuery()
-                .FirstOrDefaultAsync(g => g.Id == gameId);
-
-            if (fullGame != null)
-            {
-                await _context.GameActions.Where(a => a.GameId == gameId).ExecuteDeleteAsync();
-                _context.Bonds.RemoveRange(game.Bonds);
-                _context.NationStates.RemoveRange(game.NationStates);
-                _context.TerritoryStates.RemoveRange(fullGame.TerritoryStates);
-                _context.Units.RemoveRange(fullGame.Units);
-                _context.Players.RemoveRange(game.Players);
-                _context.Games.Remove(fullGame);
-                await _context.SaveChangesAsync();
-            }
+            await _context.GameActions.Where(a => a.GameId == gameId).ExecuteDeleteAsync();
+            _context.Bonds.RemoveRange(game.Bonds);
+            _context.NationStates.RemoveRange(game.NationStates);
+            _context.TerritoryStates.RemoveRange(game.TerritoryStates);
+            _context.Units.RemoveRange(game.Units);
+            _context.Players.RemoveRange(game.Players);
+            _context.Games.Remove(game);
+            await _context.SaveChangesAsync();
         }
         else
         {
@@ -274,14 +260,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.Players)
-            .Include(g => g.Bonds)
-            .Include(g => g.NationStates)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Units)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -322,20 +301,7 @@ public class GamesController : ControllerBase
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
-        var game = await _context.Games
-            .Include(g => g.Players)
-                .ThenInclude(p => p.User)
-            .Include(g => g.NationStates) // Maps to DB
-                .ThenInclude(ns => ns.Controller) // Include Controller
-                    .ThenInclude(c => c.User) // Include User for Name
-            .Include(g => g.Bonds)
-                .ThenInclude(b => b.Holder)
-                    .ThenInclude(h => h.User)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Units)
-            .Include(g => g.Actions)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameDetailAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -908,17 +874,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.NationStates)
-            .Include(g => g.Players)
-            .Include(g => g.Bonds)
-            .Include(g => g.Units)
-            // Landing on Maneuver with nothing of a kind to move ends that phase at once, and a phase end
-            // places flags - which reads and writes TerritoryStates. Left unloaded, the pass sees an empty
-            // collection and creates a second state row for every occupied region.
-            .Include(g => g.TerritoryStates)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -962,13 +918,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.NationStates)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Units)
-            .Include(g => g.Players)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -995,12 +945,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.Bonds)
-            .Include(g => g.NationStates)
-            .Include(g => g.Players)
-            .Include(g => g.Units) // the last investor of a passed-over Investor turn ends the nation's turn, which resets its units
-            .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
         if (!game.IsInvestorTurn) return BadRequest("Not investor turn.");
@@ -1049,12 +994,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.NationStates)
-            .Include(g => g.Players)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Units)
-            .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -1079,11 +1019,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.NationStates)
-            .Include(g => g.Players)
-            .Include(g => g.Units)
-            .AsSplitQuery().FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -1112,15 +1048,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.NationStates)
-                .ThenInclude(ns => ns.Controller)
-            .Include(g => g.Players)
-            .Include(g => g.Bonds)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Units) // Include Units for Army/Fleet counts
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -1171,12 +1099,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.NationStates)
-            .Include(g => g.Players)
-            .Include(g => g.Units)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -1199,15 +1122,7 @@ public class GamesController : ControllerBase
     [HttpPost("{gameId}/swissbank-response")]
     public async Task<IActionResult> SwissBankResponse(Guid gameId, [FromBody] SwissBankResponseRequest request)
     {
-        var game = await _context.Games
-            .Include(g => g.Players)
-            .Include(g => g.NationStates)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Bonds)
-            .Include(g => g.Units)
-            .Include(g => g.Actions)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -1229,11 +1144,7 @@ public class GamesController : ControllerBase
     public async Task<IActionResult> TogglePause(Guid gameId)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var game = await _context.Games
-            .Include(g => g.Players).ThenInclude(p => p.User)
-            .Include(g => g.NationStates)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound("Game not found.");
         if (game.Status != GameStatus.InProgress) return BadRequest("Game is not in progress.");

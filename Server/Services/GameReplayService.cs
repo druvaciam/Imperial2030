@@ -272,7 +272,8 @@ public class GameReplayService
         ApplicationDbContext context, Guid gameId,
         IReadOnlyList<GameActionDto> actions,
         // Invoked once per action with (action, index, wasSkipped). wasSkipped is true for the informational
-        // entries the skip-list below treats as no-ops — they advance the index but change no state, so a
+        // entries the skip-list below treats as no-ops, and for a derived entry (Battle, FlagPlacement) the
+        // preceding replayed move already produced — they advance the index but change no state, so a
         // paced viewer (ReplaySessionManager) can advance past them instantly instead of spending a full
         // beat showing nothing.
         Func<GameActionDto, int, bool, Task>? onActionReplayed = null)
@@ -334,17 +335,16 @@ public class GameReplayService
                 }
 
                 EngineResult? result = null;
+                // A derived entry whose effect the preceding replayed move already applied and logged: it
+                // advances the index like a skipped entry, with nothing new for a viewer to see.
+                bool alreadyApplied = false;
                 try
                 {
                     switch (action.ActionType)
                     {
                         case "Move":
                             var moveMeta = JsonSerializer.Deserialize<RondelMoveMetadata>(action.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                            var moveGame = await context.Games
-                                .Include(g => g.NationStates)
-                                .Include(g => g.Players)
-                                .AsSplitQuery()
-                                .FirstAsync(g => g.Id == replayGameId);
+                            var moveGame = await LoadGame(context, replayGameId);
                             if (action.Nation.HasValue)
                             {
                                 int maxAdvances = 6;
@@ -619,6 +619,8 @@ public class GameReplayService
                             }
                             else
                             {
+                                // The replayed move auto-resolved the battle; there is nothing to answer.
+                                alreadyApplied = true;
                                 result = EngineResult.Success;
                             }
                             break;
@@ -678,6 +680,7 @@ public class GameReplayService
                             // its still-present counterpart must still be removed, not left stranded on the board.
                             if (aggUnit != null) context.Units.Remove(aggUnit);
                             if (defUnit != null) context.Units.Remove(defUnit);
+                            alreadyApplied = aggUnit == null && defUnit == null;
                             if (aggUnit != null || defUnit != null)
                             {
                                 // Only when this case actually performed a removal — if it was fully
@@ -712,6 +715,7 @@ public class GameReplayService
                                 // that is a change no replayed move accounted for, and dropping it would leave
                                 // the board wrong. See the "Production"/"Import" cases for why the replay
                                 // target's own log needs these entries at all.
+                                alreadyApplied = fpTerr != null && fpTerr.Controller == fpMeta.NewController;
                                 if (fpTerr != null && fpTerr.Controller != fpMeta.NewController)
                                 {
                                     fpTerr.Controller = fpMeta.NewController;
@@ -931,11 +935,7 @@ public class GameReplayService
                             result = destroyed;
                             break;
                         case "Investment":
-                            var invGame = await context.Games
-                                .Include(g => g.NationStates)
-                                .Include(g => g.Players)
-                                .AsSplitQuery()
-                                .FirstAsync(g => g.Id == replayGameId);
+                            var invGame = await LoadGame(context, replayGameId);
                             if (!invGame.IsInvestorTurn && invGame.InvestorTurnPending)
                             {
                                 // The move passed over Investor and the log has reached its investments:
@@ -947,6 +947,7 @@ public class GameReplayService
                             }
                             if (!invGame.IsInvestorTurn)
                             {
+                                alreadyApplied = true;
                                 result = EngineResult.Success;
                                 break;
                             }
@@ -1002,6 +1003,8 @@ public class GameReplayService
                             }
                             break;
                         case "SwissBankResponse":
+                            // The replayed Move bypasses the Swiss Bank question and goes straight to its logged target.
+                            alreadyApplied = true;
                             result = EngineResult.Success;
                             break;
                         case "EndPhase":
@@ -1144,7 +1147,7 @@ public class GameReplayService
                 //var postReplayGame = context.Games.First(g => g.Id == replayGameId);
                 //_logger.LogTrace($"  -> IsInvestorTurn={postReplayGame.IsInvestorTurn}, Pending=[{string.Join(", ", postReplayGame.PendingInvestorIds)}]");
 
-                if (onActionReplayed != null) await onActionReplayed(action, i, false);
+                if (onActionReplayed != null) await onActionReplayed(action, i, alreadyApplied);
             }
 
             return new GameReplayResult { Success = true };
@@ -1155,13 +1158,6 @@ public class GameReplayService
         }
     }
 
-    /// <summary>The whole game graph an engine call may read or write, tracked by <paramref name="context"/>.</summary>
-    private static Task<Game> LoadGame(ApplicationDbContext context, Guid gameId) => context.Games
-        .Include(g => g.Players)
-        .Include(g => g.NationStates)
-        .Include(g => g.Bonds)
-        .Include(g => g.Units)
-        .Include(g => g.TerritoryStates)
-        .AsSplitQuery()
-        .FirstAsync(g => g.Id == gameId);
+    private static async Task<Game> LoadGame(ApplicationDbContext context, Guid gameId)
+        => await context.LoadGameGraphAsync(gameId) ?? throw new InvalidOperationException($"Replay game {gameId} not found.");
 }

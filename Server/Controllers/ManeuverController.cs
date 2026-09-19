@@ -34,14 +34,7 @@ public class ManeuverController : ControllerBase
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ManeuverController>.Instance;
     }
 
-    private Task<Game?> LoadGame(Guid gameId) => _context.Games
-        .Include(g => g.Units)
-        .Include(g => g.NationStates)
-        .Include(g => g.TerritoryStates)
-        .Include(g => g.Players)
-            .ThenInclude(p => p.User)
-        .AsSplitQuery()
-        .FirstOrDefaultAsync(g => g.Id == gameId);
+    private Task<Game?> LoadGame(Guid gameId) => _context.LoadGameGraphAsync(gameId);
 
     /// <summary>
     /// The caller must be the acting nation's government - checked before the engine runs, because it

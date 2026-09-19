@@ -376,7 +376,8 @@ public class ReplaySessionManager : IDisposable
                     token.ThrowIfCancellationRequested();
                     session.CurrentActionIndex = index;
 
-                    // Skipped entries (JoinGame/LeaveGame/StartGame/Investor/InvestorBonus) are purely
+                    // Skipped entries (JoinGame/LeaveGame/StartGame/Investor/InvestorBonus, and a derived
+                    // Battle/FlagPlacement the replayed move already produced) are purely
                     // informational — GameReplayService applies no state change for them, so pausing a full
                     // beat on each just stalls playback with nothing to look at. They were making the gap
                     // between two consecutive *visible* events run several times PacingMs (e.g. an investor
@@ -440,15 +441,7 @@ public class ReplaySessionManager : IDisposable
 
     private static async Task CaptureSnapshotAsync(ReplaySession session)
     {
-        var game = await session.Context.Games
-            .Include(g => g.Players).ThenInclude(p => p.User)
-            .Include(g => g.NationStates).ThenInclude(ns => ns.Controller).ThenInclude(c => c!.User)
-            .Include(g => g.Bonds).ThenInclude(b => b.Holder).ThenInclude(h => h!.User)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Units)
-            .Include(g => g.Actions)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == session.ReplayGameId);
+        var game = await session.Context.LoadGameDetailAsync(session.ReplayGameId);
         if (game != null)
         {
             session.LatestSnapshot = GameDetailDtoBuilder.Build(game, null, session.Context, presence: null);

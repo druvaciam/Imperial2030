@@ -1380,6 +1380,59 @@ namespace Imperial2030.Tests
         }
 
         /// <summary>
+        /// A derived entry the preceding replayed move already produced - the Battle the engine auto-resolved,
+        /// the flag the phase end placed - changes nothing when its turn comes, and must be reported as
+        /// skipped so the paced viewer moves straight on. Reported as applied, each cost a full beat with
+        /// nothing new on screen: "attacked ... both destroyed" then a 10 s hole at the 5 s pace.
+        /// </summary>
+        [Fact]
+        public async Task ReplayedDerivedEntriesAlreadyAppliedByTheMove_AreReportedAsSkipped()
+        {
+            var (replayContext, gameId, service, moveAction, _) =
+                await ArrangeDerivedFlagPlacementReplay(preSeedFleetOnReplayBoard: true);
+            // A lone China fleet waits in the destination: the hostile move auto-resolves into a battle.
+            replayContext.Units.Add(new Unit { Id = Guid.NewGuid(), GameId = gameId, Nation = Nation.China, UnitType = UnitType.Fleet, TerritoryId = "SeaOfJapan", IsHostile = true });
+            await replayContext.SaveChangesAsync();
+
+            var moveMeta = JsonSerializer.Deserialize<ActionMetadata>(moveAction.Metadata)!;
+            moveMeta.IsHostileMove = true;
+            moveAction.Metadata = JsonSerializer.Serialize(moveMeta);
+            var battle = new GameActionDto
+            {
+                Id = Guid.NewGuid(),
+                OrderIndex = moveAction.OrderIndex + 1,
+                Timestamp = moveAction.Timestamp,
+                PlayerName = moveAction.PlayerName,
+                Nation = Nation.Russia,
+                ActionType = "Battle",
+                Message = string.Empty,
+                Metadata = JsonSerializer.Serialize(new ActionMetadata { TerritoryId = "SeaOfJapan", AggressorNation = Nation.Russia, DefenderNation = Nation.China, UnitType = UnitType.Fleet, DefenderUnitType = UnitType.Fleet })
+            };
+
+            var reported = new List<(string Type, bool Skipped)>();
+            var result = await service.ReplayActionsAsync(replayContext, gameId, new List<GameActionDto> { moveAction, battle },
+                onActionReplayed: (a, _, skipped) => { reported.Add((a.ActionType, skipped)); return Task.CompletedTask; });
+            Assert.True(result.Success, $"Replay failed at action {result.FailedActionOrderIndex} ({result.FailedActionType}): {result.ErrorMessage}");
+
+            Assert.Empty(await replayContext.Units.Where(u => u.GameId == gameId && u.TerritoryId == "SeaOfJapan").ToListAsync());
+            Assert.Equal(new[] { ("MoveFleet", false), ("Battle", true) }, reported);
+        }
+
+        [Fact]
+        public async Task ReplayedFlagPlacementAlreadyAppliedByTheMove_IsReportedAsSkipped()
+        {
+            var (replayContext, gameId, service, moveAction, flagAction) =
+                await ArrangeDerivedFlagPlacementReplay(preSeedFleetOnReplayBoard: true);
+
+            var reported = new List<(string Type, bool Skipped)>();
+            var result = await service.ReplayActionsAsync(replayContext, gameId, new List<GameActionDto> { moveAction, flagAction },
+                onActionReplayed: (a, _, skipped) => { reported.Add((a.ActionType, skipped)); return Task.CompletedTask; });
+            Assert.True(result.Success, $"Replay failed at action {result.FailedActionOrderIndex} ({result.FailedActionType}): {result.ErrorMessage}");
+
+            Assert.Equal(new[] { ("MoveFleet", false), ("FlagPlacement", true) }, reported);
+        }
+
+        /// <summary>
         /// "Start Replay" on a game played right here, never exported or imported.
         ///
         /// TestImportFromExportedJson also drives StartReplay, but only against an IMPORTED game - and
