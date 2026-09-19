@@ -1,82 +1,48 @@
 using System;
-using System.IO;
-using System.Linq;
 using Imperial2030.Server.Services;
 using Xunit;
 
 namespace Imperial2030.Tests;
 
 /// <summary>
-/// Guards the reward-shaping curriculum added for RL-4, and the ordering bug that motivated it.
-///
-/// The bug: HandleStepAsync accumulated shaping into `explicitBonusReward`, folded it into `reward` at
-/// the top, and then kept subtracting from `explicitBonusReward` for another sixty lines. The two
-/// Investor penalties down there — up to -80 for personally covering a nation's interest shortfall, and
-/// -20 for missing one's own interest — were computed, logged as "[RL PENALTY]", and thrown away. The
-/// training logs said they applied; the agent never saw them. Nothing failed, which is exactly why this
-/// needs a guard: a discarded reward term is invisible from the outside.
-///
-/// The structural fix is that shaping is now folded in exactly once, at a single point after every
-/// shaping term has been computed. That is an ordering property of the source, not of any value a unit
-/// test can observe, so the first test below reads the file. Source-scanning is a blunt instrument and
-/// deliberately used for just this one invariant.
+/// Guards the reward-shaping curriculum added for RL-4, and the ordering bug that motivated it: shaping
+/// terms were once accumulated into a local that was folded into the reward near the top of the step
+/// handler and then written to for another sixty lines. Two Investor penalties (up to -80 for covering a
+/// nation's interest shortfall, -20 for missing one's own interest) were computed, logged as applied, and
+/// thrown away for the whole of RL-3's training - nothing observable failed. ShapingReward now makes
+/// that a thrown exception instead of a silent loss.
 /// </summary>
 public class TrainingRewardCurriculumTests
 {
-    private static string FindRepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Imperial2030.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        Assert.True(dir != null, "Could not locate the repository root (no Imperial2030.sln found above the test assembly).");
-        return dir!.FullName;
-    }
-
-    private static string[] TrainingServerSource() =>
-        File.ReadAllLines(Path.Combine(FindRepositoryRoot(), "Server", "Services", "TcpTrainingServer.cs"));
-
     [Fact]
-    public void NoShapingTermIsComputedAfterItHasBeenFoldedIntoTheReward()
+    public void AShapingTermAddedAfterTheFoldThrowsInsteadOfBeingDropped()
     {
-        var lines = TrainingServerSource();
+        var shaping = new ShapingReward();
+        shaping.Add(16f);
+        shaping.Add(-7f);
 
-        int fold = Array.FindIndex(lines, l => l.Contains("reward += explicitBonusReward * session.ShapingScale;"));
-        Assert.True(fold >= 0,
-            "Could not find the single fold point 'reward += explicitBonusReward * session.ShapingScale;'. " +
-            "If it was renamed, update this test rather than deleting it - it guards a bug that silently " +
-            "discarded two Investor penalties for the whole of RL-3's training.");
+        Assert.Equal(9f * 0.5f, shaping.Fold(0.5f));
 
-        var stragglers = lines
-            .Select((text, index) => (text, index))
-            .Where(x => x.index > fold)
-            .Where(x => x.text.Contains("explicitBonusReward +=") || x.text.Contains("explicitBonusReward -="))
-            .Select(x => $"line {x.index + 1}: {x.text.Trim()}")
-            .ToList();
-
-        Assert.True(stragglers.Count == 0,
-            "These shaping terms are computed AFTER explicitBonusReward was folded into reward, so they " +
-            "have no effect on training and will be silently discarded:\n  " + string.Join("\n  ", stragglers));
+        var late = Assert.Throws<InvalidOperationException>(() => shaping.Add(-20f));
+        Assert.Contains("after the fold", late.Message);
+        Assert.Throws<InvalidOperationException>(() => shaping.Fold(1f));
     }
 
     /// <summary>
-    /// The terminal signal — the final VP margin and the flat win/loss bonus — must sit after the fold so
-    /// that decaying the shaping scale makes winning RELATIVELY more important. Scaling it too would
-    /// defeat the entire point of the decay.
+    /// The terminal signal - the final margin and the flat win/loss bonus - is the objective and is not
+    /// part of the shaping that the curriculum scales down: with shaping at 0 the agent still gets it in
+    /// full, which is what makes decaying the shaping make winning RELATIVELY more important.
     /// </summary>
     [Fact]
     public void TheTerminalWinLossRewardIsNotScaledByTheShapingCurriculum()
     {
-        var lines = TrainingServerSource();
+        var shaping = new ShapingReward();
+        shaping.Add(50f);
+        float reward = shaping.Fold(0f) + TcpTrainingServer.TerminalReward(rlScore: 60, maxOfOthersScore: 45);
 
-        int fold = Array.FindIndex(lines, l => l.Contains("reward += explicitBonusReward * session.ShapingScale;"));
-        int win = Array.FindIndex(lines, l => l.Contains("reward += 100f;"));
-        int loss = Array.FindIndex(lines, l => l.Contains("reward -= 100f;"));
-
-        Assert.True(win > fold, "The +100 win bonus must be applied after the shaping fold, unscaled.");
-        Assert.True(loss > fold, "The -100 loss penalty must be applied after the shaping fold, unscaled.");
+        Assert.Equal(115f, reward); // margin 15 + 100 for the win, none of the 50 shaping
+        Assert.Equal(-110f, TcpTrainingServer.TerminalReward(rlScore: 45, maxOfOthersScore: 55));
+        Assert.Equal(0f, TcpTrainingServer.TerminalReward(rlScore: 50, maxOfOthersScore: 50)); // a tie is neither
     }
 
     /// <summary>

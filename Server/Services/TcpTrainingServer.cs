@@ -503,7 +503,7 @@ public class TcpTrainingServer : BackgroundService
             t => t.TerritoryId,
             t => game.Units.Any(u => u.TerritoryId == t.TerritoryId && u.Nation != TerritoryData.AllTerritories.FirstOrDefault(x => x.Id == t.TerritoryId)?.Nation && u.IsHostile)
         );
-        float explicitBonusReward = 0f;
+        var shaping = new ShapingReward();
 
         bool wasImportAction = false;
         bool wasFactoryBuildAction = false;
@@ -573,7 +573,7 @@ public class TcpTrainingServer : BackgroundService
                     // every single opponent bot built at least one in all 6 (see the RL-3 worst-loss export
                     // investigation). The goal here is a fair expected value for attempting under uncertainty, not
                     // eliminating the penalty for genuinely wasted attempts.
-                    explicitBonusReward += FactoryBuildReward;
+                    shaping.Add(FactoryBuildReward);
                     built = true;
                     _logger.LogInformation($"[RL REWARD] Built factory in {cityId} for {ns.Nation}. Reward: +{FactoryBuildReward}");
                 }
@@ -586,7 +586,7 @@ public class TcpTrainingServer : BackgroundService
             // Import: the skip may then be saving for imports rather than wasting the turn.
             if (!built && skipPenalty > 0f)
             {
-                explicitBonusReward -= skipPenalty * session.FactoryPenaltyScale;
+                shaping.Add(-(skipPenalty * session.FactoryPenaltyScale));
                 bool savingForImport = skipPenalty == ReducedFactorySkipPenalty;
                 _logger.LogWarning(
                     $"[RL PENALTY] {ns.Nation} skipped an available factory build (treasury {ns.Treasury}M" +
@@ -639,7 +639,7 @@ public class TcpTrainingServer : BackgroundService
                 if (session.ImportPlacedThisSequence.Count == 0)
                 {
                     _logger.LogWarning($"[RL PENALTY] Wasted Import action by {ns.Nation}. Had money but imported 0 units.");
-                    explicitBonusReward -= 7.0f;
+                    shaping.Add(-7.0f);
                 }
                 ImportEngine.CompleteImport(null, game, session.ImportPlacedThisSequence);
                 session.PendingImportRemaining = null;
@@ -834,13 +834,13 @@ public class TcpTrainingServer : BackgroundService
                 if (passed && bestAffordableWeight > 0f)
                 {
                     float penalty = -50.0f * bestAffordableWeight;
-                    explicitBonusReward += penalty;
+                    shaping.Add(penalty);
                     _logger.LogWarning($"[RL PENALTY] Passed on investment with a bond available in a growing nation (weight {bestAffordableWeight:F2}). Penalty: {penalty:F1}");
                 }
                 else if (!passed && boughtWeight > 0f)
                 {
                     float bonus = 20.0f * boughtWeight;
-                    explicitBonusReward += bonus;
+                    shaping.Add(bonus);
                     _logger.LogInformation($"[RL REWARD] Invested in a growing nation (weight {boughtWeight:F2}). Reward: +{bonus:F1}");
                 }
             }
@@ -923,7 +923,7 @@ public class TcpTrainingServer : BackgroundService
 
                 if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
                 {
-                    explicitBonusReward += EnemyUnitDestroyedReward * (preCount - postCount);
+                    shaping.Add(EnemyUnitDestroyedReward * (preCount - postCount));
                     //_logger.LogInformation($"[RL REWARD] Destroyed unit of {nation}. +{1.0f * (preCount - postCount)}");
                 }
             }
@@ -949,7 +949,7 @@ public class TcpTrainingServer : BackgroundService
 
                     if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
                     {
-                        explicitBonusReward += EnemyFactoryDestroyedReward * (preCount - postCount);
+                        shaping.Add(EnemyFactoryDestroyedReward * (preCount - postCount));
                         _logger.LogInformation($"[RL REWARD] Destroyed factory of {nation}. +{EnemyFactoryDestroyedReward * (preCount - postCount)}");
                     }
                 }
@@ -976,7 +976,7 @@ public class TcpTrainingServer : BackgroundService
 
                         if (leaderInterest >= 2 * rlInterest && leaderInterest > 0)
                         {
-                            explicitBonusReward += EnemyFactoryOccupiedReward;
+                            shaping.Add(EnemyFactoryOccupiedReward);
                             //_logger.LogInformation($"[RL REWARD] Occupied factory of {nation}. +2.0f");
                         }
 
@@ -989,8 +989,8 @@ public class TcpTrainingServer : BackgroundService
         bool done = await AdvanceUntilRLTurn(game, session.RLPlayerId);
 
         float newVP = CalculateRelativeVP(game, session.RLPlayerId);
-        // Shaping is accumulated in explicitBonusReward and folded in ONCE, at the single point below,
-        // after every shaping term has been computed - terms added after that point would be lost.
+        // Shaping is accumulated in `shaping` and folded in ONCE, at the single point below, after every
+        // shaping term has been computed - ShapingReward throws on a term added after that.
         float reward = newVP - prevVP;
 
         if (preNs != null && preNs.ControllerId == session.RLPlayerId)
@@ -1001,13 +1001,13 @@ public class TcpTrainingServer : BackgroundService
 
             if (postFlags > preFlags)
             {
-                explicitBonusReward += (postFlags - preFlags) * FlagPlacementReward;
+                shaping.Add((postFlags - preFlags) * FlagPlacementReward);
                 MarkDirectManeuverEvent(preNs.Nation);
                 //_logger.LogInformation($"[RL REWARD] Flag placed by {preNs.Nation}. +{(postFlags - preFlags) * 1.0f}");
             }
             if (postHostilesInHome < preHostilesInHome)
             {
-                explicitBonusReward += (preHostilesInHome - postHostilesInHome) * HomeReliefReward;
+                shaping.Add((preHostilesInHome - postHostilesInHome) * HomeReliefReward);
                 MarkDirectManeuverEvent(preNs.Nation);
                 //_logger.LogInformation($"[RL REWARD] Hostiles cleared from home by {preNs.Nation}. +{(preHostilesInHome - postHostilesInHome) * 5.0f}");
             }
@@ -1016,20 +1016,20 @@ public class TcpTrainingServer : BackgroundService
             {
                 if (expectedTaxBonus > 0)
                 {
-                    explicitBonusReward += 2.0f; // Reward if personal bonus > 0
+                    shaping.Add(2.0f); // Reward if personal bonus > 0
                 }
                 if (expectedTaxRevenue > expectedTaxCosts)
                 {
-                    explicitBonusReward += 2.0f; // Reward if revenue > costs
+                    shaping.Add(2.0f); // Reward if revenue > costs
                 }
                 if (expectedTaxPowerGain > 5)
                 {
-                    explicitBonusReward += 5.0f; // Reward if power gain > 5
+                    shaping.Add(5.0f); // Reward if power gain > 5
                 }
 
                 if (expectedTaxTreasuryGain <= 0 && expectedTaxPowerGain == 0)
                 {
-                    explicitBonusReward -= 5.0f; // Penalty for a fully wasted Taxation turn: no treasury gain, no power gain
+                    shaping.Add(-5.0f); // Penalty for a fully wasted Taxation turn: no treasury gain, no power gain
                 }
             }
         }
@@ -1048,12 +1048,12 @@ public class TcpTrainingServer : BackgroundService
                         if (meta.PersonalContribution > 0)
                         {
                             float penalty = MathF.Min(80.0f, MathF.Max(25.0f, meta.PersonalContribution.Value * 10.0f));
-                            explicitBonusReward -= penalty; // Heavy penalty for paying out of pocket
+                            shaping.Add(-penalty); // Heavy penalty for paying out of pocket
                             _logger.LogWarning($"[RL PENALTY] {rlPlayerName} personally contributed {meta.PersonalContribution}M to interest. Penalty: -{penalty}");
                         }
                         if (meta.MissedInterest == true)
                         {
-                            explicitBonusReward -= 20.0f; // Heavy penalty for missing own interest
+                            shaping.Add(-20.0f); // Heavy penalty for missing own interest
                             _logger.LogWarning($"[RL PENALTY] {rlPlayerName} missed interest payment due to empty treasury. Penalty: -20");
                         }
                     }
@@ -1079,7 +1079,7 @@ public class TcpTrainingServer : BackgroundService
             {
                 string targetName = targetSlot == RondelData.ProductionSlot1 ? "Production" : "Maneuver";
                 _logger.LogWarning($"[RL PENALTY] {preNs?.Nation} paid for long move ({dist} steps) to {targetName} 1, skipping a closer {targetName} 2. Cost: {moveCost}M");
-                explicitBonusReward -= 40.0f; // Heavy penalty
+                shaping.Add(-40.0f); // Heavy penalty
             }
 
             // Factory (slot 1) wasted: not enough treasury OR no valid cities to build in
@@ -1115,16 +1115,16 @@ public class TcpTrainingServer : BackgroundService
                     // Scaled by the session curriculum (see TrainingSession.FactoryPenaltyScale): early in a
                     // run this is held at 0 so the agent can discover what a factory pays back before it
                     // learns to fear the slot. Both halves scale together - they punish the same decision.
-                    explicitBonusReward -= (WastedFactoryActionPenalty + (allBuilt ? AllFactoriesBuiltPenalty : 0f))
-                                           * session.FactoryPenaltyScale;
-                    explicitBonusReward -= moveCost * 10.0f; // Extra penalty for wasting money on useless move
+                    shaping.Add(-(WastedFactoryActionPenalty + (allBuilt ? AllFactoriesBuiltPenalty : 0f))
+                                * session.FactoryPenaltyScale);
+                    shaping.Add(-(moveCost * 10.0f)); // Extra penalty for wasting money on useless move
                 }
             }
             if (targetSlot == RondelData.ImportSlot && preTreasury.HasValue && preTreasury < 1)
             {
                 _logger.LogWarning($"[RL PENALTY] Wasted Import action by {preNs?.Nation}. Treasury < 1, Cost: {moveCost}M");
-                explicitBonusReward -= 7.0f;
-                explicitBonusReward -= moveCost * 10.0f;
+                shaping.Add(-7.0f);
+                shaping.Add(-(moveCost * 10.0f));
             }
             // Production (slot 2 or 6) wasted: no existing factory can currently produce. Note that
             // blockade alone can NEVER fully explain this: the game engine forbids hostile entry into a
@@ -1154,8 +1154,8 @@ public class TcpTrainingServer : BackgroundService
                 if (!canProduceAnything)
                 {
                     _logger.LogWarning($"[RL PENALTY] Wasted Production action by {preNs.Nation}. No factory can produce (blockaded or at max unit cap). Cost: {moveCost}M");
-                    explicitBonusReward -= 10.0f;
-                    explicitBonusReward -= moveCost * 10.0f;
+                    shaping.Add(-10.0f);
+                    shaping.Add(-(moveCost * 10.0f));
                 }
             }
             // Maneuver (slot 3 or 7) with 0 units = wasted turn
@@ -1167,14 +1167,14 @@ public class TcpTrainingServer : BackgroundService
                     if (targetSlot == RondelData.ManeuverSlot2 && dist >= 3)
                     {
                         _logger.LogWarning($"[RL PENALTY] Strategic positioning to Maneuver 2 by {preNs.Nation}. No units, but getting closer to Tax. Cost: {moveCost}M");
-                        explicitBonusReward -= 2.0f;
+                        shaping.Add(-2.0f);
                     }
                     else
                     {
                         _logger.LogWarning($"[RL PENALTY] Wasted Maneuver action by {preNs.Nation}. No units to move, Cost: {moveCost}M");
-                        explicitBonusReward -= 10.0f;
+                        shaping.Add(-10.0f);
                     }
-                    explicitBonusReward -= moveCost * 10.0f;
+                    shaping.Add(-(moveCost * 10.0f));
                 }
             }
         }
@@ -1182,7 +1182,7 @@ public class TcpTrainingServer : BackgroundService
         if (completedManeuver != null)
         {
             float maneuverOutcomeReward = CompleteManeuverOutcome(session, completedManeuverPotential);
-            explicitBonusReward += maneuverOutcomeReward;
+            shaping.Add(maneuverOutcomeReward);
             if (maneuverOutcomeReward > 0f)
             {
                 _logger.LogInformation(
@@ -1199,10 +1199,10 @@ public class TcpTrainingServer : BackgroundService
             }
         }
 
-        // The single fold point. Everything above this line is shaping; everything below (the final VP
-        // margin and the flat win/loss bonus) is the actual objective and is deliberately NOT scaled -
-        // decaying shaping must make the terminal signal relatively STRONGER, not weaker.
-        reward += explicitBonusReward * session.ShapingScale;
+        // The single fold point. Everything above this line is shaping; the terminal signal below is the
+        // actual objective and is deliberately NOT scaled - decaying shaping must make it relatively
+        // STRONGER, not weaker.
+        reward += shaping.Fold(session.ShapingScale);
 
         var allScores = game.Players.Select(p => new { p.Id, Score = game.CalculateScore(p.Id) }).ToList();
         float maxOfOthersScore = allScores.Where(s => s.Id != session.RLPlayerId).Max(s => s.Score);
@@ -1216,18 +1216,7 @@ public class TcpTrainingServer : BackgroundService
 
             _logger.LogInformation($"Finished! Winner: {winnerName} (score {winner.Score}). RL player scored {rlScore} and max of others score is {maxOfOthersScore}, intermediate score: {newVP}, reward: {reward}");
 
-            // At the end of the game, reward perfectly aligns with the final VP difference
-            reward += (rlScore - maxOfOthersScore) * 1.0f;
-
-            // Small flat bonus for winning (and penalty for losing)
-            if (rlScore > maxOfOthersScore)
-            {
-                reward += 100f;
-            }
-            else if (rlScore < maxOfOthersScore)
-            {
-                reward -= 100f;
-            }
+            reward += TerminalReward(rlScore, maxOfOthersScore);
 
             _logger.LogInformation($"Final reward is {reward}, game players: {string.Join(", ", game.Players.Select(p => p.BotType))}");
 
@@ -1978,6 +1967,18 @@ public class TcpTrainingServer : BackgroundService
 
     // Objective event rewards stay separate from the holistic positional term. They are named here so
     // their established magnitudes are explicit and regression-tested while the Maneuver shaping changes.
+    /// <summary>
+    /// The game's actual objective, added to the last step's reward unscaled: the final score margin over
+    /// the best opponent, plus a flat bonus for winning or penalty for losing (a tie is neither).
+    /// </summary>
+    public static float TerminalReward(float rlScore, float maxOfOthersScore)
+    {
+        float reward = rlScore - maxOfOthersScore;
+        if (rlScore > maxOfOthersScore) reward += 100f;
+        else if (rlScore < maxOfOthersScore) reward -= 100f;
+        return reward;
+    }
+
     public const float FlagPlacementReward = 1.0f;
     public const float EnemyUnitDestroyedReward = 1.0f;
     public const float HomeReliefReward = 15.0f;

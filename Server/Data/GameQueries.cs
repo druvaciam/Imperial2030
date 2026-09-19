@@ -21,4 +21,18 @@ public static class GameQueries
         .Include(g => g.TerritoryStates)
         .AsSplitQuery()
         .FirstOrDefaultAsync(g => g.Id == gameId);
+
+    /// <summary>
+    /// The game as <see cref="Helpers.GameDetailDtoBuilder"/> projects it: the graph above, plus the
+    /// users behind every player reference (names) and the action log.
+    /// </summary>
+    public static Task<Game?> LoadGameDetailAsync(this ApplicationDbContext context, Guid gameId) => context.Games
+        .Include(g => g.Players).ThenInclude(p => p.User)
+        .Include(g => g.NationStates).ThenInclude(ns => ns.Controller).ThenInclude(c => c!.User)
+        .Include(g => g.Bonds).ThenInclude(b => b.Holder).ThenInclude(h => h!.User)
+        .Include(g => g.TerritoryStates)
+        .Include(g => g.Units)
+        .Include(g => g.Actions)
+        .AsSplitQuery()
+        .FirstOrDefaultAsync(g => g.Id == gameId);
 }

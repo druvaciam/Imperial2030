@@ -34,7 +34,7 @@ public class RLVersionComparisonTests
     private const int ScenarioCount = 12;
     private static readonly TimeSpan HardTimeout = TimeSpan.FromMinutes(8);
 
-    private static readonly string[] ModelTypes = ["RL-2", "RL-3", "RL-4"];
+    private static readonly string[] ModelTypes = ["RL-2", "RL-3", "RL-4", "RL-5"];
     private static readonly string[] OpponentTypes = ["Random", "Default", "Greedy", "Aggressive", "Friendly"];
 
     private readonly ITestOutputHelper _output;
@@ -143,8 +143,8 @@ public class RLVersionComparisonTests
             var scenario = CreateHeadToHeadScenario(scenarioNumber);
             var scenarioResults = new List<HeadToHeadResult>();
 
-            // Rotate the models through all three seats. Every game still contains RL-2, RL-3 and RL-4,
-            // while every model receives every one of this scenario's nation/bond packages exactly once.
+            // Rotate the models through every seat. Every game still contains every model, while every
+            // model receives every one of this scenario's nation/bond packages exactly once.
             for (int rotation = 0; rotation < ModelTypes.Length; rotation++)
             {
                 var modelByPlayer = scenario.PlayerIds
@@ -163,7 +163,7 @@ public class RLVersionComparisonTests
                         $"{r.Model}: rank {r.Rank}, score {r.Score}, margin {r.RelativeMargin:+#;-#;0}")));
             }
 
-            // Bot identity is deliberately excluded from the setup fingerprint. All three rotations must
+            // Bot identity is deliberately excluded from the setup fingerprint. All rotations must
             // therefore begin from the exact same board, seating, bonds and Investor-card holder.
             Assert.Single(scenarioResults.Select(r => r.InitialStateFingerprint).Distinct());
 
@@ -180,7 +180,7 @@ public class RLVersionComparisonTests
         }
 
         _output.WriteLine("");
-        _output.WriteLine($"=== RL head-to-head comparison: {ScenarioCount} randomized scenarios, three seat rotations each ===");
+        _output.WriteLine($"=== RL head-to-head comparison: {ScenarioCount} randomized scenarios, {ModelTypes.Length} seat rotations each ===");
         _output.WriteLine($"{"model",-6} {"wins",8} {"avg rank",9} {"avg score",10} {"avg margin",11} {"avg turns",10}");
 
         foreach (var model in ModelTypes)
@@ -252,7 +252,7 @@ public class RLVersionComparisonTests
         }
 
         _output.WriteLine("");
-        _output.WriteLine($"=== Default bot benchmark: {ScenarioCount} starts, three seat rotations per opponent ===");
+        _output.WriteLine($"=== Default bot benchmark: {ScenarioCount} starts, {ModelTypes.Length} seat rotations per opponent ===");
         _output.WriteLine($"{"opponent",-11} {"wins",8} {"avg rank",9} {"avg score",10} {"avg margin",11} {"avg turns",10}");
 
         foreach (string opponent in opponents)
@@ -319,17 +319,37 @@ public class RLVersionComparisonTests
             .ToList();
         var shuffledPlayers = Shuffle(playerIds, random);
 
-        // These are the official three-player package pairs already used by GameSetupHelper. Randomly
-        // assigning the three players to the pairs gives every scenario a fresh initial distribution.
-        var distribution = new Dictionary<Nation, Guid>
+        // The rulebook deal for this many players (p.4-5, the same tables GameLifecycle uses), with the
+        // players assigned to the cards at random so every scenario is a fresh start. Two and three
+        // players get the fixed card sets; four to six get one card each from a shuffled pile, and the
+        // undealt nations go to their 2M bond holders at set-up.
+        var distribution = new Dictionary<Nation, Guid>();
+        switch (ModelTypes.Length)
         {
-            [Nation.India] = shuffledPlayers[0],
-            [Nation.USA] = shuffledPlayers[0],
-            [Nation.Russia] = shuffledPlayers[1],
-            [Nation.Brazil] = shuffledPlayers[1],
-            [Nation.China] = shuffledPlayers[2],
-            [Nation.Europe] = shuffledPlayers[2]
-        };
+            case 2:
+                distribution[Nation.China] = shuffledPlayers[0];
+                distribution[Nation.Europe] = shuffledPlayers[0];
+                distribution[Nation.Brazil] = shuffledPlayers[0];
+                distribution[Nation.Russia] = shuffledPlayers[1];
+                distribution[Nation.India] = shuffledPlayers[1];
+                distribution[Nation.USA] = shuffledPlayers[1];
+                break;
+            case 3:
+                distribution[Nation.India] = shuffledPlayers[0];
+                distribution[Nation.USA] = shuffledPlayers[0];
+                distribution[Nation.Russia] = shuffledPlayers[1];
+                distribution[Nation.Brazil] = shuffledPlayers[1];
+                distribution[Nation.China] = shuffledPlayers[2];
+                distribution[Nation.Europe] = shuffledPlayers[2];
+                break;
+            default:
+                var cards = Shuffle(new[] { Nation.Russia, Nation.China, Nation.India, Nation.Brazil, Nation.USA, Nation.Europe }, random);
+                for (int seat = 0; seat < shuffledPlayers.Count; seat++)
+                {
+                    distribution[cards[seat]] = shuffledPlayers[seat];
+                }
+                break;
+        }
 
         return new MatchedScenario(
             number,
@@ -494,8 +514,11 @@ public class RLVersionComparisonTests
 
         Assert.Equal(modelByPlayer.Values.OrderBy(x => x),
             startingGame.Players.Select(p => p.BotType!).OrderBy(x => x));
+        // Every seat governs something. With four or five players some govern two nations and some
+        // one, and a nation none of whose bonds were dealt stays in the bank (p.5); the seat rotation
+        // below is what keeps that fair.
         Assert.All(startingGame.Players, player =>
-            Assert.Equal(2, startingGame.NationStates.Count(n => n.ControllerId == player.Id)));
+            Assert.True(startingGame.NationStates.Any(n => n.ControllerId == player.Id), $"{player.BotName} governs nothing."));
 
         string initialFingerprint = Fingerprint(startingGame);
         var botService = CreateBotService(databaseName, modelByPlayer.Values.ToArray());

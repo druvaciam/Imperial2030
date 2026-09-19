@@ -152,7 +152,9 @@ CURRICULUM_PUSH_EVERY = 10_000
 
 # A cumulative milestone shared by reward and opponent curricula. It is deliberately independent of a
 # single model.learn call: ordinary stop/start training must neither restore easy rewards nor easy bots.
-CURRICULUM_TIMESTEPS = 20_000_000
+# At 10M: Friendly joins at 2M, Aggressive 4M, Greedy 6M, the earlier RL generations from 7.5M to 9M;
+# the wasted-Factory penalty ramps in from 1.5M to 4M.
+CURRICULUM_TIMESTEPS = 10_000_000
 
 
 class CurriculumCallback(BaseCallback):
@@ -276,7 +278,7 @@ if __name__ == "__main__":
     FINAL_ENT_COEF = 0.015
     INITIAL_LEARNING_RATE = 6e-5
     FINAL_LEARNING_RATE = 2e-5
-    TOTAL_TIMESTEPS = 20_000_000
+    TOTAL_TIMESTEPS = 10_000_000
 
     schedule_state_needs_write = False
     if is_resume:
@@ -412,8 +414,8 @@ if __name__ == "__main__":
 
         policy_kwargs = dict(
             net_arch=dict(
-                pi=[1024, 512],
-                vf=[1024, 512, 256],
+                pi=[1024, 1024],
+                vf=[1024, 1024],
             )
         )
 

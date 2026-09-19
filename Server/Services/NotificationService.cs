@@ -152,12 +152,7 @@ namespace Imperial2030.Server.Services
                     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                     
                     // Fetch full player entities to get User and calculate VP
-                    var fullGame = await context.Games
-                        .Include(g => g.Players).ThenInclude(p => p.User)
-                        .Include(g => g.NationStates)
-                        .Include(g => g.Bonds)
-                        .AsSplitQuery()
-                        .FirstOrDefaultAsync(g => g.Id == game.Id);
+                    var fullGame = await context.LoadGameGraphAsync(game.Id);
 
                     if (fullGame != null)
                     {

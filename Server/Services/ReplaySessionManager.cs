@@ -441,15 +441,7 @@ public class ReplaySessionManager : IDisposable
 
     private static async Task CaptureSnapshotAsync(ReplaySession session)
     {
-        var game = await session.Context.Games
-            .Include(g => g.Players).ThenInclude(p => p.User)
-            .Include(g => g.NationStates).ThenInclude(ns => ns.Controller).ThenInclude(c => c!.User)
-            .Include(g => g.Bonds).ThenInclude(b => b.Holder).ThenInclude(h => h!.User)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Units)
-            .Include(g => g.Actions)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == session.ReplayGameId);
+        var game = await session.Context.LoadGameDetailAsync(session.ReplayGameId);
         if (game != null)
         {
             session.LatestSnapshot = GameDetailDtoBuilder.Build(game, null, session.Context, presence: null);

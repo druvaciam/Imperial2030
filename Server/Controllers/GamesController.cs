@@ -182,12 +182,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.Players)
-            .Include(g => g.Bonds)
-            .Include(g => g.NationStates)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -226,23 +221,14 @@ public class GamesController : ControllerBase
 
         if (!hasHumanPlayers && game.Status != GameStatus.Finished)
         {
-            var fullGame = await _context.Games
-                .Include(g => g.TerritoryStates)
-                .Include(g => g.Units)
-                .AsSplitQuery()
-                .FirstOrDefaultAsync(g => g.Id == gameId);
-
-            if (fullGame != null)
-            {
-                await _context.GameActions.Where(a => a.GameId == gameId).ExecuteDeleteAsync();
-                _context.Bonds.RemoveRange(game.Bonds);
-                _context.NationStates.RemoveRange(game.NationStates);
-                _context.TerritoryStates.RemoveRange(fullGame.TerritoryStates);
-                _context.Units.RemoveRange(fullGame.Units);
-                _context.Players.RemoveRange(game.Players);
-                _context.Games.Remove(fullGame);
-                await _context.SaveChangesAsync();
-            }
+            await _context.GameActions.Where(a => a.GameId == gameId).ExecuteDeleteAsync();
+            _context.Bonds.RemoveRange(game.Bonds);
+            _context.NationStates.RemoveRange(game.NationStates);
+            _context.TerritoryStates.RemoveRange(game.TerritoryStates);
+            _context.Units.RemoveRange(game.Units);
+            _context.Players.RemoveRange(game.Players);
+            _context.Games.Remove(game);
+            await _context.SaveChangesAsync();
         }
         else
         {
@@ -274,14 +260,7 @@ public class GamesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 
-        var game = await _context.Games
-            .Include(g => g.Players)
-            .Include(g => g.Bonds)
-            .Include(g => g.NationStates)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Units)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -322,20 +301,7 @@ public class GamesController : ControllerBase
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
-        var game = await _context.Games
-            .Include(g => g.Players)
-                .ThenInclude(p => p.User)
-            .Include(g => g.NationStates) // Maps to DB
-                .ThenInclude(ns => ns.Controller) // Include Controller
-                    .ThenInclude(c => c.User) // Include User for Name
-            .Include(g => g.Bonds)
-                .ThenInclude(b => b.Holder)
-                    .ThenInclude(h => h.User)
-            .Include(g => g.TerritoryStates)
-            .Include(g => g.Units)
-            .Include(g => g.Actions)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameDetailAsync(gameId);
 
         if (game == null) return NotFound();
 
@@ -1178,11 +1144,7 @@ public class GamesController : ControllerBase
     public async Task<IActionResult> TogglePause(Guid gameId)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var game = await _context.Games
-            .Include(g => g.Players).ThenInclude(p => p.User)
-            .Include(g => g.NationStates)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(g => g.Id == gameId);
+        var game = await _context.LoadGameGraphAsync(gameId);
 
         if (game == null) return NotFound("Game not found.");
         if (game.Status != GameStatus.InProgress) return BadRequest("Game is not in progress.");

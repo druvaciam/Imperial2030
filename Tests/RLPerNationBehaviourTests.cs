@@ -85,6 +85,7 @@ public class RLPerNationBehaviourTests
     [Theory]
     [InlineData("RL-3")]
     [InlineData("RL-4")]
+    [InlineData("RL-5")]
     public async Task ReportRondelDistributionPerControlledNation(string botType)
     {
         // nation -> slot name -> count, for turns the RL bot actually controlled that nation.

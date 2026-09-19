@@ -344,11 +344,7 @@ public class GameReplayService
                     {
                         case "Move":
                             var moveMeta = JsonSerializer.Deserialize<RondelMoveMetadata>(action.Metadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                            var moveGame = await context.Games
-                                .Include(g => g.NationStates)
-                                .Include(g => g.Players)
-                                .AsSplitQuery()
-                                .FirstAsync(g => g.Id == replayGameId);
+                            var moveGame = await LoadGame(context, replayGameId);
                             if (action.Nation.HasValue)
                             {
                                 int maxAdvances = 6;
@@ -939,11 +935,7 @@ public class GameReplayService
                             result = destroyed;
                             break;
                         case "Investment":
-                            var invGame = await context.Games
-                                .Include(g => g.NationStates)
-                                .Include(g => g.Players)
-                                .AsSplitQuery()
-                                .FirstAsync(g => g.Id == replayGameId);
+                            var invGame = await LoadGame(context, replayGameId);
                             if (!invGame.IsInvestorTurn && invGame.InvestorTurnPending)
                             {
                                 // The move passed over Investor and the log has reached its investments:
