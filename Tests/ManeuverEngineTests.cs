@@ -362,4 +362,47 @@ public class ManeuverEngineTests
         Assert.Equal(ManeuverPhase.None, game.CurrentManeuverPhase);
         Assert.Equal("Invalid phase transition.", ManeuverEngine.EndPhase(null, game).Error);
     }
+
+    // ---- a phase with nothing that can move ends by itself ----------------------------------------
+
+    /// <summary>
+    /// An army on an island can only leave by convoy over the nation's own fleets (p.9). With no fleet
+    /// to carry it there is no move to make, and the phase should not wait for a "stay" that is the
+    /// only answer; with a fleet in the adjacent sea the army can still sail, so the phase stays open.
+    /// </summary>
+    [Fact]
+    public void TheArmiesPhaseEndsWhenNoArmyHasAnywhereToGo()
+    {
+        var (game, _, _) = BuildGame(Nation.Russia, ManeuverPhase.Armies);
+        Add(game, Nation.Russia, UnitType.Army, "Japan");
+
+        ManeuverEngine.TryAutoAdvanceManeuver(null, game, Nation.Russia);
+
+        Assert.Equal(ManeuverPhase.None, game.CurrentManeuverPhase);
+        Assert.Contains(game.Actions, a => a.ActionType == "AutoEndPhase");
+    }
+
+    [Fact]
+    public void TheArmiesPhaseStaysOpenWhileAnArmyCanStillBeConvoyed()
+    {
+        var (game, _, _) = BuildGame(Nation.Russia, ManeuverPhase.Armies);
+        Add(game, Nation.Russia, UnitType.Army, "Japan");
+        Add(game, Nation.Russia, UnitType.Fleet, "SeaOfJapan");
+
+        ManeuverEngine.TryAutoAdvanceManeuver(null, game, Nation.Russia);
+
+        Assert.Equal(ManeuverPhase.Armies, game.CurrentManeuverPhase);
+    }
+
+    [Fact]
+    public void TheArmiesPhaseStaysOpenWhileAnyArmyCanMove()
+    {
+        var (game, _, _) = BuildGame(Nation.Russia, ManeuverPhase.Armies);
+        Add(game, Nation.Russia, UnitType.Army, "Japan");
+        Add(game, Nation.Russia, UnitType.Army, "Moscow");
+
+        ManeuverEngine.TryAutoAdvanceManeuver(null, game, Nation.Russia);
+
+        Assert.Equal(ManeuverPhase.Armies, game.CurrentManeuverPhase);
+    }
 }

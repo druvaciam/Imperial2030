@@ -607,9 +607,10 @@ public class TcpTrainingServer : BackgroundService
                 int idx = req.Action - RLBotStrategy.ImportPlaceActionBase;
                 int slotIndex = idx / 2;
                 var unitType = (idx % 2 == 0) ? UnitType.Army : UnitType.Fleet;
-                var (orderedHome, canArmy, canFleet) = GetImportOptions(game, ns);
+                // The ORDER is the action-space layout (ImportPlaceActionBase + index * 2) and must not change - rule #17.
+                var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation).OrderBy(t => t.Id).ToList();
 
-                if (slotIndex < orderedHome.Count && ((unitType == UnitType.Army && canArmy[slotIndex]) || (unitType == UnitType.Fleet && canFleet[slotIndex])))
+                if (slotIndex < orderedHome.Count && ImportEngine.CanPlace(game, ns.Nation, orderedHome[slotIndex].Id, unitType))
                 {
                     var territoryId = orderedHome[slotIndex].Id;
                     var place = ImportEngine.PlaceOne(null, game, territoryId, unitType);
@@ -674,9 +675,9 @@ public class TcpTrainingServer : BackgroundService
         // the former and belongs to the base-actions branch below.
         else if (req.Action == 63 && game.CurrentManeuverPhase != ManeuverPhase.None && !game.IsInvestorTurn)
         {
-            // Pass Maneuver
-            if (game.CurrentManeuverPhase == ManeuverPhase.Fleets) game.CurrentManeuverPhase = ManeuverPhase.Armies;
-            else game.CurrentManeuverPhase = ManeuverPhase.None;
+            // End the phase: the remaining units stay where they are, flags are placed (p.10, step 3).
+            var ended = ManeuverEngine.EndPhase(null, game);
+            if (!ended.Ok) throw new InvalidOperationException($"Training step: mask allowed ending {game.CurrentTurnNation}'s {game.CurrentManeuverPhase} phase but the engine refused: {ended.Error}");
 
             session.ManeuverSelectedTerritoryId = null;
         }
@@ -846,16 +847,11 @@ public class TcpTrainingServer : BackgroundService
             }
         }
 
-        // Auto-advance maneuver phase logic
-        if (game.CurrentManeuverPhase == ManeuverPhase.Fleets)
+        // A phase with nothing left that can move ends by itself, as it does for the endpoint and the
+        // bot - the engine places the flags and logs it. Not while a battle is being answered.
+        if (game.CurrentManeuverPhase != ManeuverPhase.None && !game.PendingBattleDefenders.Any())
         {
-            bool hasFleets = game.Units.Any(u => u.Nation == game.CurrentTurnNation && u.UnitType == UnitType.Fleet && !u.HasMoved);
-            if (!hasFleets) game.CurrentManeuverPhase = ManeuverPhase.Armies;
-        }
-        if (game.CurrentManeuverPhase == ManeuverPhase.Armies)
-        {
-            bool hasArmies = game.Units.Any(u => u.Nation == game.CurrentTurnNation && u.UnitType == UnitType.Army && !u.HasMoved);
-            if (!hasArmies) game.CurrentManeuverPhase = ManeuverPhase.None;
+            ManeuverEngine.TryAutoAdvanceManeuver(null, game, game.CurrentTurnNation);
         }
 
         // Stage 1 (explicit "which unit" selection, actions 64-125) is no longer used for training: which unit
@@ -866,7 +862,10 @@ public class TcpTrainingServer : BackgroundService
         if (game.CurrentManeuverPhase != ManeuverPhase.None && session.ManeuverSelectedTerritoryId == null)
         {
             var autoSelectUnitType = game.CurrentManeuverPhase == ManeuverPhase.Fleets ? UnitType.Fleet : UnitType.Army;
-            var nextUnit = game.Units.FirstOrDefault(u => u.Nation == game.CurrentTurnNation && u.UnitType == autoSelectUnitType && !u.HasMoved);
+            // A unit with nowhere to go is not asked about; it stays, and the phase ends by itself once
+            // nothing that can move is left (ManeuverEngine.TryAutoAdvanceManeuver above).
+            var nextUnit = game.Units.FirstOrDefault(u => u.Nation == game.CurrentTurnNation && u.UnitType == autoSelectUnitType && !u.HasMoved
+                && ManeuverEngine.CanMove(game, u, player));
             if (nextUnit != null)
             {
                 session.ManeuverSelectedTerritoryId = nextUnit.TerritoryId;
@@ -1061,10 +1060,6 @@ public class TcpTrainingServer : BackgroundService
                 catch { }
             }
         }
-
-        // Continuous reward for leading the game (or penalty for trailing)
-        // This gives the agent a dense gradient to always try and increase its relative score, even if it's currently losing
-        reward += newVP * 0.05f;
 
         // Penalty for wasted Rondel turns (e.g., picking Factory with no money)
         // Rondel slots: 0=Taxation, 1=Factory, 2=Production, 3=Maneuver, 4=Investor, 5=Import, 6=Production, 7=Maneuver
@@ -1814,11 +1809,12 @@ public class TcpTrainingServer : BackgroundService
                 var importNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
                 if (importNs != null)
                 {
-                    var (orderedHome, canArmy, canFleet) = GetImportOptions(game, importNs);
-                    for (int slotIdx = 0; slotIdx < orderedHome.Count && slotIdx < 4; slotIdx++)
+                    // The same question the live bot asks (RLBotStrategy.ChooseNextImport).
+                    var home = TerritoryData.AllTerritories.Where(t => t.Nation == importNs.Nation).ToList();
+                    var importMask = RLBotStrategy.ImportMask(game, importNs, home, out _);
+                    for (int a = RLBotStrategy.ImportPlaceActionBase; a < RLBotStrategy.ImportPlaceActionBase + RLBotStrategy.ImportPlaceActionCount; a++)
                     {
-                        if (canArmy[slotIdx]) mask[RLBotStrategy.ImportPlaceActionBase + slotIdx * 2] = true;
-                        if (canFleet[slotIdx]) mask[RLBotStrategy.ImportPlaceActionBase + slotIdx * 2 + 1] = true;
+                        mask[a] = importMask[a];
                     }
                 }
             }
@@ -1942,27 +1938,6 @@ public class TcpTrainingServer : BackgroundService
 
         int moveCost = RondelData.GetMoveCost(ns.RondelPosition, targetSlot, ns.Power);
         return rlPlayer.Cash >= moveCost;
-    }
-
-    // Home territories (ordered by Id, matching the encoding used elsewhere) for `ns.Nation`, with per-slot
-    // legality of importing an Army or a Fleet there right now.
-    private (List<Territory> OrderedHome, bool[] CanArmy, bool[] CanFleet) GetImportOptions(Game game, NationState ns)
-    {
-        // The ORDER is the action-space layout (ImportPlaceActionBase + index * 2) and must not change -
-        // rule #17. Legality per slot is the engine's.
-        var orderedHome = TerritoryData.AllTerritories.Where(t => t.Nation == ns.Nation).OrderBy(t => t.Id).ToList();
-
-        var canArmy = new bool[orderedHome.Count];
-        var canFleet = new bool[orderedHome.Count];
-        for (int i = 0; i < orderedHome.Count; i++)
-        {
-            // No London exclusion here: that's a heuristic-only guard in BotStrategyBase to keep the
-            // simple AI from stranding an army in a coastal city — the real game rules allow it, and the
-            // RL policy should be free to judge that trade-off itself (it may even be the only open slot).
-            canArmy[i] = ImportEngine.CanPlace(game, ns.Nation, orderedHome[i].Id, UnitType.Army);
-            canFleet[i] = ImportEngine.CanPlace(game, ns.Nation, orderedHome[i].Id, UnitType.Fleet);
-        }
-        return (orderedHome, canArmy, canFleet);
     }
 
     // Objective event rewards stay separate from the holistic positional term. They are named here so

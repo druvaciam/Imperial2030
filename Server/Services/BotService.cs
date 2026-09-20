@@ -620,48 +620,56 @@ public class BotService
             GameLogger.LogManeuverNoUnits(ctx, game, nation, botName);
         }
 
-        // Move fleets first
-        var fleets = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved).ToList();
-        foreach (var fleet in fleets)
+        // The phase the maneuver is in decides what moves: a maneuver resumed after a battle answer
+        // may already be in its Armies phase, with fleets an early phase end left unmoved - those stay.
+        if (game.CurrentManeuverPhase == ManeuverPhase.Fleets)
         {
-            if (!MapConnectivity.Adjacency.TryGetValue(fleet.TerritoryId, out var neighbors)) continue;
-            var candidates = neighbors
-                .Where(n => ManeuverEngine.FleetDestinationRefusal(game, fleet, n, controller) == null)
-                .ToList();
-            candidates.Add(fleet.TerritoryId); // Allow staying put
-
-            var target = candidates.OrderByDescending(n => strategy.ScoreManeuverDestination(game, fleet, n, controller)).FirstOrDefault();
-            if (target == null) continue;
-
-            if (target == fleet.TerritoryId)
+            var fleets = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved).ToList();
+            foreach (var fleet in fleets)
             {
-                if (await BotStayAndDecideHostility(ctx, game, fleet, friendlyNations, nation, controller)) return;
-                continue;
+                // The strategy may end the phase here; this fleet and the rest stay where they are.
+                if (strategy.EndsManeuverPhaseEarly(game, fleet, controller)) break;
+                if (!MapConnectivity.Adjacency.TryGetValue(fleet.TerritoryId, out var neighbors)) continue;
+                var candidates = neighbors
+                    .Where(n => ManeuverEngine.FleetDestinationRefusal(game, fleet, n, controller) == null)
+                    .ToList();
+                candidates.Add(fleet.TerritoryId); // Allow staying put
+
+                var target = candidates.OrderByDescending(n => strategy.ScoreManeuverDestination(game, fleet, n, controller)).FirstOrDefault();
+                if (target == null) continue;
+
+                if (target == fleet.TerritoryId)
+                {
+                    if (await BotStayAndDecideHostility(ctx, game, fleet, friendlyNations, nation, controller)) return;
+                    continue;
+                }
+
+                bool isHostileMove = DecideHostility(game, strategy, fleet, target, friendlyNations, nation);
+                var move = ManeuverEngine.MoveFleet(ctx, game, fleet.Id, target, isHostileMove);
+                if (!move.Ok)
+                {
+                    throw new InvalidOperationException($"Bot {botName} chose an illegal fleet move for {nation} to {target}: {move.Error}");
+                }
+                if (move.BattlePending)
+                {
+                    // Deliberately no flag placement before pausing: flags are step 3 of the maneuver
+                    // (Imperial-2030-Rules.pdf p.8/p.10) and this maneuver resumes once the defenders answer.
+                    return;
+                }
+                await BotUnitActionDelay(ctx, game);
             }
 
-            bool isHostileMove = DecideHostility(game, strategy, fleet, target, friendlyNations, nation);
-            var move = ManeuverEngine.MoveFleet(ctx, game, fleet.Id, target, isHostileMove);
-            if (!move.Ok)
-            {
-                throw new InvalidOperationException($"Bot {botName} chose an illegal fleet move for {nation} to {target}: {move.Error}");
-            }
-            if (move.BattlePending)
-            {
-                // Deliberately no flag placement before pausing: flags are step 3 of the maneuver
-                // (Imperial-2030-Rules.pdf p.8/p.10) and this maneuver resumes once the defenders answer.
-                return;
-            }
-            await BotUnitActionDelay(ctx, game);
+            ManeuverEngine.UpdateTerritoryControl(ctx, game);
+            GameLogger.LogAutoEndManeuverPhase(ctx, game, "Fleets", nation, botName);
+            game.CurrentManeuverPhase = ManeuverPhase.Armies;
         }
 
-        ManeuverEngine.UpdateTerritoryControl(ctx, game);
-        GameLogger.LogAutoEndManeuverPhase(ctx, game, "Fleets", nation, botName);
-        game.CurrentManeuverPhase = ManeuverPhase.Armies;
+        if (game.CurrentManeuverPhase != ManeuverPhase.Armies) return;
 
-        // Move armies
         var armies = game.Units.Where(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved).ToList();
         foreach (var army in armies)
         {
+            if (strategy.EndsManeuverPhaseEarly(game, army, controller)) break;
             var candidates = ManeuverHelper.GetAllReachableArmyDestinations(game, army.TerritoryId, army.Nation)
                 .Select(d => d.TerritoryId)
                 .ToHashSet();
@@ -845,26 +853,28 @@ public class BotService
             ns.HasImportedThisTurn = true; // Nothing to import; nothing left to decide
             return;
         }
-        int maxImport = Math.Min(GameConstants.MaxImportUnits, ns.Treasury);
-
         var homeTerritories = TerritoryData.AllTerritories.Where(t => t.Nation == nation).ToList();
-        var imports = strategy.ChooseImports(game, ns, maxImport, homeTerritories)
-            .Select(i => (i.Type, i.TerritoryId))
-            .ToList();
 
-        if (imports.Count == 0)
+        // One unit at a time, each decided on the board as it then is (p.8: up to three at 1M each) -
+        // the sequence of questions the RL policy is trained on. Placed as decided, so the next
+        // question sees the unit and the money gone.
+        var placed = new List<(UnitType UnitType, string TerritoryId)>();
+        while (placed.Count < GameConstants.MaxImportUnits && ns.Treasury >= ImportUnitCost)
         {
-            // Chose to import nothing. Still the turn's Import action, so it is closed and logged as such.
-            ImportEngine.CompleteImport(ctx, game, imports);
-            return;
+            var next = strategy.ChooseNextImport(game, ns, GameConstants.MaxImportUnits - placed.Count, homeTerritories);
+            if (next == null) break;
+
+            // The strategy filtered for legality; a refusal means its view of the board disagrees with the rule.
+            var place = ImportEngine.PlaceOne(ctx, game, next.Value.TerritoryId, next.Value.Type);
+            if (!place.Ok)
+            {
+                throw new InvalidOperationException($"Bot {controller.BotName} chose an illegal import for {nation}: {place.Error}");
+            }
+            placed.Add((next.Value.Type, next.Value.TerritoryId));
         }
 
-        // The strategy filtered for legality; a refusal means its view of the board disagrees with the rule.
-        var result = ImportEngine.Import(ctx, game, imports);
-        if (!result.Ok)
-        {
-            throw new InvalidOperationException($"Bot {controller.BotName} chose an illegal import for {nation}: {result.Error}");
-        }
+        // Nothing placed is still the turn's Import action: closed and logged as such.
+        ImportEngine.CompleteImport(ctx, game, placed);
     }
 
     public async Task BotInvestorAction(ApplicationDbContext? ctx, Game game, Player actor)

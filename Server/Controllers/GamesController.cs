@@ -256,7 +256,6 @@ public class GamesController : ControllerBase
     [Authorize(Policy = GameConstants.NotGuestPolicy)]
     public async Task<IActionResult> DeleteGame(Guid gameId)
     {
-
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId == null) return Unauthorized();
 

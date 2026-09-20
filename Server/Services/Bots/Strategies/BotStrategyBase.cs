@@ -41,6 +41,16 @@ public abstract class BotStrategyBase : IBotStrategy
     private const string LondonTerritoryId = "London";
     private const double PreferArmyProbability = 0.80;
 
+    /// <summary>
+    /// The heuristics plan from the current board each time they are asked; the first unit of that plan
+    /// is the next one. Placed units are on the board by then, so the plan moves on by itself.
+    /// </summary>
+    public virtual (UnitType Type, string TerritoryId)? ChooseNextImport(Game game, NationState ns, int remaining, List<Territory> homeTerritories)
+    {
+        var plan = ChooseImports(game, ns, remaining, homeTerritories);
+        return plan.Count > 0 ? plan[0] : null;
+    }
+
     public virtual List<(UnitType Type, string TerritoryId)> ChooseImports(Game game, NationState ns, int maxImport, List<Territory> homeTerritories)
     {
         var result = new List<(UnitType Type, string TerritoryId)>();
@@ -49,9 +59,11 @@ public abstract class BotStrategyBase : IBotStrategy
         int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
         int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
 
+        // Fewest own units first: asked one unit at a time (ChooseNextImport), this spreads the units
+        // over the home cities the way one call for all of them does.
         var validTerritories = homeTerritories.Where(t =>
             !game.Units.Any(u => u.TerritoryId == t.Id && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile)
-        ).ToList();
+        ).OrderBy(t => game.Units.Count(u => u.TerritoryId == t.Id && u.Nation == nation)).ToList();
 
         if (validTerritories.Count == 0) return result;
 
@@ -124,6 +136,9 @@ public abstract class BotStrategyBase : IBotStrategy
 
         return result;
     }
+    /// <summary>The heuristic strategies move every unit; the RL policy may end a phase early.</summary>
+    public virtual bool EndsManeuverPhaseEarly(Game game, Unit nextUnit, Player controller) => false;
+
     public virtual double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller)
     {
         var nation = unit.Nation;
