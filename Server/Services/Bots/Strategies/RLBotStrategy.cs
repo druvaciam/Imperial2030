@@ -1,3 +1,4 @@
+using Imperial2030.Server.Engine;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
@@ -664,67 +665,67 @@ public class RLBotStrategy : BotStrategyBase
         return action == FactoryDestroyAction;
     }
 
-    public override List<(UnitType Type, string TerritoryId)> ChooseImports(Game game, NationState ns, int maxImport, List<Territory> homeTerritories)
+    /// <summary>
+    /// The import question as training asks it, for one unit on the board as it is now: Stop, or
+    /// Army/Fleet in one of the nation's home cities (by Id order - the action-space layout, rule #17),
+    /// with per-slot legality the engine's.
+    /// </summary>
+    internal static bool[] ImportMask(Game game, NationState ns, List<Territory> homeTerritories, out bool anyPlaceable)
+    {
+        bool[] mask = new bool[TotalActionSize];
+        mask[ImportStopAction] = true;
+        anyPlaceable = false;
+        var orderedHome = homeTerritories.OrderBy(t => t.Id).ToList();
+        for (int slotIdx = 0; slotIdx < orderedHome.Count && slotIdx < 4; slotIdx++)
+        {
+            // No London exclusion here: that's a heuristic-only guard in BotStrategyBase to keep the
+            // simple AI from stranding an army in a coastal city — the real game rules allow it, and the
+            // RL policy should be free to judge that trade-off itself (it may even be the only open slot).
+            if (ImportEngine.CanPlace(game, ns.Nation, orderedHome[slotIdx].Id, UnitType.Army)) { mask[ImportPlaceActionBase + slotIdx * 2] = true; anyPlaceable = true; }
+            if (ImportEngine.CanPlace(game, ns.Nation, orderedHome[slotIdx].Id, UnitType.Fleet)) { mask[ImportPlaceActionBase + slotIdx * 2 + 1] = true; anyPlaceable = true; }
+        }
+        return mask;
+    }
+
+    public override (UnitType Type, string TerritoryId)? ChooseNextImport(Game game, NationState ns, int remaining, List<Territory> homeTerritories)
     {
         var controller = game.Players.First(p => p.Id == ns.ControllerId);
 
         // During training, TcpTrainingServer handles Import directly step-by-step (see BotService.BotImport's early return).
-        // TrainingActionOverride is never set here since this method is skipped entirely in that path.
         if (IsTraining && game.Name != null && game.Name.StartsWith("RL_Training_") && controller.BotName != null && controller.BotName.EndsWith("Agent"))
         {
             throw new RlTrainingPauseException();
         }
 
-        // Models exported before this decision existed don't have logits for it; fall back to the heuristic.
+        // Models exported before this decision existed don't have logits for it; fall back to the heuristic
+        // planner (base.ChooseImports directly - this class's ChooseImports would come straight back here).
         if (GetModelActionOutputSize() < TotalActionSize)
         {
-            return base.ChooseImports(game, ns, maxImport, homeTerritories);
+            var plan = base.ChooseImports(game, ns, remaining, homeTerritories);
+            return plan.Count > 0 ? plan[0] : null;
         }
 
-        var result = new List<(UnitType Type, string TerritoryId)>();
+        var mask = ImportMask(game, ns, homeTerritories, out bool anyPlaceable);
+        if (!anyPlaceable) return null;
+
+        int action = GetActionFromOnnx(game, controller, mask);
+        if (action < ImportPlaceActionBase || action >= ImportPlaceActionBase + ImportPlaceActionCount) return null; // Stop (or invalid)
+
         var orderedHome = homeTerritories.OrderBy(t => t.Id).ToList();
-        int currentArmies = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Army);
-        int currentFleets = game.Units.Count(u => u.Nation == ns.Nation && u.UnitType == UnitType.Fleet);
-        int remaining = maxImport;
+        int idx = action - ImportPlaceActionBase;
+        int chosenSlot = idx / 2;
+        if (chosenSlot >= orderedHome.Count) return null;
+        return ((idx % 2 == 0) ? UnitType.Army : UnitType.Fleet, orderedHome[chosenSlot].Id);
+    }
 
-        while (remaining > 0)
-        {
-            bool[] mask = new bool[TotalActionSize];
-            mask[ImportStopAction] = true;
-            bool anyPlaceable = false;
-
-            for (int slotIdx = 0; slotIdx < orderedHome.Count && slotIdx < 4; slotIdx++)
-            {
-                var t = orderedHome[slotIdx];
-                bool occupied = game.Units.Any(u => u.TerritoryId == t.Id && u.Nation != ns.Nation && u.UnitType == UnitType.Army && u.IsHostile);
-                if (occupied) continue;
-
-                // No London exclusion here: that's a heuristic-only guard in BotStrategyBase to keep the
-                // simple AI from stranding an army in a coastal city — the real game rules allow it, and the
-                // RL policy should be free to judge that trade-off itself (it may even be the only open slot).
-                bool canArmy = currentArmies < NationData.GetMaxArmies(ns.Nation);
-                bool canFleet = t.CityType == CityType.LightBlue && currentFleets < NationData.GetMaxFleets(ns.Nation);
-
-                if (canArmy) { mask[ImportPlaceActionBase + slotIdx * 2] = true; anyPlaceable = true; }
-                if (canFleet) { mask[ImportPlaceActionBase + slotIdx * 2 + 1] = true; anyPlaceable = true; }
-            }
-
-            if (!anyPlaceable) break;
-
-            int action = GetActionFromOnnx(game, controller, mask);
-            if (action < ImportPlaceActionBase || action >= ImportPlaceActionBase + ImportPlaceActionCount) break; // Stop (or invalid)
-
-            int idx = action - ImportPlaceActionBase;
-            int chosenSlot = idx / 2;
-            if (chosenSlot >= orderedHome.Count) break;
-
-            var chosenType = (idx % 2 == 0) ? UnitType.Army : UnitType.Fleet;
-            result.Add((chosenType, orderedHome[chosenSlot].Id));
-            if (chosenType == UnitType.Army) currentArmies++; else currentFleets++;
-            remaining--;
-        }
-
-        return result;
+    /// <summary>
+    /// The policy decides one unit at a time on the live board (<see cref="ChooseNextImport"/>); a plan
+    /// for several cannot be made from one board, so this answers with at most the first unit.
+    /// </summary>
+    public override List<(UnitType Type, string TerritoryId)> ChooseImports(Game game, NationState ns, int maxImport, List<Territory> homeTerritories)
+    {
+        var next = maxImport > 0 ? ChooseNextImport(game, ns, maxImport, homeTerritories) : null;
+        return next == null ? new List<(UnitType Type, string TerritoryId)>() : new List<(UnitType Type, string TerritoryId)> { next.Value };
     }
 
     public override string? ChooseCityForFactory(Game game, Nation nation, List<Territory> validCities)
@@ -763,6 +764,47 @@ public class RLBotStrategy : BotStrategyBase
 
     private ThreadLocal<(Guid UnitId, int ChosenAction)> _maneuverCache = new ThreadLocal<(Guid, int)>();
 
+    /// <summary>
+    /// The maneuver question as training asks it, for one unit: end the phase now (63, the remaining
+    /// units stay), keep this unit where it is (126), or one of the destinations the engine allows -
+    /// fleets by <see cref="ManeuverEngine.FleetDestinationRefusal"/>, armies by
+    /// <see cref="Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations"/>, the same
+    /// legality <c>BotService.BotManeuver</c> offers and <c>TcpTrainingServer</c> masks with.
+    /// </summary>
+    internal static bool[] ManeuverMask(Game game, Unit unit, Player controller)
+    {
+        bool[] mask = new bool[189];
+        mask[63] = true;  // End the phase
+        mask[126] = true; // Do Not Move
+
+        IEnumerable<string> destinations = unit.UnitType == UnitType.Fleet
+            ? (MapConnectivity.Adjacency.TryGetValue(unit.TerritoryId, out var neighbors) ? neighbors : Enumerable.Empty<string>())
+                .Where(n => ManeuverEngine.FleetDestinationRefusal(game, unit, n, controller) == null)
+            : Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, unit.TerritoryId, unit.Nation).Select(d => d.TerritoryId);
+
+        foreach (var dest in destinations)
+        {
+            int mIdx = Array.IndexOf(AllManeuverTerritories, dest);
+            if (mIdx >= 0) mask[127 + mIdx] = true;
+        }
+        return mask;
+    }
+
+    /// <summary>The policy's answer for <paramref name="unit"/>, asked once per unit and cached for the scoring calls that follow.</summary>
+    private int ManeuverAction(Game game, Unit unit, Player controller)
+    {
+        var cache = _maneuverCache.Value;
+        if (cache.UnitId != unit.Id || cache.ChosenAction == 0)
+        {
+            cache = (unit.Id, GetActionFromOnnx(game, controller, ManeuverMask(game, unit, controller), unit.TerritoryId));
+            _maneuverCache.Value = cache;
+        }
+        return cache.ChosenAction;
+    }
+
+    public override bool EndsManeuverPhaseEarly(Game game, Unit nextUnit, Player controller)
+        => _onnxSession != null && ManeuverAction(game, nextUnit, controller) == 63;
+
     public override double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller)
     {
         if (_onnxSession == null)
@@ -770,60 +812,7 @@ public class RLBotStrategy : BotStrategyBase
             return base.ScoreManeuverDestination(game, unit, destinationId, controller);
         }
 
-        var cache = _maneuverCache.Value;
-        if (cache.UnitId != unit.Id || cache.ChosenAction == 0)
-        {
-            bool[] mask = new bool[189];
-            mask[126] = true; // Do Not Move
-
-            if (unit.UnitType == UnitType.Fleet)
-            {
-                if (MapConnectivity.Adjacency.TryGetValue(unit.TerritoryId, out var neighbors))
-                {
-                    var validNeighbors = neighbors.Where(n =>
-                    {
-                        if (!TerritoryData.AllTerritories.Any(t => t.Id == n && t.Type == TerritoryType.Sea)) return false;
-
-                        var canal = MapConnectivity.CanalLinks.FirstOrDefault(c =>
-                            (c.Region1 == unit.TerritoryId && c.Region2 == n) ||
-                            (c.Region1 == n && c.Region2 == unit.TerritoryId));
-
-                        if (canal != default)
-                        {
-                            var tState = game.TerritoryStates.FirstOrDefault(ts => ts.TerritoryId == canal.ControllerId);
-                            if (tState != null && tState.Controller != null && tState.Controller != unit.Nation)
-                            {
-                                var canalNationState = game.NationStates.FirstOrDefault(ns => ns.Nation == tState.Controller.Value);
-                                if (canalNationState == null || canalNationState.ControllerId != controller.Id)
-                                {
-                                    return false; // Canal blocked
-                                }
-                            }
-                        }
-                        return true;
-                    }).ToList();
-
-                    foreach (var dest in validNeighbors)
-                    {
-                        int mIdx = Array.IndexOf(AllManeuverTerritories, dest);
-                        if (mIdx >= 0) mask[127 + mIdx] = true;
-                    }
-                }
-            }
-            else
-            {
-                var destinations = Imperial2030.Server.Helpers.ManeuverHelper.GetAllReachableArmyDestinations(game, unit.TerritoryId, unit.Nation);
-                foreach (var dest in destinations)
-                {
-                    int mIdx = Array.IndexOf(AllManeuverTerritories, dest.TerritoryId);
-                    if (mIdx >= 0) mask[127 + mIdx] = true;
-                }
-            }
-
-            int chosenAction = GetActionFromOnnx(game, controller, mask, unit.TerritoryId);
-            cache = (unit.Id, chosenAction);
-            _maneuverCache.Value = cache;
-        }
+        int chosenAction = ManeuverAction(game, unit, controller);
 
         int thisAction = 126;
         if (destinationId != unit.TerritoryId)
@@ -832,12 +821,7 @@ public class RLBotStrategy : BotStrategyBase
             if (idx >= 0) thisAction = 127 + idx;
         }
 
-        if (thisAction == cache.ChosenAction)
-        {
-            return 1000;
-        }
-
-        return -1000;
+        return thisAction == chosenAction ? 1000 : -1000;
     }
 
     public override Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)

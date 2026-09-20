@@ -1,6 +1,9 @@
 """Drive the training server with random MASKED actions for a fixed number of steps.
 
-    python smoke_env.py [steps=6000] [seed=7]
+    python smoke_env.py [steps=6000] [seed=7] [opponents=Random,Default]
+
+Give the opponents as a comma-separated list to exercise the RL opponents too - their ONNX policies take
+paths (an early maneuver phase end, for one) the heuristic bots never do.
 
 Run against a server started with `--training` (port 5295). Writes NOTHING to python_rl/ - no SB3, no
 checkpoint, no vec_normalize.pkl, no best_reward.txt - so it is safe to run next to a real training
@@ -19,7 +22,8 @@ from imperial_env import ImperialEnv
 
 rng = np.random.default_rng(int(sys.argv[2]) if len(sys.argv) > 2 else 7)
 target_steps = int(sys.argv[1]) if len(sys.argv) > 1 else 6000
-env = ImperialEnv(bot_type="RL-4")
+opponents = sys.argv[3].split(",") if len(sys.argv) > 3 else None
+env = ImperialEnv(bot_type="RL-4", opponents=opponents)
 obs, info = env.reset()
 steps = episodes = 0
 kinds = collections.Counter()

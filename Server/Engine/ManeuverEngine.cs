@@ -625,23 +625,43 @@ public static class ManeuverEngine
     }
 
     /// <summary>
-    /// Ends the Fleets phase when the nation has no unmoved fleet, then the Armies phase when it has no
-    /// unmoved army - placing flags at each phase end (p.10, step 3) and logging the automatic end.
+    /// Whether <paramref name="unit"/> has anywhere to go: a fleet a sea region it may enter (p.8, the
+    /// canals p.11), an army a land region it can reach by foot, rail or convoy (p.9). An army on an
+    /// island with no fleet of its nation next to it has none.
+    /// </summary>
+    public static bool CanMove(Game game, Unit unit, Player? controller)
+    {
+        if (unit.UnitType == UnitType.Fleet)
+        {
+            return controller != null
+                && MapConnectivity.Adjacency.TryGetValue(unit.TerritoryId, out var neighbors)
+                && neighbors.Any(n => FleetDestinationRefusal(game, unit, n, controller) == null);
+        }
+        return ManeuverHelper.GetAllReachableArmyDestinations(game, unit.TerritoryId, unit.Nation).Any();
+    }
+
+    /// <summary>
+    /// Ends the Fleets phase when none of the nation's unmoved fleets can move, then the Armies phase
+    /// when none of its unmoved armies can - placing flags at each phase end (p.10, step 3) and logging
+    /// the automatic end. A unit that can only stay is not waited for.
     /// </summary>
     public static void TryAutoAdvanceManeuver(ApplicationDbContext? context, Game game, Nation nation)
     {
         var playerName = NationControllerName(game, nation, context);
+        var controllerId = game.NationStates.FirstOrDefault(ns => ns.Nation == nation)?.ControllerId;
+        var controller = controllerId.HasValue ? game.Players.FirstOrDefault(p => p.Id == controllerId.Value) : null;
 
-        if (game.CurrentManeuverPhase == ManeuverPhase.Fleets
-            && !game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Fleet && !u.HasMoved))
+        bool AnyUnmovedThatCanMove(UnitType type) => game.Units
+            .Any(u => u.Nation == nation && u.UnitType == type && !u.HasMoved && CanMove(game, u, controller));
+
+        if (game.CurrentManeuverPhase == ManeuverPhase.Fleets && !AnyUnmovedThatCanMove(UnitType.Fleet))
         {
             UpdateTerritoryControl(context, game);
             game.CurrentManeuverPhase = ManeuverPhase.Armies;
             GameLogger.LogAutoEndManeuverPhase(context, game, "Fleets", nation, playerName);
         }
 
-        if (game.CurrentManeuverPhase == ManeuverPhase.Armies
-            && !game.Units.Any(u => u.Nation == nation && u.UnitType == UnitType.Army && !u.HasMoved))
+        if (game.CurrentManeuverPhase == ManeuverPhase.Armies && !AnyUnmovedThatCanMove(UnitType.Army))
         {
             UpdateTerritoryControl(context, game);
             game.CurrentManeuverPhase = ManeuverPhase.None;

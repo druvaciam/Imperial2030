@@ -25,9 +25,24 @@ public interface IBotStrategy
     
     string? ChooseCityForFactory(Game game, Nation nation, List<Territory> validCities);
     
+    /// <summary>A whole import planned at once from the current board; the heuristics' planner. Tests and the E2E driver use it directly.</summary>
     List<(UnitType Type, string TerritoryId)> ChooseImports(Game game, NationState ns, int maxImport, List<Territory> homeTerritories);
+
+    /// <summary>
+    /// The next unit to import - decided on the board as it is now, with the units already placed this
+    /// turn on it and paid for - or null to stop. This is how the bot imports: place, then ask again, up
+    /// to <paramref name="remaining"/> more times; the same sequence of questions the RL policy is
+    /// trained on.
+    /// </summary>
+    (UnitType Type, string TerritoryId)? ChooseNextImport(Game game, NationState ns, int remaining, List<Territory> homeTerritories);
     
     double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller);
+
+    /// <summary>
+    /// Whether the bot ends the current maneuver phase now, before <paramref name="nextUnit"/> and every
+    /// unit after it have moved; they stay where they are. Asked before each unit of the phase.
+    /// </summary>
+    bool EndsManeuverPhaseEarly(Game game, Unit nextUnit, Player controller);
     
     bool RetreatFromBattle(Game game, PendingBattle battle);
     
