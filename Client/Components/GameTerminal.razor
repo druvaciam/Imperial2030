@@ -317,7 +317,15 @@
                             var meta = System.Text.Json.JsonSerializer.Deserialize<ActionMetadata>(action.Metadata, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                             if (meta != null && meta.TerritoryId != null)
                             {
-                                <span class="message">@L["DestroyedFactory", Names.Nation(action.Nation), Names.Territory(meta.TerritoryId)]</span>
+                                // action.Nation is the attacker shown in the tag beside the player name.
+                                // The sentence needs the factory's home nation instead. Deriving it from
+                                // TerritoryId keeps action logs written before DefenderNation was added readable.
+                                var factoryNation = meta.DefenderNation
+                                    ?? TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == meta.TerritoryId)?.Nation;
+                                if (factoryNation.HasValue)
+                                {
+                                    <span class="message">@L["DestroyedFactory", Names.Nation(factoryNation.Value), Names.Territory(meta.TerritoryId)]</span>
+                                }
                             }
                         }
                         catch (Exception ex)

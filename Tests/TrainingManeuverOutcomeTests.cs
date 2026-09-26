@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Reflection;
+using Imperial2030.Server.Helpers;
 using Imperial2030.Server.Models;
 using Imperial2030.Server.Services;
 using Imperial2030.Server.Services.Bots.Strategies;
@@ -49,6 +50,14 @@ public sealed class TrainingManeuverOutcomeTests
         IsHostile = hostile
     };
 
+    private static Unit Fleet(Nation nation, string territoryId) => new()
+    {
+        Id = Guid.NewGuid(),
+        Nation = nation,
+        UnitType = UnitType.Fleet,
+        TerritoryId = territoryId
+    };
+
     private static void SetControl(Game game, Nation nation, params string[] territoryIds)
     {
         foreach (string territoryId in territoryIds)
@@ -65,6 +74,7 @@ public sealed class TrainingManeuverOutcomeTests
         game.Units.Add(defender);
         game.Units.Add(Army(Nation.Russia, "Quebec"));
         game.TerritoryStates.Add(new TerritoryState { TerritoryId = "NewYork", HasFactory = true });
+        game.TerritoryStates.Add(new TerritoryState { TerritoryId = "Chicago", HasFactory = true });
         Guid controllerId = game.NationStates.Single(n => n.Nation == Nation.USA).ControllerId!.Value;
 
         float before = TcpTrainingServer.CalculateManeuverStrategicPotential(game, Nation.USA, controllerId);
@@ -82,6 +92,7 @@ public sealed class TrainingManeuverOutcomeTests
         game.Units.Add(defender);
         game.Units.Add(Army(Nation.Russia, "Quebec"));
         game.TerritoryStates.Add(new TerritoryState { TerritoryId = "NewYork", HasFactory = true });
+        game.TerritoryStates.Add(new TerritoryState { TerritoryId = "Chicago", HasFactory = true });
         Guid controllerId = game.NationStates.Single(n => n.Nation == Nation.USA).ControllerId!.Value;
 
         float before = TcpTrainingServer.CalculateManeuverStrategicPotential(game, Nation.USA, controllerId);
@@ -89,6 +100,100 @@ public sealed class TrainingManeuverOutcomeTests
         float after = TcpTrainingServer.CalculateManeuverStrategicPotential(game, Nation.USA, controllerId);
 
         Assert.True(after > before, $"Reinforcing threatened New York changed potential from {before} to {after}.");
+    }
+
+    [Fact]
+    public void AnArmyBeyondTheHomeProvinceLandThreatLowersPotential()
+    {
+        var game = NewGame(Nation.Europe);
+        game.Units.Add(Army(Nation.Europe, "Rome"));
+        game.Units.Add(Army(Nation.Russia, "Turkey"));
+        Guid controllerId = game.NationStates.Single(n => n.Nation == Nation.Europe).ControllerId!.Value;
+
+        float threatMatched = TcpTrainingServer.CalculateManeuverStrategicPotential(
+            game,
+            Nation.Europe,
+            controllerId);
+        game.Units.Add(Army(Nation.Europe, "Rome"));
+        float surplusDefender = TcpTrainingServer.CalculateManeuverStrategicPotential(
+            game,
+            Nation.Europe,
+            controllerId);
+
+        Assert.True(surplusDefender < threatMatched,
+            $"A second Rome army beyond its land threat changed potential from {threatMatched} to {surplusDefender}.");
+    }
+
+    [Fact]
+    public void AHomeFleetMatchingLandThreatIsNotTreatedAsSurplus()
+    {
+        var game = NewGame(Nation.Europe);
+        game.Units.Add(Army(Nation.Russia, "Turkey"));
+        Guid controllerId = game.NationStates.Single(n => n.Nation == Nation.Europe).ControllerId!.Value;
+
+        float undefended = TcpTrainingServer.CalculateManeuverStrategicPotential(
+            game,
+            Nation.Europe,
+            controllerId);
+        game.Units.Add(Fleet(Nation.Europe, "Rome"));
+        float threatMatched = TcpTrainingServer.CalculateManeuverStrategicPotential(
+            game,
+            Nation.Europe,
+            controllerId);
+
+        Assert.True(threatMatched > undefended,
+            $"A Rome fleet covering one land threat changed potential from {undefended} to {threatMatched}.");
+    }
+
+    [Fact]
+    public void AHomeFleetBeyondTheHomeProvinceLandThreatLowersPotential()
+    {
+        var game = NewGame(Nation.Europe);
+        game.Units.Add(Army(Nation.Russia, "Turkey"));
+        game.Units.Add(Fleet(Nation.Europe, "Rome"));
+        Guid controllerId = game.NationStates.Single(n => n.Nation == Nation.Europe).ControllerId!.Value;
+
+        float threatMatched = TcpTrainingServer.CalculateManeuverStrategicPotential(
+            game,
+            Nation.Europe,
+            controllerId);
+        game.Units.Add(Fleet(Nation.Europe, "Rome"));
+        float surplusDefender = TcpTrainingServer.CalculateManeuverStrategicPotential(
+            game,
+            Nation.Europe,
+            controllerId);
+
+        Assert.True(surplusDefender < threatMatched,
+            $"A second Rome fleet beyond its land threat changed potential from {threatMatched} to {surplusDefender}.");
+    }
+
+    [Fact]
+    public void PeacefulForeignArmyInsideOrdinaryHomeProvinceCountsAsLandThreat()
+    {
+        var game = NewGame(Nation.Europe);
+        game.TerritoryStates.Add(new TerritoryState { TerritoryId = "Rome", HasFactory = true });
+        game.TerritoryStates.Add(new TerritoryState { TerritoryId = "Berlin", HasFactory = true });
+        game.Units.Add(Army(Nation.Russia, "Rome", hostile: false));
+        Guid controllerId = game.NationStates.Single(n => n.Nation == Nation.Europe).ControllerId!.Value;
+
+        var rome = HomeDefenseHelper.Assess(game, Nation.Europe, controllerId)
+            .Single(defense => defense.Territory.Id == "Rome");
+
+        Assert.Equal(1, rome.LandThreat);
+    }
+
+    [Fact]
+    public void PeacefulForeignArmyInsideProtectedLastFactoryDoesNotCreateDefenseDemand()
+    {
+        var game = NewGame(Nation.Europe);
+        game.TerritoryStates.Add(new TerritoryState { TerritoryId = "Rome", HasFactory = true });
+        game.Units.Add(Army(Nation.Russia, "Rome", hostile: false));
+        Guid controllerId = game.NationStates.Single(n => n.Nation == Nation.Europe).ControllerId!.Value;
+
+        var rome = HomeDefenseHelper.Assess(game, Nation.Europe, controllerId)
+            .Single(defense => defense.Territory.Id == "Rome");
+
+        Assert.Equal(0, rome.LandThreat);
     }
 
     [Theory]
