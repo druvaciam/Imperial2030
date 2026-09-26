@@ -83,6 +83,16 @@
             }
         };
 
+        // An <animateTransform> added to a page that has been open for a while never plays: its
+        // begin="0s" is measured from the document timeline, which is long past, so the browser jumps
+        // it straight to its frozen end - the rondel marker appeared at its destination with no move
+        // shown. Started by hand instead, once the element is in the DOM.
+        window.rondelBeginSweep = (moveKey) => {
+            document.querySelectorAll(`animateTransform[data-sweep="${moveKey}"]`).forEach(a => {
+                try { a.beginElement(); } catch { /* the marker was re-rendered away mid-move */ }
+            });
+        };
+
         // Follow new content only while the reader is already at the bottom. Scrolling up to read
         // back unpins the element and it stays put - otherwise the next update (a replay step, a
         // bot's turn) yanks the view away mid-sentence, which made scrolling back impossible.
