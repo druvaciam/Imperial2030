@@ -4,6 +4,7 @@
 @using System.Linq
 @inject IStringLocalizer<Rondel> L
 @inject DisplayNameLocalizer Names
+@inject IJSRuntime JS
 
 <div class="rondel-container @(IsMyTurn && !IsLocked ? "my-turn-highlight" : "")">
     <svg viewBox="-105 -105 210 210" class="rondel-svg" style="width: 100%; height: auto;">
@@ -38,6 +39,16 @@
                       stroke-width="1"
                       transform="scale(@scale)" />
 
+                @if (LastMove is { } sweptMove && sweptMove.To == index)
+                {
+                    <!-- Where the move ended, outlined in the nation's colour for the rest of its turn. -->
+                    <path d="M0,0 L92.39,-38.27 A100,100 0 0,1 92.39,38.27 Z"
+                          class="rondel-path-target"
+                          fill="@GetNationColor(sweptMove.Nation)"
+                          stroke="@GetNationColor(sweptMove.Nation)"
+                          transform="scale(@scale)" />
+                }
+
                 <!-- Text label: Centered in the slice (at angle 0 relative to group) -->
                 <text x="65" y="4" 
                       transform="rotate(0)" 
@@ -54,6 +65,21 @@
             </g>
         }
 
+        <!-- The spaces this turn's rondel move counted, one dotted arc each. -->
+        @if (LastMove is { } pathMove)
+        {
+            @for (int step = 1; step <= pathMove.Distance; step++)
+            {
+                var arcStep = step;
+                <path class="rondel-path-arc"
+                      d="@StepArc(pathMove, arcStep)"
+                      stroke="@GetNationColor(pathMove.Nation)" />
+            }
+            <path class="rondel-path-arrow"
+                  d="@PathArrow(pathMove)"
+                  fill="@GetNationColor(pathMove.Nation)" />
+        }
+
         <!-- Center Hub -->
         <circle cx="0" cy="0" r="20" fill="#444" stroke="#888" stroke-width="2" />
         
@@ -61,34 +87,58 @@
         @foreach (var group in NationStates.Where(n => n.RondelPosition.HasValue).GroupBy(n => n.RondelPosition!.Value))
         {
             var pos = group.Key;
-            var angle = (pos * 45) - 90; 
-            var rad = (angle * Math.PI) / 180.0;
-            
+            var angle = (double)((pos * 45) - 90);
+
+            // Most recent arrival innermost, so the marker that just moved reads first and an older
+            // one is never hidden behind it.
             int indexInSlot = 0;
-            foreach (var nation in group)
+            foreach (var nation in group.OrderByDescending(n => ArrivalOrder(n.Nation)))
             {
                  // Stack radially outward: 45, 65, 85, etc.
-                 var r = 45 + (indexInSlot * 18); 
-                 var x = (r * Math.Cos(rad)).ToString(CultureInfo.InvariantCulture);
-                 var y = (r * Math.Sin(rad)).ToString(CultureInfo.InvariantCulture);
+                 var r = 45 + (indexInSlot * 18);
                  indexInSlot++;
 
-                 <g transform="translate(@x, @y)">
-                     @if (nation.Nation == CurrentTurnNation)
+                 // The marker rides a rotation about the rondel's centre, so a move can sweep it over
+                 // the spaces it counts; startAngle is where that sweep begins.
+                 var startAngle = MarkerStartAngle(nation.Nation, angle);
+
+                 <g @key="@($"{nation.Nation}-{MoveAnimationKey(nation.Nation)}")" transform="rotate(@Deg(startAngle))">
+                     @if (IsAnimating(nation.Nation))
                      {
-                         <!-- Highlight Ring for Active Turn -->
-                         <circle r="11" fill="none" stroke="#fff" stroke-width="3" opacity="0.8">
-                            <animate attributeName="opacity" values="0.8;0.3;0.8" dur="1.5s" repeatCount="indefinite" />
-                         </circle>
-                         <circle r="9" fill="@GetNationColor(nation.Nation)" stroke="#fff" stroke-width="2" />
+                         @* Steps the marker clockwise from space to space - it counts them, as a player
+                            moving a piece does - and holds where it landed. *@
+                         <animateTransform attributeName="transform" type="rotate" begin="indefinite"
+                                           data-sweep="@LastMove!.Key"
+                                           values="@StepValues(LastMove!, false)" keyTimes="@StepKeyTimes(LastMove!)"
+                                           dur="@StepDuration(LastMove!)" fill="freeze" calcMode="linear" />
                      }
-                     else
-                     {
-                         <circle r="8" fill="@GetNationColor(nation.Nation)" stroke="#fff" stroke-width="1" />
-                     }
-                     <text y="3" text-anchor="middle" font-size="7" fill="#fff" font-weight="@(nation.Nation == CurrentTurnNation ? "bold" : "normal")">
-                         @GetNationAbbreviation(nation.Nation)
-                     </text>
+                     <g transform="translate(@Deg(r), 0)">
+                         <g transform="rotate(@Deg(-startAngle))">
+                             @if (IsAnimating(nation.Nation))
+                             {
+                                 @* Counter-rotation: the marker rides the arc, its label stays upright. *@
+                                 <animateTransform attributeName="transform" type="rotate" begin="indefinite"
+                                                   data-sweep="@LastMove!.Key"
+                                                   values="@StepValues(LastMove!, true)" keyTimes="@StepKeyTimes(LastMove!)"
+                                                   dur="@StepDuration(LastMove!)" fill="freeze" calcMode="linear" />
+                             }
+                             @if (nation.Nation == CurrentTurnNation)
+                             {
+                                 <!-- Highlight Ring for Active Turn -->
+                                 <circle r="11" fill="none" stroke="#fff" stroke-width="3" opacity="0.8">
+                                    <animate attributeName="opacity" values="0.8;0.3;0.8" dur="1.5s" repeatCount="indefinite" />
+                                 </circle>
+                                 <circle r="9" fill="@GetNationColor(nation.Nation)" stroke="#fff" stroke-width="2" />
+                             }
+                             else
+                             {
+                                 <circle r="8" fill="@GetNationColor(nation.Nation)" stroke="#fff" stroke-width="1" />
+                             }
+                             <text y="3" text-anchor="middle" font-size="7" fill="#fff" font-weight="@(nation.Nation == CurrentTurnNation ? "bold" : "normal")">
+                                 @GetNationAbbreviation(nation.Nation)
+                             </text>
+                         </g>
+                     </g>
                  </g>
             }
         }
@@ -106,6 +156,209 @@
     [Parameter] public Guid? CurrentPlayerId { get; set; }
 
     private int? CurrentPosition => NationStates.FirstOrDefault(n => n.Nation == CurrentTurnNation)?.RondelPosition;
+
+    /// <summary>One counted space: the hop, then the beat the marker rests on it.</summary>
+    private const double StepTravelSeconds = 0.26;
+    private const double StepRestSeconds = 0.12;
+
+    /// <summary>Where the dotted path is drawn: outside the hub, inside the innermost marker ring.</summary>
+    private const double PathRadius = 34;
+
+    /// <summary>
+    /// The rondel move being shown: which nation moved and the spaces it counted (p.6, clockwise). It
+    /// stays for the rest of that nation's turn - the action the move opened - and goes when the turn
+    /// passes on. <see cref="Animate"/> is true while the sweep is playing.
+    /// </summary>
+    private sealed record RondelMove(Nation Nation, int From, int To, int Key)
+    {
+        public int Distance => (To - From + RondelData.SlotCount) % RondelData.SlotCount;
+        public double SweepDegrees => Distance * 45.0;
+        public bool Animate { get; set; } = true;
+    }
+
+    private RondelMove? LastMove;
+    private int _moveKey;
+    private readonly Dictionary<Nation, int> _shownPositions = new();
+
+    /// <summary>When each marker last arrived where it stands, newest highest. Decides the stacking order.</summary>
+    private readonly Dictionary<Nation, int> _arrivalOrder = new();
+
+    private int ArrivalOrder(Nation nation) => _arrivalOrder.TryGetValue(nation, out int order) ? order : 0;
+
+    private Guid _shownGameId;
+
+    protected override void OnParametersSet()
+    {
+        // A different game, or the same one restarted from the top of its log by the replay viewer:
+        // nothing on the old board is a move from anything on the new one.
+        var gameId = Game?.Id ?? Guid.Empty;
+        if (gameId != _shownGameId)
+        {
+            _shownGameId = gameId;
+            _shownPositions.Clear();
+            LastMove = null;
+        }
+
+        foreach (var ns in NationStates)
+        {
+            if (!ns.RondelPosition.HasValue)
+            {
+                // Off the rondel: its next appearance is a placement, not a move (a replay rewound).
+                _shownPositions.Remove(ns.Nation);
+                if (LastMove?.Nation == ns.Nation) LastMove = null;
+                continue;
+            }
+
+            int to = ns.RondelPosition.Value;
+            if (!_shownPositions.TryGetValue(ns.Nation, out int from))
+            {
+                // First sight of this marker (a fresh page, or its first placement, which is not a move).
+                _shownPositions[ns.Nation] = to;
+                _arrivalOrder[ns.Nation] = ++_moveKey;
+                continue;
+            }
+            if (from == to) continue;
+
+            _shownPositions[ns.Nation] = to;
+            _arrivalOrder[ns.Nation] = _moveKey + 1;
+            var move = new RondelMove(ns.Nation, from, to, ++_moveKey);
+            // Several markers can change between two polls (bots move on while the page waits). The
+            // one worth showing is the nation whose turn it is; otherwise the last one seen.
+            if (LastMove is not { } shown || shown.Nation != CurrentTurnNation || ns.Nation == CurrentTurnNation)
+            {
+                LastMove = move;
+                _ = HoldTheSweepAsync(move);
+            }
+        }
+
+        // The path belongs to the move's own turn: once the turn has passed to another nation, the
+        // action it opened is over and the path goes with it. Held while the sweep is still playing.
+        if (LastMove is { Animate: false } finished && finished.Nation != CurrentTurnNation)
+        {
+            LastMove = null;
+        }
+    }
+
+    /// <summary>
+    /// Keeps the sweep's markup in the render output until it has finished playing. Anything else
+    /// re-rendering the board meanwhile (the 1s poll, a replay step, another player's cash changing)
+    /// would otherwise drop the &lt;animateTransform&gt; element on the next diff and the marker would
+    /// jump straight to where it landed - which is what a move looked like before this.
+    /// </summary>
+    private async Task HoldTheSweepAsync(RondelMove move)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(move.Distance * (StepTravelSeconds + StepRestSeconds)));
+        if (!ReferenceEquals(LastMove, move)) return;
+
+        move.Animate = false;
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException)
+        {
+            // The board is gone (navigated away mid-sweep); nothing left to redraw.
+        }
+    }
+
+    private int MoveAnimationKey(Nation nation) => LastMove?.Nation == nation ? LastMove.Key : 0;
+
+    private int _sweepStarted;
+
+    /// <summary>
+    /// Starts the sweep once its markup is in the DOM. It cannot start itself: an animation element
+    /// added to a page that has been open for a while has its begin="0s" in the past, so the browser
+    /// jumps it straight to the frozen end - the move was never seen, only its result.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (LastMove is not { Animate: true } move || move.Key == _sweepStarted) return;
+
+        _sweepStarted = move.Key;
+        try
+        {
+            await JS.InvokeVoidAsync("rondelBeginSweep", move.Key);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The page is gone; nothing left to animate.
+        }
+    }
+
+    private bool IsAnimating(Nation nation) => LastMove is { } move && move.Nation == nation && move.Animate;
+
+    /// <summary>
+    /// The angle the marker is drawn at before its sweep: the space it left, for the one move being
+    /// animated; where it stands, for every other marker and every later render.
+    /// </summary>
+    private double MarkerStartAngle(Nation nation, double angleDegrees)
+        => IsAnimating(nation) ? angleDegrees - LastMove!.SweepDegrees : angleDegrees;
+
+    private static string Deg(double degrees) => degrees.ToString(CultureInfo.InvariantCulture);
+
+    private static double AngleOf(int slot) => slot * 45 - 90;
+
+    private static (double X, double Y) Point(double angleDegrees, double radius)
+    {
+        double rad = (angleDegrees * Math.PI) / 180.0;
+        return (radius * Math.Cos(rad), radius * Math.Sin(rad));
+    }
+
+    /// <summary>The arc for one counted space: from the space before it to the space itself, with a gap at each end.</summary>
+    private static string StepArc(RondelMove move, int step)
+    {
+        const double gap = 6;
+        var (x0, y0) = Point(AngleOf(move.From) + (step - 1) * 45 + gap, PathRadius);
+        var (x1, y1) = Point(AngleOf(move.From) + step * 45 - gap, PathRadius);
+        return $"M{Deg(x0)},{Deg(y0)} A{Deg(PathRadius)},{Deg(PathRadius)} 0 0,1 {Deg(x1)},{Deg(y1)}";
+    }
+
+    /// <summary>A head on the last arc, pointing the way the marker went.</summary>
+    private static string PathArrow(RondelMove move)
+    {
+        double tipAngle = AngleOf(move.To);
+        var (tx, ty) = Point(tipAngle, PathRadius);
+        var (bx, by) = Point(tipAngle - 9, PathRadius + 4.5);
+        var (cx, cy) = Point(tipAngle - 9, PathRadius - 4.5);
+        return $"M{Deg(tx)},{Deg(ty)} L{Deg(bx)},{Deg(by)} L{Deg(cx)},{Deg(cy)} Z";
+    }
+
+    /// <summary>
+    /// The marker's angle at each keyframe: it hops to the next space, rests on it, hops again - so a
+    /// three-space move is seen as three spaces counted, not one slide. Negated for the label's
+    /// counter-rotation, which has to undo exactly the same angles.
+    /// </summary>
+    private static string StepValues(RondelMove move, bool negate)
+    {
+        double sign = negate ? -1 : 1;
+        var values = new List<string> { Deg(sign * AngleOf(move.From)) };
+        for (int step = 1; step <= move.Distance; step++)
+        {
+            string angle = Deg(sign * (AngleOf(move.From) + step * 45));
+            values.Add(angle); // arrived
+            values.Add(angle); // resting on it
+        }
+        return string.Join(";", values);
+    }
+
+    /// <summary>When each of <see cref="StepValues"/> happens, as a fraction of the whole move.</summary>
+    private static string StepKeyTimes(RondelMove move)
+    {
+        double total = move.Distance * (StepTravelSeconds + StepRestSeconds);
+        var times = new List<string> { "0" };
+        double at = 0;
+        for (int step = 1; step <= move.Distance; step++)
+        {
+            at += StepTravelSeconds;
+            times.Add(Deg(Math.Round(at / total, 4)));
+            at += StepRestSeconds;
+            times.Add(step == move.Distance ? "1" : Deg(Math.Round(at / total, 4)));
+        }
+        return string.Join(";", times);
+    }
+
+    private static string StepDuration(RondelMove move)
+        => Deg(move.Distance * (StepTravelSeconds + StepRestSeconds)) + "s";
 
     private bool CanMoveTo(int targetIndex)
     {
@@ -367,6 +620,25 @@
     .rondel-slice.hoverable:hover {
         opacity: 0.8;
     }
+    .rondel-path-arc {
+        fill: none;
+        stroke-width: 3.5;
+        stroke-linecap: round;
+        stroke-dasharray: 1 5.5;
+        stroke-opacity: 0.95;
+        pointer-events: none;
+    }
+    .rondel-path-arrow {
+        fill-opacity: 0.95;
+        pointer-events: none;
+    }
+    .rondel-path-target {
+        fill-opacity: 0.18;
+        stroke-width: 3;
+        stroke-opacity: 0.9;
+        pointer-events: none;
+    }
+
     .my-turn-highlight {
         animation: rondel-pulse 2s infinite;
         border-radius: 50%;
@@ -377,6 +649,10 @@
         0% { box-shadow: 0 0 10px 2px rgba(241, 196, 15, 0.4); }
         50% { box-shadow: 0 0 25px 8px rgba(241, 196, 15, 0.9); }
         100% { box-shadow: 0 0 10px 2px rgba(241, 196, 15, 0.4); }
+    }
+
+    @@media (prefers-reduced-motion: reduce) {
+        .my-turn-highlight { animation: none; }
     }
 </style>
 
