@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Imperial2030.Server.Engine;
 using Imperial2030.Server.Models;
 using Imperial2030.Shared.Constants;
@@ -241,7 +242,10 @@ public class ManeuverEngineTests
         Assert.True(result.Ok, result.Error);
         Assert.False(game.TerritoryStates.First(t => t.TerritoryId == cities[0].Id).HasFactory);
         Assert.Empty(game.Units);
-        Assert.Single(game.Actions, a => a.ActionType == "DestroyFactory");
+        var destruction = Assert.Single(game.Actions, a => a.ActionType == "DestroyFactory");
+        var destructionMetadata = JsonSerializer.Deserialize<ActionMetadata>(destruction.Metadata!);
+        Assert.Equal(Nation.Russia, destruction.Nation);
+        Assert.Equal(Nation.China, destructionMetadata?.DefenderNation);
 
         // cities[1] is now China's last unoccupied factory.
         for (int i = 0; i < ManeuverRules.DestroyFactoryArmyCost; i++) Add(game, Nation.Russia, UnitType.Army, cities[1].Id, hostile: false);

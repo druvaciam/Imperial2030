@@ -207,7 +207,9 @@ public static class GameLogger
 
     public static void LogFactoryDestruction(ApplicationDbContext? context, Game game, string territoryId, Nation nation, string playerName)
     {
-        LogAction(context, game, "DestroyFactory", nation, playerName, new ActionMetadata { TerritoryId = territoryId });
+        var factoryNation = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == territoryId)?.Nation;
+        LogAction(context, game, "DestroyFactory", nation, playerName,
+            new ActionMetadata { TerritoryId = territoryId, DefenderNation = factoryNation });
     }
 
     // Logged with a null action Nation, while the forced nation stays in the metadata.

@@ -6,14 +6,14 @@ namespace Imperial2030.Server.Helpers;
 
 public sealed record HomeProvinceDefense(
     Territory Territory,
-    int HostileOccupiers,
+    int ThreateningArmyOccupiers,
     int ReachableEnemyArmies,
     int FriendlyArmyDefenders,
     int AdjacentEnemyFleets)
 {
-    public int LandThreat => HostileOccupiers + ReachableEnemyArmies;
+    public int LandThreat => ThreateningArmyOccupiers + ReachableEnemyArmies;
     public int LandDefenseDeficit => Math.Max(0, LandThreat - FriendlyArmyDefenders);
-    public bool IsOccupied => HostileOccupiers > 0;
+    public bool IsOccupied => ThreateningArmyOccupiers > 0;
 }
 
 /// <summary>
@@ -33,7 +33,7 @@ public static class HomeDefenseHelper
             .Where(territory => territory.Nation == nation)
             .ToList();
         var homeIds = homeTerritories.Select(territory => territory.Id).ToHashSet();
-        var hostileOccupiers = homeIds.ToDictionary(id => id, _ => 0);
+        var threateningArmyOccupiers = homeIds.ToDictionary(id => id, _ => 0);
         var reachableEnemyArmies = homeIds.ToDictionary(id => id, _ => 0);
         var friendlyArmyDefenders = homeIds.ToDictionary(id => id, _ => 0);
         var adjacentEnemyFleets = homeIds.ToDictionary(id => id, _ => 0);
@@ -49,9 +49,17 @@ public static class HomeDefenseHelper
 
             if (unit.UnitType == UnitType.Army && !friendly)
             {
-                if (unit.IsHostile && homeIds.Contains(unit.TerritoryId))
+                // A foreign army already inside an ordinary home province can fight on its next
+                // Maneuver even while currently lying down (p.10 and FAQ p.14). The protected last
+                // unoccupied factory is the exception: it cannot be occupied hostilely or destroyed,
+                // so this strategic defense model assigns it no garrison demand.
+                if (homeIds.Contains(unit.TerritoryId)
+                    && !ManeuverHelper.IsProtectedLastFactoryProvince(
+                        game,
+                        unit.Nation,
+                        unit.TerritoryId))
                 {
-                    hostileOccupiers[unit.TerritoryId]++;
+                    threateningArmyOccupiers[unit.TerritoryId]++;
                 }
 
                 var reachableHomes = ManeuverHelper.GetAllReachableArmyDestinations(
@@ -60,6 +68,10 @@ public static class HomeDefenseHelper
                         unit.Nation)
                     .Select(destination => destination.TerritoryId)
                     .Where(homeIds.Contains)
+                    .Where(homeId => !ManeuverHelper.IsProtectedLastFactoryProvince(
+                        game,
+                        unit.Nation,
+                        homeId))
                     .Distinct();
                 foreach (string homeId in reachableHomes)
                 {
@@ -82,7 +94,7 @@ public static class HomeDefenseHelper
 
         return homeTerritories.Select(territory => new HomeProvinceDefense(
             territory,
-            hostileOccupiers[territory.Id],
+            threateningArmyOccupiers[territory.Id],
             reachableEnemyArmies[territory.Id],
             friendlyArmyDefenders[territory.Id],
             adjacentEnemyFleets[territory.Id])).ToList();

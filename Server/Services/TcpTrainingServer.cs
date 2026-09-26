@@ -1968,6 +1968,7 @@ public class TcpTrainingServer : BackgroundService
     private const float CoveredHomeThreatReward = 1.5f;
     private const float HomeDefenseDeficitPenalty = 2.0f;
     private const float FactoryDefenseDeficitPenalty = 2.0f;
+    private const float SurplusHomeUnitPenalty = 1.0f;
     private const float ForwardStagingArmyReward = 1.0f;
     private const float UsefulReachObjectiveReward = 0.25f;
     private const int MaxUsefulReachObjectives = 12;
@@ -2081,16 +2082,36 @@ public class TcpTrainingServer : BackgroundService
         float potential = 0f;
         foreach (var defense in HomeDefenseHelper.Assess(game, nation, controllerId))
         {
-            int coveredThreat = Math.Min(defense.FriendlyArmyDefenders, defense.LandThreat);
+            int ownHomeFleets = game.Units.Count(unit =>
+                unit.UnitType == UnitType.Fleet
+                && unit.Nation == nation
+                && string.Equals(
+                    unit.TerritoryId,
+                    defense.Territory.Id,
+                    StringComparison.OrdinalIgnoreCase));
+
+            // Imperial 2030 p.10 allows an invading army and a fleet still in harbor to battle, so a
+            // harbor fleet covers one land attacker just as an army does for this defensive headcount.
+            // A fleet in a home province can only belong to that nation: it starts in its own harbor and,
+            // under p.8, cannot return to land after moving to sea.
+            int availableHomeDefenders = defense.FriendlyArmyDefenders + ownHomeFleets;
+            int coveredThreat = Math.Min(availableHomeDefenders, defense.LandThreat);
+            int landDefenseDeficit = Math.Max(0, defense.LandThreat - availableHomeDefenders);
             potential += coveredThreat * CoveredHomeThreatReward;
-            potential -= defense.HostileOccupiers * OccupiedHomePenalty;
-            potential -= defense.LandDefenseDeficit * HomeDefenseDeficitPenalty;
+            potential -= defense.ThreateningArmyOccupiers * OccupiedHomePenalty;
+            potential -= landDefenseDeficit * HomeDefenseDeficitPenalty;
+
+            // Home units are valuable up to the reachable land danger they collectively answer. Any
+            // additional army or harbor fleet is surplus. This is part of the before/after position,
+            // not a per-move penalty, so several moves in one Maneuver receive one net verdict.
+            int surplusHomeDefenders = Math.Max(0, availableHomeDefenders - defense.LandThreat);
+            potential -= surplusHomeDefenders * SurplusHomeUnitPenalty;
 
             bool hasFactory = game.TerritoryStates.Any(state =>
                 state.TerritoryId == defense.Territory.Id && state.HasFactory);
             if (hasFactory)
             {
-                potential -= defense.LandDefenseDeficit * FactoryDefenseDeficitPenalty;
+                potential -= landDefenseDeficit * FactoryDefenseDeficitPenalty;
             }
         }
 
