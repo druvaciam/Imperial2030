@@ -460,6 +460,10 @@ public class TcpTrainingServer : BackgroundService
         var preNs = game.NationStates.FirstOrDefault(n => n.Nation == game.CurrentTurnNation);
         int? preTreasury = preNs?.Treasury;
         int? preRondelPos = preNs?.RondelPosition;
+        // What Taxation would pay the acting nation right now. Taken here, not at the end of the step:
+        // by then the move, its action and every opponent's turn have happened, and flags, factories and
+        // blockades - all of which the figure is derived from - may have moved on.
+        int preTaxPowerGain = preNs == null ? 0 : Helpers.TaxationHelper.PreviewTaxation(game, preNs).ExpectedPowerGain;
         bool wasRondelTurn = !game.IsInvestorTurn && !game.PendingBattleDefenders.Any()
                              && preNs != null && preNs.ControllerId == session.RLPlayerId;
 
@@ -1069,12 +1073,11 @@ public class TcpTrainingServer : BackgroundService
             int dist = RondelData.GetMoveDistance(preRondelPos.Value, targetSlot);
             int moveCost = preNs == null ? 0 : RondelData.GetMoveCost(preRondelPos, targetSlot, preNs.Power);
 
-            // Heavy penalty for paying for a long move to first Prod/Man when the second one was closer
-            if (dist >= 5 && (targetSlot == RondelData.ProductionSlot1 || targetSlot == RondelData.ManeuverSlot1))
+            // Heavy penalty for paying to reach the farther of the two identical spaces.
+            if (PaidForTheFartherTwinSlot(preRondelPos.Value, targetSlot, preNs?.Power ?? 0))
             {
-                string targetName = targetSlot == RondelData.ProductionSlot1 ? "Production" : "Maneuver";
-                _logger.LogWarning($"[RL PENALTY] {preNs?.Nation} paid for long move ({dist} steps) to {targetName} 1, skipping a closer {targetName} 2. Cost: {moveCost}M");
-                shaping.Add(-40.0f); // Heavy penalty
+                _logger.LogWarning($"[RL PENALTY] {preNs?.Nation} paid for a long move ({dist} steps) to {RondelData.GetSlotName(targetSlot)}, skipping the closer one of the pair. Cost: {moveCost}M");
+                shaping.Add(-FartherTwinSlotPenalty);
             }
 
             // Factory (slot 1) wasted: not enough treasury OR no valid cities to build in
@@ -1114,6 +1117,11 @@ public class TcpTrainingServer : BackgroundService
                                 * session.FactoryPenaltyScale);
                     shaping.Add(-(moveCost * 10.0f)); // Extra penalty for wasting money on useless move
                 }
+            }
+            if (SkippedValuableTaxation(preRondelPos.Value, targetSlot, preTaxPowerGain))
+            {
+                _logger.LogWarning($"[RL PENALTY] {preNs?.Nation} walked past a Taxation worth {preTaxPowerGain} power to reach {RondelData.GetSlotName(targetSlot)}. Penalty: -{SkippedTaxationPenalty}");
+                shaping.Add(-SkippedTaxationPenalty);
             }
             if (targetSlot == RondelData.ImportSlot && preTreasury.HasValue && preTreasury < 1)
             {
@@ -1953,6 +1961,64 @@ public class TcpTrainingServer : BackgroundService
         else if (rlScore < maxOfOthersScore) reward -= 100f;
         return reward;
     }
+
+    /// <summary>
+    /// Whether this rondel move walked the marker past Taxation while stopping there would have paid
+    /// <see cref="SkippedTaxationPowerThreshold"/> or more power. The passed space is nearer than the
+    /// one the move paid to reach, so stopping on it was affordable by definition (p.6: the first three
+    /// spaces are free, each further space costs more) - no cash check is needed.
+    ///
+    /// Power is the win condition (p.6: 25 points ends the game), and nothing in the reward compared a
+    /// move against the taxation it gave up: measured over five games each, RL-5 walked past a 5+ power
+    /// Taxation on 25 of 62 chances, RL-4 on 26 of 71, the heuristic Default bot on 15 of 60.
+    /// </summary>
+    public static bool SkippedValuableTaxation(int fromSlot, int targetSlot, int expectedTaxPowerGain)
+    {
+        if (expectedTaxPowerGain < SkippedTaxationPowerThreshold) return false;
+
+        int toTaxation = RondelData.GetMoveDistance(fromSlot, RondelData.TaxationSlot);
+        if (toTaxation == 0) return false; // Leaving Taxation is not passing it.
+
+        return toTaxation < RondelData.GetMoveDistance(fromSlot, targetSlot);
+    }
+
+    /// <summary>
+    /// Whether this move paid to reach the farther of the rondel's two identical spaces - Production is
+    /// on spaces 2 and 6, Maneuver on 3 and 7 (p.6) - when the nearer one was reachable and cheaper. The
+    /// action is the same either way, so the difference in move cost is money spent for nothing.
+    ///
+    /// Checked for both of each pair. It used to be checked only for the FIRST of each pair, so the move
+    /// that cost this game 3M - Taxation to Production 2 (six spaces) with Production 1 two spaces away
+    /// and free - went unpenalised.
+    /// </summary>
+    public static bool PaidForTheFartherTwinSlot(int fromSlot, int targetSlot, int power)
+    {
+        int twin = targetSlot switch
+        {
+            RondelData.ProductionSlot1 => RondelData.ProductionSlot2,
+            RondelData.ProductionSlot2 => RondelData.ProductionSlot1,
+            RondelData.ManeuverSlot1 => RondelData.ManeuverSlot2,
+            RondelData.ManeuverSlot2 => RondelData.ManeuverSlot1,
+            _ => -1
+        };
+        if (twin < 0) return false;
+
+        int toTwin = RondelData.GetMoveDistance(fromSlot, twin);
+        // The marker is standing on the twin, and staying is not a move (p.6) - there was no cheaper option.
+        if (toTwin == 0) return false;
+        if (toTwin >= RondelData.GetMoveDistance(fromSlot, targetSlot)) return false;
+
+        return RondelData.GetMoveCost(fromSlot, targetSlot, power) > RondelData.GetMoveCost(fromSlot, twin, power);
+    }
+
+    /// <summary>Unchanged from when this was checked for one of each pair only.</summary>
+    public const float FartherTwinSlotPenalty = 40.0f;
+
+    /// <summary>The power gain that makes a Taxation worth stopping for. Mirrors the +5 already paid for taxing above it.</summary>
+    public const int SkippedTaxationPowerThreshold = 5;
+
+    /// <summary>Sized with the other wasted-move penalties (Production and Maneuver are -10).</summary>
+    public const float SkippedTaxationPenalty = 10.0f;
 
     public const float FlagPlacementReward = 1.0f;
     public const float EnemyUnitDestroyedReward = 1.0f;
