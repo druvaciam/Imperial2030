@@ -1,11 +1,12 @@
 """Drive the training server with random MASKED actions for a fixed number of steps.
 
-    python smoke_env.py [steps=6000] [seed=7] [opponents=Random,Default]
+    python smoke_env.py [steps=6000] [seed=7] [opponents=Random,Default] [port=5295]
 
 Give the opponents as a comma-separated list to exercise the RL opponents too - their ONNX policies take
 paths (an early maneuver phase end, for one) the heuristic bots never do.
 
-Run against a server started with `--training` (port 5295). Writes NOTHING to python_rl/ - no SB3, no
+Run against a server started with `--training` (port 5295 by default; start it with Training__Port set
+and pass the same port here to smoke a build while a real training run keeps 5295). Writes NOTHING to python_rl/ - no SB3, no
 checkpoint, no vec_normalize.pkl, no best_reward.txt - so it is safe to run next to a real training
 setup. It exercises the same TCP step path train.py uses, so a server-side throw shows up here as
 ConnectionError exactly as it does in a real run; the cause is then in the C# server log.
@@ -18,12 +19,13 @@ predecessor had already taken - each within the first 20k steps.
 import os, sys, time, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
-from imperial_env import ImperialEnv
+from imperial_env import DEFAULT_TRAINING_PORT, ImperialEnv
 
 rng = np.random.default_rng(int(sys.argv[2]) if len(sys.argv) > 2 else 7)
 target_steps = int(sys.argv[1]) if len(sys.argv) > 1 else 6000
 opponents = sys.argv[3].split(",") if len(sys.argv) > 3 else None
-env = ImperialEnv(bot_type="RL-4", opponents=opponents)
+port = int(sys.argv[4]) if len(sys.argv) > 4 else DEFAULT_TRAINING_PORT
+env = ImperialEnv(port=port, bot_type="RL-4", opponents=opponents)
 obs, info = env.reset()
 steps = episodes = 0
 kinds = collections.Counter()

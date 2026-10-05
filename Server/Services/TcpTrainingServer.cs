@@ -9,6 +9,7 @@ using Imperial2030.Server.Services.Bots.Strategies;
 using Imperial2030.Shared.Constants;
 using Imperial2030.Shared.Models;
 using Imperial2030.Server.Helpers;
+using Microsoft.Extensions.Configuration;
 
 namespace Imperial2030.Server.Services;
 
@@ -21,10 +22,20 @@ public class TcpTrainingServer : BackgroundService
     // connection to this server and can Reset/Step in parallel, all hitting this dictionary concurrently.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, TrainingSession> _sessions = new();
 
-    public TcpTrainingServer(BotService botService, ILogger<TcpTrainingServer> logger)
+    /// <summary>
+    /// The port the Python training env connects to. 5295 unless <c>Training:Port</c> says otherwise
+    /// (so <c>Training__Port=5296</c> in the environment, or the same key in appsettings) - a smoke run
+    /// can then use its own server while a real training run keeps 5295.
+    /// </summary>
+    public const int DefaultPort = 5295;
+
+    public int Port { get; }
+
+    public TcpTrainingServer(BotService botService, ILogger<TcpTrainingServer> logger, IConfiguration? configuration = null)
     {
         _botService = botService;
         _logger = logger;
+        Port = configuration?.GetValue<int?>("Training:Port") ?? DefaultPort;
     }
 
     public class TrainingSession
@@ -171,9 +182,9 @@ public class TcpTrainingServer : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var listener = new TcpListener(IPAddress.Loopback, 5295);
+        var listener = new TcpListener(IPAddress.Loopback, Port);
         listener.Start();
-        _logger.LogInformation("TcpTrainingServer listening on 127.0.0.1:5295");
+        _logger.LogInformation($"TcpTrainingServer listening on 127.0.0.1:{Port}");
 
         try
         {

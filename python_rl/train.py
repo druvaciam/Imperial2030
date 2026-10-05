@@ -2,7 +2,7 @@ import numpy as np
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
-from imperial_env import ImperialEnv
+from imperial_env import DEFAULT_TRAINING_PORT, ImperialEnv
 
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
@@ -19,12 +19,12 @@ from training_schedules import (
 )
 
 
-def make_env(bot_type, opponents_list):
+def make_env(bot_type, opponents_list, port):
     """Factory for a single (Monitor-wrapped) env instance, for use with Subproc/DummyVecEnv.
-    Each instance opens its own TCP connection to the training server (port 5295), which handles
-    concurrent sessions independently, so these can run as genuinely parallel OS processes."""
+    Each instance opens its own TCP connection to the training server, which handles concurrent
+    sessions independently, so these can run as genuinely parallel OS processes."""
     def _init():
-        return Monitor(ImperialEnv(bot_type=bot_type, opponents=opponents_list))
+        return Monitor(ImperialEnv(port=port, bot_type=bot_type, opponents=opponents_list))
     return _init
 
 class CumulativeSchedule:
@@ -236,6 +236,8 @@ if __name__ == "__main__":
         type=str,
         help="Fixed comma-separated opponent pool; overrides the automatic stage-based curriculum.",
     )
+    parser.add_argument("--port", type=int, default=DEFAULT_TRAINING_PORT,
+                        help=f"Port of the C# training server (default {DEFAULT_TRAINING_PORT}). Match the server's Training__Port when running a second one alongside a real run.")
     parser.add_argument("--n-envs", type=int, default=4, help="Number of parallel training environments (separate OS processes, each with its own TCP session to the C# server). 1 falls back to a single in-process env.")
     args = parser.parse_args()
 
@@ -371,7 +373,7 @@ if __name__ == "__main__":
         print(f"[curriculum] initial opponent stage {opponent_stage} at {curriculum_progress:.0%}: "
               f"{','.join(initial_opponents)}")
 
-    env_fns = [make_env(args.bot_type, list(initial_opponents)) for _ in range(args.n_envs)]
+    env_fns = [make_env(args.bot_type, list(initial_opponents), args.port) for _ in range(args.n_envs)]
     # SubprocVecEnv runs each env in its own OS process for genuine parallelism (Python's GIL means
     # DummyVecEnv would just interleave them on one core). Each worker opens its own socket to the training
     # server, which handles concurrent sessions independently (see the ConcurrentDictionary session store).
