@@ -17,11 +17,16 @@ DEFAULT_STATE_SIZE = 3172
 DEFAULT_ACTION_SIZE = 205
 
 
+# The C# training server's default. It reads Training:Port, so a second server (a smoke run beside a
+# real training run) can listen elsewhere - pass the same port here.
+DEFAULT_TRAINING_PORT = 5295
+
+
 class ImperialEnv(gym.Env):
     """Custom Environment that follows gym interface"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, host="127.0.0.1", port=5295, bot_type="RL", opponents=None):
+    def __init__(self, host="127.0.0.1", port=DEFAULT_TRAINING_PORT, bot_type="RL", opponents=None):
         super(ImperialEnv, self).__init__()
         self.host = host
         self.port = port
