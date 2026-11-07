@@ -11,7 +11,7 @@ public class FriendlyBotStrategy : BotStrategyBase
     public override bool DetermineHostility(bool hasEnemy, bool isForeignHome)
     {
         if (!hasEnemy && !isForeignHome) return false;
-        return Random.Shared.Next(0, 100) < 10; // 10% hostile
+        return BotRandom.Current.Next(0, 100) < 10; // 10% hostile
     }
 
     public override double ScoreRondelSlot(int slot, Game game, NationState ns, Player controller, int factories, int units)
@@ -38,7 +38,7 @@ public class FriendlyBotStrategy : BotStrategyBase
             .Select(ns => ns.Nation)
             .ToList();
 
-        int score = Random.Shared.Next(0, 10);
+        int score = BotRandom.Current.Next(0, 10);
         bool hasEnemy = game.Units.Any(u => u.TerritoryId == destinationId && !friendlyNations.Contains(u.Nation));
         var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == destinationId);
         var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == destinationId);

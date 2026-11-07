@@ -41,6 +41,16 @@ builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Im
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.FriendlyBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.GreedyBotStrategy>();
 builder.Services.AddSingleton<Imperial2030.Server.Services.Bots.IBotStrategy, Imperial2030.Server.Services.Bots.Strategies.RandomBotStrategy>();
+
+// The Jev bot layer's transport. Registered whether or not a key is configured: without one the client
+// answers null to everything, so a "Jev-..." bot plays exactly the model it wraps (and BotTypeCatalog
+// stops offering those bot types at all).
+builder.Services.AddHttpClient(Imperial2030.Server.Services.TypeSafe.TypeSafeClient.HttpClientName);
+builder.Services.AddSingleton(sp => new Imperial2030.Server.Services.TypeSafe.TypeSafeClient(
+    builder.Configuration,
+    sp.GetRequiredService<IHttpClientFactory>(),
+    sp.GetService<ILogger<Imperial2030.Server.Services.TypeSafe.TypeSafeClient>>()));
+
 builder.Services.AddSingleton<Imperial2030.Server.Services.BotService>();
 builder.Services.AddScoped<Imperial2030.Server.Services.GameReplayService>();
 // Caps are bound from configuration so an operator can retune them (or open them back up) with an
@@ -134,8 +144,12 @@ builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<Imperial2030.Server.Services.UserExistenceCache>();
 
 // Scans the deployment directory for exported .onnx bot models exactly once, instead of on every
-// AddBot and every anonymous hit on the available-bots endpoint.
-builder.Services.AddSingleton<Imperial2030.Server.Services.BotTypeCatalog>();
+// AddBot and every anonymous hit on the available-bots endpoint. The Jev-layered bots are only offered
+// when a TypeSafe key is configured, so the catalogue needs the client to ask.
+builder.Services.AddSingleton(sp => new Imperial2030.Server.Services.BotTypeCatalog(
+    sp.GetService<ILogger<Imperial2030.Server.Services.BotTypeCatalog>>(),
+    modelDirectory: null,
+    typeSafeConfigured: sp.GetRequiredService<Imperial2030.Server.Services.TypeSafe.TypeSafeClient>().IsConfigured));
 
 builder.Services.AddAuthentication(options =>
 {

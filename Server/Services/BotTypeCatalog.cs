@@ -21,24 +21,38 @@ public sealed class BotTypeCatalog
     private const string RlBotType = "RL";
 
     private readonly Lazy<IReadOnlyList<string>> _available;
+    private readonly Lazy<IReadOnlyList<string>> _randomlyAssignable;
 
     /// <param name="modelDirectory">
     /// Where to look for `.onnx` models; defaults to the deployment directory. Overridable so the scan
     /// can be exercised against a fixture directory instead of whatever the test host happens to ship.
     /// </param>
-    public BotTypeCatalog(ILogger<BotTypeCatalog>? logger = null, string? modelDirectory = null)
+    /// <param name="typeSafeConfigured">
+    /// Whether a TypeSafe API key is configured. Each model is then also offered under the Jev layer
+    /// (`Jev-RL-5`); without a key that bot would silently play the plain model, so it is not offered.
+    /// </param>
+    public BotTypeCatalog(ILogger<BotTypeCatalog>? logger = null, string? modelDirectory = null, bool typeSafeConfigured = false)
     {
         var directory = modelDirectory ?? AppContext.BaseDirectory;
         var log = (ILogger?)logger ?? NullLogger.Instance;
 
         // ExecutionAndPublication: the scan runs once even if several requests race for it.
-        _available = new Lazy<IReadOnlyList<string>>(() => Discover(directory, log),
+        _available = new Lazy<IReadOnlyList<string>>(() => Discover(directory, log, typeSafeConfigured),
                                                      LazyThreadSafetyMode.ExecutionAndPublication);
+        _randomlyAssignable = new Lazy<IReadOnlyList<string>>(
+            () => Available.Where(type => !Bots.Strategies.JevAdviser.IsJevBotType(type)).ToList(),
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public IReadOnlyList<string> Available => _available.Value;
 
-    private static IReadOnlyList<string> Discover(string directory, ILogger logger)
+    /// <summary>
+    /// What a bot added without a named type may be. Everything on offer except the Jev-layered bots:
+    /// those spend an outside service's quota on every rondel move, so they are asked for deliberately.
+    /// </summary>
+    public IReadOnlyList<string> RandomlyAssignable => _randomlyAssignable.Value;
+
+    private static IReadOnlyList<string> Discover(string directory, ILogger logger, bool typeSafeConfigured)
     {
         var botTypes = new List<string>(BuiltInBotTypes);
 
@@ -66,6 +80,17 @@ public sealed class BotTypeCatalog
         {
             // A missing or unreadable model directory is not fatal: the built-in strategies still work.
             logger.LogError(ex, "Error discovering bot types in {ModelDirectory}", directory);
+        }
+
+        if (typeSafeConfigured)
+        {
+            // Each model with the Jev layer on top, and the plain heuristic bot with it too - the one
+            // bot weak enough that useful advice should show up in its results.
+            botTypes.AddRange(botTypes
+                .Where(type => type.StartsWith(RlBotType, StringComparison.OrdinalIgnoreCase))
+                .Select(type => Bots.Strategies.JevAdviser.BotTypePrefix + type)
+                .ToList());
+            botTypes.Add(Bots.Strategies.JevDefaultBotStrategy.BotType);
         }
 
         return botTypes;

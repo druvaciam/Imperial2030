@@ -16,6 +16,33 @@ public abstract class BotStrategyBase : IBotStrategy
     public virtual double GetRondelSelectionWeight(double candidateScore, double highestCandidateScore) =>
         candidateScore;
 
+    // The heuristics have nothing to add to their own scoring, so every pick stands. One null each
+    // rather than a single catch-all, so a strategy can answer for one decision without touching the rest.
+    public virtual Task<int?> ReconsiderRondelSlotAsync(Game game, NationState ns, Player controller, IReadOnlyList<RondelCandidate> candidates, int scoringPick)
+        => Task.FromResult<int?>(null);
+
+    public virtual Task<Bond?> ReconsiderBondAsync(Game game, Player actor, IReadOnlyList<Bond> affordable, Bond? pick)
+        => Task.FromResult<Bond?>(null);
+
+    public virtual Task<string?> ReconsiderFactoryCityAsync(Game game, NationState ns, Player controller, IReadOnlyList<Territory> buildable, string pick)
+        => Task.FromResult<string?>(null);
+
+    public virtual Task<(UnitType Type, string TerritoryId)?> ReconsiderImportAsync(Game game, NationState ns, Player controller,
+        IReadOnlyList<(UnitType Type, string TerritoryId)> placements, (UnitType Type, string TerritoryId) pick, int remaining)
+        => Task.FromResult<(UnitType Type, string TerritoryId)?>(null);
+
+    public virtual Task<string?> ReconsiderManeuverDestinationAsync(Game game, Unit unit, Player controller, IReadOnlyList<string> destinations, string pick)
+        => Task.FromResult<string?>(null);
+
+    public virtual Task<bool?> ReconsiderHostilityAsync(Game game, Unit unit, Player controller, string territoryId, bool pick)
+        => Task.FromResult<bool?>(null);
+
+    public virtual Task<bool?> ReconsiderBattleResponseAsync(Game game, PendingBattle battle, Player controller, bool fightPick)
+        => Task.FromResult<bool?>(null);
+
+    public virtual Task<bool?> ReconsiderFactoryDestructionAsync(Game game, Nation nation, string territoryId, Player controller, bool destroyPick)
+        => Task.FromResult<bool?>(null);
+
     public virtual Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)
     {
         var affordableBonds = availableBonds.Where(b => b.Cost <= actor.Cash).ToList();
@@ -34,7 +61,7 @@ public abstract class BotStrategyBase : IBotStrategy
     public virtual string? ChooseCityForFactory(Game game, Nation nation, List<Territory> validCities)
     {
         if (validCities.Count == 0) return null;
-        var rng = new Random();
+        var rng = BotRandom.Current;
         return validCities[rng.Next(validCities.Count)].Id;
     }
 
@@ -83,7 +110,7 @@ public abstract class BotStrategyBase : IBotStrategy
             !game.Units.Any(u => string.Equals(u.TerritoryId, ht.Id, StringComparison.OrdinalIgnoreCase) && u.Nation != nation && u.UnitType == UnitType.Army && u.IsHostile));
 
         bool preferArmy = hasOccupiedTerritory || availableArmyFactories < availableFleetFactories;
-        var rng = new Random();
+        var rng = BotRandom.Current;
 
         while (imported < maxImport)
         {
@@ -147,7 +174,7 @@ public abstract class BotStrategyBase : IBotStrategy
             .Select(ns => ns.Nation)
             .ToHashSet();
 
-        int score = Random.Shared.Next(0, 10);
+        int score = BotRandom.Current.Next(0, 10);
         bool hasEnemy = game.Units.Any(u => u.TerritoryId == destinationId && !friendlyNations.Contains(u.Nation));
         var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == destinationId);
         var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == destinationId);
@@ -181,7 +208,7 @@ public abstract class BotStrategyBase : IBotStrategy
             if (targetNation.HasValue)
             {
                 int investment = game.Bonds.Where(b => b.HolderId == controller.Id && b.Nation == targetNation.Value).Sum(b => b.Cost);
-                if (investment <= 2 && Random.Shared.Next(0, 10) < 5) // 50% chance to block if investment is low
+                if (investment <= 2 && BotRandom.Current.Next(0, 10) < 5) // 50% chance to block if investment is low
                 {
                     score += 150;
                 }
@@ -227,43 +254,18 @@ public abstract class BotStrategyBase : IBotStrategy
     public virtual bool DetermineHostility(bool hasEnemy, bool isForeignHome)
     {
         if (!hasEnemy && !isForeignHome) return false;
-        return Random.Shared.Next(0, 100) < 80; // Default 80% hostile
+        return BotRandom.Current.Next(0, 100) < 80; // Default 80% hostile
     }
 
     public virtual bool ShouldDestroyFactory(Game game, Nation nation, string territoryId, Player controller)
     {
-        return Random.Shared.Next(0, 2) == 0; // 50/50 chance
+        return BotRandom.Current.Next(0, 2) == 0; // 50/50 chance
     }
 
     // Shared helpers
+    /// <inheritdoc cref="Helpers.RondelOutlookHelper.EstimateProductionYield"/>
     protected int EstimateProductionYield(Game game, Nation nation)
-    {
-        int produced = 0;
-        int currentArmies = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Army);
-        int currentFleets = game.Units.Count(u => u.Nation == nation && u.UnitType == UnitType.Fleet);
-
-        foreach (var ts in game.TerritoryStates.Where(t => t.HasFactory))
-        {
-            var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == ts.TerritoryId);
-            if (def?.Nation != nation) continue;
-            bool blocked = game.Units.Any(u => u.TerritoryId == ts.TerritoryId && u.UnitType == UnitType.Army && u.Nation != nation && u.IsHostile);
-            if (blocked) continue;
-
-            var unitType = def.CityType == CityType.LightBlue ? UnitType.Fleet : UnitType.Army;
-            if (unitType == UnitType.Army)
-            {
-                if (currentArmies >= NationData.GetMaxArmies(nation)) continue;
-                currentArmies++;
-            }
-            else
-            {
-                if (currentFleets >= NationData.GetMaxFleets(nation)) continue;
-                currentFleets++;
-            }
-            produced++;
-        }
-        return produced;
-    }
+        => Helpers.RondelOutlookHelper.EstimateProductionYield(game, nation);
 
     protected int EstimateTaxRevenue(Game game, Nation nation)
     {

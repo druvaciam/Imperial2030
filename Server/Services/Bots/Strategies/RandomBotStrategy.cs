@@ -25,20 +25,20 @@ public class RandomBotStrategy : BotStrategyBase
             _ => 0
         };
         
-        return baseScore > 0 ? Random.Shared.NextDouble() * 10 : 0;
+        return baseScore > 0 ? BotRandom.Current.NextDouble() * 10 : 0;
     }
 
     public override Bond? ChooseBondToBuy(Game game, Player actor, List<Nation> controlledNations, List<Bond> availableBonds)
     {
         var affordableBonds = availableBonds.Where(b => b.Cost <= actor.Cash).ToList();
         if (!affordableBonds.Any()) return null;
-        return affordableBonds[Random.Shared.Next(affordableBonds.Count)];
+        return affordableBonds[BotRandom.Current.Next(affordableBonds.Count)];
     }
 
     public override string? ChooseCityForFactory(Game game, Nation nation, List<Territory> validCities)
     {
         if (!validCities.Any()) return null;
-        return validCities[Random.Shared.Next(validCities.Count)].Id;
+        return validCities[BotRandom.Current.Next(validCities.Count)].Id;
     }
 
     public override List<(UnitType Type, string TerritoryId)> ChooseImports(Game game, NationState ns, int maxImport, List<Territory> homeTerritories)
@@ -48,11 +48,11 @@ public class RandomBotStrategy : BotStrategyBase
 
     public override double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller)
     {
-        return Random.Shared.NextDouble() * 10;
+        return BotRandom.Current.NextDouble() * 10;
     }
 
     public override bool RetreatFromBattle(Game game, PendingBattle battle)
     {
-        return Random.Shared.Next(2) == 0;
+        return BotRandom.Current.Next(2) == 0;
     }
 }

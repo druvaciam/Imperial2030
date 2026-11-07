@@ -51,7 +51,7 @@ public class DefaultBotStrategy : BotStrategyBase
 
     public override bool RetreatFromBattle(Game game, PendingBattle battle)
     {
-        return Random.Shared.Next(3) == 0;
+        return BotRandom.Current.Next(3) == 0;
     }
 
     public override double ScoreManeuverDestination(Game game, Unit unit, string destinationId, Player controller)
@@ -218,7 +218,7 @@ public class DefaultBotStrategy : BotStrategyBase
             }
 
             if (candidates.Count == 0) break;
-            double roll = Random.Shared.NextDouble() * candidates.Sum(candidate => candidate.Weight);
+            double roll = BotRandom.Current.NextDouble() * candidates.Sum(candidate => candidate.Weight);
             double cumulative = 0;
             var selected = candidates[^1];
             foreach (var candidate in candidates)

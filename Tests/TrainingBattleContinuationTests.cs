@@ -13,6 +13,7 @@ using Xunit;
 
 namespace Imperial2030.Tests;
 
+[Collection(RlTrainingFlagCollection.Name)]
 public sealed class TrainingStallRegressionTests
 {
     [Fact]

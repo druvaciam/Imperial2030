@@ -20,18 +20,23 @@ public class BotService
     private readonly IHubContext<Imperial2030.Server.Hubs.GameHub> _hubContext;
     private readonly IEnumerable<Bots.IBotStrategy> _botStrategies;
     private readonly ILogger<BotService> _logger;
+
+    // Optional: the Jev bot types are only offered when a key is configured (BotTypeCatalog), and a null
+    // client here makes a "Jev-..." bot play exactly the model it wraps.
+    private readonly TypeSafe.TypeSafeClient? _typeSafe;
     public const int BotDelayMs = 5000;
 
     private const int FactoryCost = GameConstants.FactoryCost;
     private const int ImportUnitCost = GameConstants.ImportUnitCost;
     public bool SkipDelays { get; set; } = false;
 
-    public BotService(IServiceScopeFactory scopeFactory, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, IEnumerable<Bots.IBotStrategy> botStrategies, ILogger<BotService> logger)
+    public BotService(IServiceScopeFactory scopeFactory, IHubContext<Imperial2030.Server.Hubs.GameHub> hubContext, IEnumerable<Bots.IBotStrategy> botStrategies, ILogger<BotService> logger, TypeSafe.TypeSafeClient? typeSafe = null)
     {
         _scopeFactory = scopeFactory;
         _hubContext = hubContext;
         _botStrategies = botStrategies;
         _logger = logger;
+        _typeSafe = typeSafe;
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Bots.IBotStrategy> _rlStrategies = new();
@@ -40,8 +45,9 @@ public class BotService
     {
         var type = player.BotType ?? "Default";
 
-        // Handle RL bots dynamically
-        if (type.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
+        // Handle RL bots dynamically — including the ones wrapped in the Jev layer, which load the same
+        // model files and carry the same per-decision state.
+        if (IsModelBackedBotType(type))
         {
             // Keyed by (type, player.Id), not type alone: RLBotStrategy carries non-thread-safe per-decision
             // caching state (_lastState/_cachedAction/_maneuverCache). Keying by type alone made every
@@ -51,7 +57,9 @@ public class BotService
             // mutable fields and corrupt each other's cached action. The underlying ONNX InferenceSession
             // stays shared via _sessionCache (keyed by model path) regardless, so this costs nothing extra.
             var key = $"{type}:{player.Id}";
-            return _rlStrategies.GetOrAdd(key, _ => new Bots.Strategies.RLBotStrategy(type, _logger));
+            return _rlStrategies.GetOrAdd(key, _ => Bots.Strategies.JevAdviser.IsJevBotType(type)
+                ? LayeredStrategy(type)
+                : new Bots.Strategies.RLBotStrategy(type, _logger));
         }
 
         return _botStrategies.FirstOrDefault(s => s.Name.Equals(type, StringComparison.OrdinalIgnoreCase))
@@ -68,12 +76,30 @@ public class BotService
         foreach (var player in players)
         {
             var type = player.BotType ?? "Default";
-            if (type.StartsWith("RL", StringComparison.OrdinalIgnoreCase))
+            if (IsModelBackedBotType(type))
             {
                 _rlStrategies.TryRemove($"{type}:{player.Id}", out _);
             }
         }
     }
+
+    /// <summary>
+    /// Bot types built around a trained model file rather than a registered strategy singleton: "RL",
+    /// "RL-5", and anything under the Jev layer ("Jev-RL-5", "Jev-Default") - the layer carries the same
+    /// per-decision state, so it is built per player either way.
+    /// </summary>
+    private static bool IsModelBackedBotType(string botType)
+        => botType.StartsWith("RL", StringComparison.OrdinalIgnoreCase)
+           || Bots.Strategies.JevAdviser.IsJevBotType(botType);
+
+    /// <summary>
+    /// A bot under the Jev layer: the trained model it names, or - for "Jev-Default" - the plain
+    /// heuristic bot, which is how the advice gets measured against something that is not already strong.
+    /// </summary>
+    private Bots.IBotStrategy LayeredStrategy(string botType)
+        => Bots.Strategies.JevAdviser.WrappedBotType(botType).Equals("Default", StringComparison.OrdinalIgnoreCase)
+            ? new Bots.Strategies.JevDefaultBotStrategy(_typeSafe, _logger)
+            : new Bots.Strategies.JevRlBotStrategy(botType, _typeSafe, _logger);
 
     public void TriggerBotTurn(Guid gameId, int delayMs = BotDelayMs)
     {
@@ -297,7 +323,7 @@ public class BotService
         if (!nationState.HasMovedThisTurn)
         {
             // Step 1: Choose rondel slot
-            targetSlot = ChooseRondelSlot(game, nationState, controller);
+            targetSlot = await ChooseRondelSlotAsync(game, nationState, controller);
 
             var move = RondelEngine.MoveNation(ctx, game, nation, targetSlot);
             if (!move.Ok)
@@ -386,27 +412,53 @@ public class BotService
         }
     }
 
-    private int ChooseRondelSlot(Game game, NationState ns, Player controller)
+    /// <summary>
+    /// The rondel move this bot makes: its own scoring picks a space, then the strategy gets one look at
+    /// that pick against every space it could legally have moved to instead.
+    ///
+    /// internal, not private, so Tests can drive the whole choice without standing up a bot turn
+    /// (InternalsVisibleTo).
+    /// </summary>
+    internal async Task<int> ChooseRondelSlotAsync(Game game, NationState ns, Player controller)
+    {
+        var strategy = GetStrategy(controller);
+        var candidates = LegalRondelCandidates(game, ns, controller, strategy);
+        int pick = PickScoredRondelSlot(ns, strategy, candidates);
+
+        int? reconsidered = await strategy.ReconsiderRondelSlotAsync(game, ns, controller, candidates, pick);
+        if (reconsidered is int slot && slot != pick && candidates.Any(candidate => candidate.Slot == slot))
+        {
+            _logger.LogInformation("{Strategy} moved {Nation} to {Slot} instead of {ScoringPick}",
+                                   strategy.Name, ns.Nation, RondelData.GetSlotName(slot), RondelData.GetSlotName(pick));
+            return slot;
+        }
+
+        return pick;
+    }
+
+    /// <summary>
+    /// Every space this nation may legally move its marker to, scored by the strategy: clockwise, at most
+    /// <see cref="RondelData.MaxMoveDistance"/> spaces, and what the government can pay for (p.6).
+    /// </summary>
+    // internal, not private, so Tests can hand a strategy the very candidate list the bot turn builds.
+    internal List<Bots.RondelCandidate> LegalRondelCandidates(Game game, NationState ns, Player controller, Bots.IBotStrategy strategy)
     {
         var nation = ns.Nation;
         int factoryCount = CountFactories(game, nation);
         int unitCount = game.Units.Count(u => u.Nation == nation);
-        var strategy = GetStrategy(controller);
 
-        var candidates = new List<(int Slot, double Score)>();
-        double maxScore = -999;
-        int fallbackSlot = ns.RondelPosition.HasValue ? ((ns.RondelPosition.Value + 1) % RondelData.SlotCount) : RondelData.ProductionSlot1;
-        int bestSlot = fallbackSlot;
+        var candidates = new List<Bots.RondelCandidate>();
 
         for (int slot = 0; slot < RondelData.SlotCount; slot++)
         {
             if (ns.RondelPosition.HasValue && slot == ns.RondelPosition.Value) continue;
 
             int moveCost = 0;
+            int distance = 0;
             if (ns.RondelPosition.HasValue)
             {
-                int dist = RondelData.GetMoveDistance(ns.RondelPosition.Value, slot);
-                if (dist > RondelData.MaxMoveDistance) continue;
+                distance = RondelData.GetMoveDistance(ns.RondelPosition.Value, slot);
+                if (distance > RondelData.MaxMoveDistance) continue;
 
                 moveCost = RondelData.GetMoveCost(ns.RondelPosition, slot, ns.Power);
             }
@@ -426,19 +478,30 @@ public class BotService
                 factoryCount,
                 unitCount);
 
-            if (score > maxScore)
-            {
-                maxScore = score;
-                bestSlot = slot;
-            }
-
-            if (score > 0)
-            {
-                candidates.Add((slot, score));
-            }
+            candidates.Add(new Bots.RondelCandidate(slot, distance, moveCost, score));
         }
 
-        if (!candidates.Any()) return bestSlot;
+        return candidates;
+    }
+
+    /// <summary>The space the strategy's own scoring settles on, out of the ones it may legally move to.</summary>
+    internal static int PickScoredRondelSlot(NationState ns, Bots.IBotStrategy strategy, List<Bots.RondelCandidate> legalCandidates)
+    {
+        int fallbackSlot = ns.RondelPosition.HasValue ? ((ns.RondelPosition.Value + 1) % RondelData.SlotCount) : RondelData.ProductionSlot1;
+
+        // Nothing is worth anything: take the best-scoring space anyway, or the next one round if there
+        // is not even a legal move to score.
+        var candidates = legalCandidates
+            .Where(candidate => candidate.Score > 0)
+            .Select(candidate => (candidate.Slot, candidate.Score))
+            .ToList();
+
+        if (!candidates.Any())
+        {
+            return legalCandidates.Count == 0
+                ? fallbackSlot
+                : legalCandidates.OrderByDescending(candidate => candidate.Score).First().Slot;
+        }
 
         // Deduplicate identical actions (Production: 2/6, Maneuver: 3/7)
         // by keeping only the highest scoring one so the bot doesn't randomly pay more for the same action.
@@ -456,7 +519,7 @@ public class BotService
             .ToList();
 
         double totalWeight = weightedCandidates.Sum(candidate => candidate.Weight);
-        double roll = Random.Shared.NextDouble() * totalWeight;
+        double roll = BotRandom.Current.NextDouble() * totalWeight;
 
         double current = 0;
         foreach (var candidate in weightedCandidates)
@@ -542,6 +605,15 @@ public class BotService
         var validCities = FactoryEngine.BuildableCities(game, ns.Nation);
 
         var chosenCityId = validCities.Any() ? strategy.ChooseCityForFactory(game, ns.Nation, validCities) : null;
+        if (chosenCityId != null)
+        {
+            var reconsideredCity = await strategy.ReconsiderFactoryCityAsync(game, ns, controller, validCities, chosenCityId);
+            if (reconsideredCity != null && reconsideredCity != chosenCityId && validCities.Any(city => city.Id == reconsideredCity))
+            {
+                LogSecondOpinion(strategy, ns.Nation, "builds the factory in", reconsideredCity, chosenCityId);
+                chosenCityId = reconsideredCity;
+            }
+        }
         if (chosenCityId == null)
         {
             // Same three-way split TcpTrainingServer's wasted-Factory penalty already makes (NoMoney /
@@ -637,6 +709,7 @@ public class BotService
 
                 var target = candidates.OrderByDescending(n => strategy.ScoreManeuverDestination(game, fleet, n, controller)).FirstOrDefault();
                 if (target == null) continue;
+                target = await ReconsiderDestination(strategy, game, fleet, controller, candidates, target);
 
                 if (target == fleet.TerritoryId)
                 {
@@ -644,7 +717,7 @@ public class BotService
                     continue;
                 }
 
-                bool isHostileMove = DecideHostility(game, strategy, fleet, target, friendlyNations, nation);
+                bool isHostileMove = await DecideHostility(game, strategy, fleet, target, friendlyNations, nation, controller);
                 var move = ManeuverEngine.MoveFleet(ctx, game, fleet.Id, target, isHostileMove);
                 if (!move.Ok)
                 {
@@ -677,6 +750,7 @@ public class BotService
 
             var best = candidates.OrderByDescending(n => strategy.ScoreManeuverDestination(game, army, n, controller)).FirstOrDefault();
             if (best == null) continue;
+            best = await ReconsiderDestination(strategy, game, army, controller, candidates.ToList(), best);
 
             if (best == army.TerritoryId)
             {
@@ -684,7 +758,7 @@ public class BotService
                 continue;
             }
 
-            bool isHostileMove = DecideHostility(game, strategy, army, best, friendlyNations, nation);
+            bool isHostileMove = await DecideHostility(game, strategy, army, best, friendlyNations, nation, controller);
             // The engine picks the way there - adjacent step, rail, or convoy over the nation's fleets -
             // by the same rule the endpoint uses, so the bot cannot play by different rules than a human.
             var move = ManeuverEngine.MoveArmy(ctx, game, army.Id, best, isHostileMove);
@@ -713,16 +787,46 @@ public class BotService
     /// Whether the bot enters <paramref name="target"/> standing upright. The strategy decides; a nation's
     /// last unoccupied factory province may only be entered peacefully (p.10), so that overrides it.
     /// </summary>
-    private static bool DecideHostility(Game game, IBotStrategy strategy, Unit unit, string target, HashSet<Nation> friendlyNations, Nation nation)
+    private static async Task<bool> DecideHostility(Game game, IBotStrategy strategy, Unit unit, string target,
+                                                    HashSet<Nation> friendlyNations, Nation nation, Player controller)
     {
         bool hasEnemy = game.Units.Any(u => u.TerritoryId == target && !friendlyNations.Contains(u.Nation));
         var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == target);
         bool isForeignHome = def != null && def.Nation.HasValue && !friendlyNations.Contains(def.Nation.Value);
 
         bool isHostileMove = strategy.DetermineHostility(hasEnemy, isForeignHome);
+
+        // Only a real choice where standing upright would mean something: on neutral ground with nobody
+        // in it, a unit has nothing to occupy and nobody to offer battle to.
+        if (hasEnemy || isForeignHome)
+        {
+            var reconsidered = await strategy.ReconsiderHostilityAsync(game, unit, controller, target, isHostileMove);
+            if (reconsidered.HasValue) isHostileMove = reconsidered.Value;
+        }
+
         if (isHostileMove && ManeuverEngine.MustEnterPeacefully(game, nation, target, unit.Id)) isHostileMove = false;
         return isHostileMove;
     }
+
+    /// <summary>
+    /// The destination the unit actually moves to: the strategy scoring picks one, then it gets a last
+    /// look at that pick against every region the unit could legally have reached. A destination that was
+    /// not among them is refused, as on the rondel.
+    /// </summary>
+    private async Task<string> ReconsiderDestination(IBotStrategy strategy, Game game, Unit unit, Player controller,
+                                                     IReadOnlyList<string> candidates, string pick)
+    {
+        var reconsidered = await strategy.ReconsiderManeuverDestinationAsync(game, unit, controller, candidates, pick);
+        if (reconsidered == null || reconsidered == pick || !candidates.Contains(reconsidered)) return pick;
+
+        LogSecondOpinion(strategy, unit.Nation, $"moves a {unit.UnitType} from {unit.TerritoryId} to", reconsidered, pick);
+        return reconsidered;
+    }
+
+    /// <summary>One line per decision a second look changed, so the effect is visible in the log.</summary>
+    private void LogSecondOpinion(IBotStrategy strategy, Nation nation, string what, string chosen, string insteadOf)
+        => _logger.LogInformation("{Strategy} {What} {Chosen} for {Nation} instead of {Rejected}",
+                                  strategy.Name, what, chosen, nation, insteadOf);
 
     /// <summary>
     /// The unit stays where it is, and the bot decides its posture there: lie down in a friendly home
@@ -752,7 +856,11 @@ public class BotService
             {
                 bool isEnemyPresent = game.Units.Any(u => u.TerritoryId == unit.TerritoryId && u.Id != unit.Id && !friendlyNations.Contains(u.Nation));
                 bool wouldOccupyLastFactory = ManeuverEngine.MustEnterPeacefully(game, nation, unit.TerritoryId, unit.Id);
-                if (!wouldOccupyLastFactory && strategy.DetermineHostility(isEnemyPresent, true))
+                bool standUp = strategy.DetermineHostility(isEnemyPresent, true);
+                var reconsideredPosture = await strategy.ReconsiderHostilityAsync(game, unit, controller, unit.TerritoryId, standUp);
+                if (reconsideredPosture.HasValue) standUp = reconsideredPosture.Value;
+
+                if (!wouldOccupyLastFactory && standUp)
                 {
                     var toggled = ManeuverEngine.ToggleHostility(ctx, game, unit.Id);
                     if (!toggled.Ok) throw new InvalidOperationException($"Bot {botName} could not stand up a {unit.UnitType} of {nation}: {toggled.Error}");
@@ -783,7 +891,10 @@ public class BotService
         foreach (var territoryId in ManeuverEngine.FactoryDestructionCandidates(game, nation, controller))
         {
             // Ask strategy if we should destroy
-            if (!strategy.ShouldDestroyFactory(game, nation, territoryId, controller)) continue;
+            bool destroy = strategy.ShouldDestroyFactory(game, nation, territoryId, controller);
+            var reconsideredDestruction = await strategy.ReconsiderFactoryDestructionAsync(game, nation, territoryId, controller, destroy);
+            if (reconsideredDestruction.HasValue) destroy = reconsideredDestruction.Value;
+            if (!destroy) continue;
 
             var result = ManeuverEngine.DestroyFactory(ctx, game, territoryId);
             if (!result.Ok)
@@ -861,8 +972,24 @@ public class BotService
         var placed = new List<(UnitType UnitType, string TerritoryId)>();
         while (placed.Count < GameConstants.MaxImportUnits && ns.Treasury >= ImportUnitCost)
         {
-            var next = strategy.ChooseNextImport(game, ns, GameConstants.MaxImportUnits - placed.Count, homeTerritories);
+            int remaining = GameConstants.MaxImportUnits - placed.Count;
+            var next = strategy.ChooseNextImport(game, ns, remaining, homeTerritories);
             if (next == null) break;
+
+            // Every placement the rules allow from the board as it stands - the same legality the RL
+            // action mask is built from (ImportEngine.CanPlace), so no strategy is offered more than another.
+            var placements = homeTerritories
+                .SelectMany(t => new[] { UnitType.Army, UnitType.Fleet }, (t, type) => (Type: type, TerritoryId: t.Id))
+                .Where(option => ImportEngine.CanPlace(game, nation, option.TerritoryId, option.Type))
+                .ToList();
+            var reconsideredImport = await strategy.ReconsiderImportAsync(game, ns, controller, placements, next.Value, remaining);
+            if (reconsideredImport.HasValue && reconsideredImport.Value != next.Value && placements.Contains(reconsideredImport.Value))
+            {
+                LogSecondOpinion(strategy, nation, "imports a",
+                                 $"{reconsideredImport.Value.Type} into {reconsideredImport.Value.TerritoryId}",
+                                 $"{next.Value.Type} into {next.Value.TerritoryId}");
+                next = reconsideredImport.Value;
+            }
 
             // The strategy filtered for legality; a refusal means its view of the board disagrees with the rule.
             var place = ImportEngine.PlaceOne(ctx, game, next.Value.TerritoryId, next.Value.Type);
@@ -882,7 +1009,19 @@ public class BotService
         var controlledNations = game.NationStates.Where(ns => ns.ControllerId == actor.Id).Select(ns => ns.Nation).ToList();
         var availableBonds = game.Bonds.Where(b => b.HolderId == null).ToList();
 
-        var bondToBuy = GetStrategy(actor).ChooseBondToBuy(game, actor, controlledNations, availableBonds);
+        var strategy = GetStrategy(actor);
+        var bondToBuy = strategy.ChooseBondToBuy(game, actor, controlledNations, availableBonds);
+
+        // Bots never trade a bond in, so what they may buy is what they can pay cash for.
+        var affordable = availableBonds.Where(bond => bond.Cost <= actor.Cash).ToList();
+        var reconsideredBond = await strategy.ReconsiderBondAsync(game, actor, affordable, bondToBuy);
+        if (reconsideredBond != null && reconsideredBond.Id != bondToBuy?.Id && affordable.Any(bond => bond.Id == reconsideredBond.Id))
+        {
+            LogSecondOpinion(strategy, reconsideredBond.Nation, "buys the bond",
+                             $"{reconsideredBond.Nation} {reconsideredBond.Cost}m",
+                             bondToBuy == null ? "buying nothing" : $"{bondToBuy.Nation} {bondToBuy.Cost}m");
+            bondToBuy = reconsideredBond;
+        }
 
         if (bondToBuy != null)
         {
@@ -938,6 +1077,12 @@ public class BotService
             };
             // An ungoverned defender has nobody to call for a battle.
             bool retreat = defController == null || GetStrategy(defController).RetreatFromBattle(game, pendingBattle);
+            if (defController != null)
+            {
+                var reconsideredAnswer = await GetStrategy(defController)
+                    .ReconsiderBattleResponseAsync(game, pendingBattle, defController, fightPick: !retreat);
+                if (reconsideredAnswer.HasValue) retreat = !reconsideredAnswer.Value;
+            }
 
             var result = ManeuverEngine.RespondToBattle(ctx, game, defNation, fight: !retreat);
             if (!result.Ok)

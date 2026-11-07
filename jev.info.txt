@@ -1,0 +1,204 @@
+# The Jev bot layer (RL model + a TypeSafe System One second opinion)
+
+A "Jev-<model>" bot (for example `Jev-RL-5`) is the trained ONNX model it names, playing exactly as the
+plain `RL-5` bot does, with one addition: before each decision is taken, Jev (TypeSafe's System One model)
+is asked the same question over the same legal options, and may change the answer.
+
+Every decision a bot makes is covered:
+
+| decision                | question id            | primitive | asked by default                              |
+| ----------------------- | ---------------------- | --------- | --------------------------------------------- |
+| which rondel space      | `rondel_space`         | Choice    | when the move looks questionable (see below)   |
+| which bond to buy       | `bond_to_buy`          | Choice    | yes, every investor turn                       |
+| which city builds       | `factory_city`         | Choice    | yes, every factory built                       |
+| which unit to import    | `unit_to_buy`          | Choice    | yes, every unit bought                         |
+| fight or retreat        | `fight_or_retreat`     | Noul      | yes, every battle offered to it                |
+| pull a factory down     | `destroy_the_factory`  | Noul      | yes, every chance to                           |
+| where a unit moves      | `where_this_unit_goes` | Choice    | no - level, and four times the cost            |
+| upright or lying down   | `stand_upright`        | Noul      | no - same                                      |
+
+`TypeSafe:Decisions` overrides the set: a comma-separated list of question ids, or `all` to switch the
+last two back on. Both are implemented and tested; they are off because they cost four times as much for
+no measured gain, not because they are missing or harmful.
+
+The options always come from the shared bot path, never from the layer, so a layered bot never sees a move
+the others cannot make (`.agents/AGENTS.md`, "No Bot-Identity Cheating"). An answer naming something that
+was not offered is dropped, and so is one the model is surer of than Jev - a Choice below the confidence
+gate, or a Noul too near a coin flip, where 0.5 means the two answers are equally likely rather than a
+weak yes.
+
+Decisions are also only asked about where they decide something: a rondel move the code can already see
+is questionable, a unit whose destinations differ in what they would do, a posture that offers a battle
+or shuts a factory down. That is about which calls are worth spending, never about which moves are
+allowed - every legal option stays on the table either way.
+
+## Where the pieces are
+
+- `Server/Services/TypeSafe/TypeSafeClient.cs` - the endpoint (`POST https://api.typesafe.ai/v1/systemone`),
+  Choice and Noul, one question per call, 8s timeout. Every failure returns null; nothing throws. Each
+  answer is logged with what it cost in tokens, which is the only record of the spend on our side.
+- `Server/Services/Bots/Strategies/JevRlBotStrategy.cs` - the rondel question.
+- `Server/Services/Bots/Strategies/JevRlBotStrategy.Decisions.cs` - every other decision.
+- `Server/Services/Bots/IBotStrategy.cs` - the `Reconsider...Async` hooks, one per decision, on the shared
+  contract (the heuristics answer null to all of them). `RondelCandidate` is the legal-space record.
+- `Server/Services/BotService.cs` - makes its own decision, then offers it to the strategy with the legal
+  options beside it, and refuses an answer that is not among them. One log line per decision changed.
+- `Server/Helpers/RondelOutlookHelper.cs` - what a rondel space would be worth from here, and whether a
+  move looks questionable. Shared with the training reward, which is where two of the predicates began.
+- Tests: `Tests/JevRondelLayerTests.cs` and `Tests/JevDecisionLayerTests.cs` (stubbed transport, no
+  network), `Tests/JevLiveCallTests.cs` (one real call, skipped without a key).
+
+## The API key
+
+Read from configuration as `TypeSafe:ApiKey` - the same arrangement as `Jwt__Key`, never a checked-in file.
+
+```bash
+# development
+dotnet user-secrets set "TypeSafe:ApiKey" "<key>" --project Server/Imperial2030.Server.csproj
+
+# production (Azure App Service application setting, or the VPS service environment)
+TypeSafe__ApiKey=<key>
+```
+
+Without a key the `Jev-...` bot types are not offered at all (`BotTypeCatalog`), and a game that already
+has one plays the plain model. They are also left out of the random bot type a lobby assigns when no type
+is asked for, so a casual "add bot" never spends quota.
+
+## What Jev is told, and what it is not
+
+The question carries the position as any player at the table sees it: the acting nation's power, treasury,
+flags, factories, units and occupied home provinces; the government's cash, score and bonds; every nation's
+power and marker; the other players' scores and bond interest. Each option carries what that action would
+actually produce now - the taxation preview (`TaxationHelper.PreviewTaxation`), the investor preview
+(`InvestorHelper.PreviewInterestPayment`), the production estimate, and the move's cost in millions.
+
+Each option also states what it would cost to keep what it produces: Production says how many units the
+nation may still have at all (China has 10 armies and 6 fleets, no more) and that every unit costs the
+treasury 1m of soldiers' pay at every Taxation and does nothing until a Maneuver moves it; Maneuver says
+how many regions next to its units could actually take a flag - not already its own, holding no foreign
+unit, and not a home province, which never takes one - and what a flag is worth in tax revenue. Without
+those two numbers the layer read Production as free units and moved a China that already had nine.
+
+It is never told who or what plays the other nations: no bot types, strategy names or model names
+(`.agents/AGENTS.md`, "No Bot-Identity Cheating"). `NothingAboutHowTheOpponentsDecideIsSent` asserts it.
+
+A space whose identical twin is legal and cheaper is not offered: Production and Maneuver each sit on two
+spaces (p.6), and the dearer one buys the same action for more money. The question says when the model's
+own pick was dropped for that reason.
+
+## Guarantees
+
+- Inference only. Training decides through the training server's action mask and never calls out
+  (`TrainingIsNeverAsked`), so a training run cannot stall or drift because of an outside service.
+- The ONNX state vector and action space are untouched, so every existing model keeps working as it did.
+- No key, a timeout, a 429, a malformed answer, or an answer naming a space that is not legal: the model's
+  own move stands. The layered bot is never worse off than the model it wraps for want of an answer.
+- An answer is only taken when its confidence is at least `JevRlBotStrategy.MinimumConfidence` (0.5). That
+  is a starting point, not a measured optimum - see below.
+
+## What the measurements say
+
+Two harnesses, both skipped unless `TypeSafe__ApiKey` is in the environment:
+
+- `Tests/JevHeadToHeadTests.cs` - the layered bot and the plain model at the same table, four heuristics
+  in the other seats, each deal played twice with the two seats swapped. Reports wins, average score, the
+  paired per-game difference and its 95% interval.
+  `$env:JEV_H2H_PAIRS = "50"` for 100 games; `JEV_GATE` sets the confidence gate and `JEV_ASK_ALWAYS=1`
+  turns off the questionable-move filter, so any configuration can be measured against the model it wraps.
+- `Tests/JevDecisionQualityTests.cs` - shadow play: the bot moves where the model says, Jev is asked the
+  same question anyway, and every answer is scored against the position with the training server's own
+  predicates. One run of calls can then be re-examined at any gate without paying for the answers again.
+  `JEV_CALL_BUDGET`, `JEV_GAMES`, `JEV_ASK_EVERY` (ask one decision in N, so the budget spreads over whole
+  games rather than openings).
+
+### What it comes to
+
+**The advice is real, and RL-5 does not need it.** Layered over the plain heuristic bot it is worth about
+14 points a game, measured on the same games played twice - the one interval in this file that excludes
+zero. Layered over RL-5 it is worth nothing measurable, across several hundred paired games and every
+subset of decisions.
+
+That is not a verdict on Jev. It is what the model is: over 24 games against the heuristics RL-5 finished
+first in 21 by an average of 46 points and made **no** flagged bad move in 478 rondel decisions - nothing
+wasted, no taxation worth 5 power walked past, never the dearer of two identical spaces. There is no room
+above a bot that is not making mistakes.
+
+### Same game, twice (Tests/JevPairedRerunTests.cs)
+
+The sharp instrument. `BotRandom` seeds every bot decision, so a game can be replayed exactly: once as
+the bot plays it, once with the layer on. The two runs are identical until the first decision the layer
+changes, so the difference is the layer rather than the deal. `TheSameSeedPlaysTheSameGame` guards it and
+needs no key.
+
+It cuts the per-game spread from 42-48 points to 12-22, which is worth roughly ten times the games:
+
+| base bot | opponents    | decisions   | pairs | ahead | behind | identical | difference        |
+| -------- | ------------ | ----------- | ----- | ----- | ------ | --------- | ----------------- |
+| Default  | heuristics   | all         |    15 |    10 |      4 |         1 | **+13.93 +/- 11.35** |
+| RL-5     | heuristics   | all         |    15 |     5 |      6 |         4 | -8.07 +/- 13.33   |
+| RL-5     | RL-5, RL-4.. | all         |    25 |     8 |      4 |        13 | +1.76 +/- 6.45    |
+| RL-5     | RL-5, RL-4.. | rondel only |    60 |    14 |     10 |        36 | +0.93 +/- 4.28    |
+| RL-5     | RL-5, RL-4.. | moves only  |    25 |     4 |      2 |        19 | +1.20 +/- 4.66    |
+| RL-5     | RL-5, RL-4.. | bonds only  |    25 |     0 |      0 |        25 | exactly 0         |
+
+Bonds deserve their own line: over 257 bond questions on the hard table Jev picked the bot's own choice
+**every single time**. Not a close call it lost - no disagreement at all. Whatever a bond is worth, the
+two of them read it the same way.
+
+### The table has to be hard
+
+RL-5 beats the heuristics 21 games in 24. Nothing can be shown to improve a bot in games it has already
+won by 46 points, which is what the first round of measurement was doing. Against the other RL
+generations it finishes first in 7 of 24 and loses by 27 on average - games close enough for a decision
+to matter. `JEV_OPPONENTS` sets the table; use the RL generations for anything that is meant to prove
+something.
+
+### Where the model's own bad moves are (Tests/RlBlunderMiningTests.cs)
+
+Plays seeded games, records every rondel decision with the position it was made in, and reports the moves
+from the games the model lost worst. No API calls. Against the heuristics: 0 flagged moves in 478. On the
+hard table: 1 in 310 (Europe at 0 power walking past a Taxation worth 8). The predicates that caught 25
+mistakes in 62 chances on the training server barely fire in these games, so a second opinion aimed at
+blunders has almost nothing to aim at here - the live games that started this work are a different
+population, and the user's own screenshots are still the only sighting of the Investor loop.
+
+### Earlier results, kept for the lesson
+
+| configuration                              | games | ahead | behind | avg score difference | calls per game |
+| ------------------------------------------ | ----- | ----- | ------ | -------------------- | -------------- |
+| rondel only, questionable moves            |   270 |   139 |    126 | -2.0 +/- 5.3         | ~2             |
+| every decision, with the board             |   130 |    58 |     70 | -1.8 +/- 7.4         | ~31-36         |
+| the default set, with the board            |    90 |    51 |     38 | +5.9 +/- 8.9         | ~9             |
+| every decision, starved question (the bug) |    52 |    19 |     32 | -13.4 +/- 12.2       | ~31-43         |
+
+The last row measured a question with no map in it: the per-unit questions listed region names and
+nothing else, while the policy they were compared against reads the whole board. Fixed, and the collapse
+does not reproduce. The lesson is the one that cost the most here - before concluding a model is bad at
+something, read the question it was asked.
+
+A bug the measurement found, not the tests: a decision taken before the nation has a marker on the rondel
+- an investor turn in the first round - threw inside the bot turn and stopped the game.
+`ADecisionBeforeTheMarkerIsOnTheRondelStillWorks` covers it now.
+
+### Shadow-play diagnostics (105 answers over 14 complete games)
+
+- Jev agreed with the model's move 67% of the time. When it agreed its median confidence was 0.80; when it
+  disagreed, 0.50 - it is least sure exactly where it differs.
+- Its disagreements are not random: Production -> Maneuver (11), Investor -> Maneuver (7),
+  Production -> Taxation (5). It prefers acting on the board to building more of what is already there.
+- The known-mistake predicates fired on 1 of 105 of the model's own moves in bot-vs-bot play. They were
+  measured on the training server, where RL-5 walked past a 5+ power taxation on 25 of 62 chances; against
+  these opponents those chances barely arise. The predicates are not a scoring rubric for self-play.
+
+## What is still worth trying
+
+1. **More games.** At ~2 calls a game the harness is cheap: 120 games is 2.6 minutes and ~220 calls. A
+   real 5-point effect needs roughly 300 games to separate from zero, which is one afternoon of runs -
+   worth doing before believing any change to the question helped.
+2. **The other decisions.** The rondel is one choice a turn. Bond buying, the factory city and maneuver
+   destinations all go through the same bot contract and none of them have a second opinion. The live
+   complaints that started this work were about investment moves as much as rondel moves.
+3. **The question itself.** Each fact added so far changed behaviour measurably (soldiers' pay and unit
+   caps moved it off Production; the power-factor arithmetic raised its confidence enough to double the
+   override rate). Facts it still does not get: what the opponents threaten, and what a flag is worth
+   against the taxation chart's steps rather than 1m flat.

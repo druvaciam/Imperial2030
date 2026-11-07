@@ -761,7 +761,8 @@ public class GamesController : ControllerBase
         }
 
         var botTypes = GetAvailableBotTypes();
-        var randomBotType = botTypes[Random.Shared.Next(botTypes.Count)];
+        var randomPool = _botTypeCatalog.RandomlyAssignable;
+        var randomBotType = randomPool[Random.Shared.Next(randomPool.Count)];
         var selectedBotType = string.IsNullOrEmpty(botType) || !botTypes.Contains(botType) ? randomBotType : botType;
 
         var bot = new Player

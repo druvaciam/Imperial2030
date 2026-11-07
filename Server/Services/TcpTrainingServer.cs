@@ -1395,6 +1395,7 @@ public class TcpTrainingServer : BackgroundService
         return score;
     }
 
+
     private float[] GetStateVector(Game game, Guid rlPlayerId, string? maneuverSelectedTerritoryId = null)
     {
         float[] state = new float[RLBotStrategy.StateSize];
@@ -1568,90 +1569,7 @@ public class TcpTrainingServer : BackgroundService
             }
 
             int targetSlot = (actingNs.RondelPosition.GetValueOrDefault() + act + 1) % RondelData.SlotCount;
-            bool isPenalized = false;
-
-            if (targetSlot == RondelData.FactorySlot)
-            {
-                bool noMoney = actingNs.Treasury < 5;
-                bool allBuiltOrBlocked = false;
-                if (!noMoney)
-                {
-                    var homeCities = TerritoryData.AllTerritories
-                        .Where(t => t.Nation == actingNs.Nation && t.CityType != CityType.None);
-                    allBuiltOrBlocked = homeCities.All(city =>
-                    {
-                        var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
-                        if (ts != null && ts.HasFactory) return true;
-                        return game.Units.Any(u => u.TerritoryId == city.Id && u.UnitType == UnitType.Army && u.Nation != actingNs.Nation && u.IsHostile);
-                    });
-                }
-                if (noMoney || allBuiltOrBlocked) isPenalized = true;
-            }
-            else if (targetSlot == RondelData.ImportSlot)
-            {
-                if (actingNs.Treasury < 1) isPenalized = true;
-            }
-            else if (RondelData.IsManeuverSlot(targetSlot))
-            {
-                bool hasUnits = game.Units.Any(u => u.Nation == actingNs.Nation);
-                if (!hasUnits) isPenalized = true;
-            }
-            else if (RondelData.IsProductionSlot(targetSlot))
-            {
-                // Wasted Production: no unblockaded home factory can currently produce (every eligible
-                // factory's unit type is already at cap). This branch was missing entirely - every other
-                // actionable slot in this loop previews its own "wasted move" reward penalty, but
-                // Production fell through to isPenalized=false unconditionally, so the agent had zero
-                // signal before a choice the reward function (RondelData.IsProductionSlot branch further
-                // down this file) penalizes -10 for. Same class of bug as the Investor gap above, found by
-                // the same systematic check: does every reward penalty have a matching preview flag here.
-                var homeCities = TerritoryData.AllTerritories.Where(t => t.Nation == actingNs.Nation);
-                int currentArmies = game.Units.Count(u => u.Nation == actingNs.Nation && u.UnitType == UnitType.Army);
-                int currentFleets = game.Units.Count(u => u.Nation == actingNs.Nation && u.UnitType == UnitType.Fleet);
-                int maxArmies = NationData.GetMaxArmies(actingNs.Nation);
-                int maxFleets = NationData.GetMaxFleets(actingNs.Nation);
-
-                bool canProduceAnything = homeCities.Any(city =>
-                {
-                    var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == city.Id);
-                    if (ts == null || !ts.HasFactory) return false;
-                    bool isBlockaded = game.Units.Any(u => u.TerritoryId == city.Id && u.Nation != actingNs.Nation && u.UnitType == UnitType.Army && u.IsHostile);
-                    if (isBlockaded) return false;
-                    return city.CityType == CityType.LightBlue ? currentFleets < maxFleets : currentArmies < maxArmies;
-                });
-
-                if (!canProduceAnything) isPenalized = true;
-            }
-            else if (targetSlot == RondelData.InvestorSlot)
-            {
-                // Landing on Investor pays interest on the acting nation's own bonds from its own treasury
-                // (others first, then the controller); it's "penalized" whenever the controller nets <= 0
-                // out of it — either paying a shortfall from their own pocket, or receiving nothing at all.
-                // Reuses InvestorHelper.PreviewInterestPayment, the same non-mutating preview already used
-                // for the PersonalContribution/MissedInterest reward penalties and the raw preview floats
-                // appended later in this vector — this is not new game logic, just an added consumer of it.
-                var moveController = game.Players.FirstOrDefault(p => p.Id == actingNs.ControllerId);
-                if (moveController != null)
-                {
-                    var investorMovePreview = Helpers.InvestorHelper.PreviewInterestPayment(game, actingNs, moveController);
-                    if (investorMovePreview.NetControllerCashDelta <= 0) isPenalized = true;
-                }
-            }
-            else if (targetSlot == RondelData.TaxationSlot)
-            {
-                // Wasted Taxation: no power-track gain AND no treasury gain. Mirrors the reward penalty
-                // for a fully wasted Taxation turn exactly ("expectedTaxTreasuryGain <= 0 &&
-                // expectedTaxPowerGain == 0") by reading the SAME already-computed ExpectedTreasuryGain
-                // field PreviewTaxation returns, rather than re-deriving an approximation of it from
-                // TotalTaxRevenue - SoldiersPay. That approximation was wrong in one real case: when
-                // treasury is low enough that actual soldiers' pay gets capped below the raw SoldiersPay
-                // figure (TaxationHelper caps it at what's actually payable), the approximation could
-                // read "wasted" while the real ExpectedTreasuryGain (which uses the capped payment) was
-                // still positive - a false-positive flag telling the agent to avoid a Taxation visit that
-                // the reward function would not actually have penalized.
-                var taxMovePreview = Helpers.TaxationHelper.PreviewTaxation(game, actingNs);
-                if (taxMovePreview.ExpectedPowerGain == 0 && taxMovePreview.ExpectedTreasuryGain <= 0) isPenalized = true;
-            }
+            bool isPenalized = Helpers.RondelOutlookHelper.IsWastedRondelSpace(game, actingNs, targetSlot);
 
             state[i++] = isPenalized ? 1.0f : 0.0f;
         }
@@ -1974,59 +1892,22 @@ public class TcpTrainingServer : BackgroundService
     }
 
     /// <summary>
-    /// Whether this rondel move walked the marker past Taxation while stopping there would have paid
-    /// <see cref="SkippedTaxationPowerThreshold"/> or more power. The passed space is nearer than the
-    /// one the move paid to reach, so stopping on it was affordable by definition (p.6: the first three
-    /// spaces are free, each further space costs more) - no cash check is needed.
-    ///
-    /// Power is the win condition (p.6: 25 points ends the game), and nothing in the reward compared a
-    /// move against the taxation it gave up: measured over five games each, RL-5 walked past a 5+ power
-    /// Taxation on 25 of 62 chances, RL-4 on 26 of 71, the heuristic Default bot on 15 of 60.
+    /// Both predicates live in <see cref="Helpers.RondelOutlookHelper"/> now: the reward function is one
+    /// of three callers (the Jev layer asks the same questions, and so do their tests), and a second copy
+    /// of a rondel rule is how two callers start disagreeing about the same move.
     /// </summary>
     public static bool SkippedValuableTaxation(int fromSlot, int targetSlot, int expectedTaxPowerGain)
-    {
-        if (expectedTaxPowerGain < SkippedTaxationPowerThreshold) return false;
+        => Helpers.RondelOutlookHelper.SkippedValuableTaxation(fromSlot, targetSlot, expectedTaxPowerGain);
 
-        int toTaxation = RondelData.GetMoveDistance(fromSlot, RondelData.TaxationSlot);
-        if (toTaxation == 0) return false; // Leaving Taxation is not passing it.
-
-        return toTaxation < RondelData.GetMoveDistance(fromSlot, targetSlot);
-    }
-
-    /// <summary>
-    /// Whether this move paid to reach the farther of the rondel's two identical spaces - Production is
-    /// on spaces 2 and 6, Maneuver on 3 and 7 (p.6) - when the nearer one was reachable and cheaper. The
-    /// action is the same either way, so the difference in move cost is money spent for nothing.
-    ///
-    /// Checked for both of each pair. It used to be checked only for the FIRST of each pair, so the move
-    /// that cost this game 3M - Taxation to Production 2 (six spaces) with Production 1 two spaces away
-    /// and free - went unpenalised.
-    /// </summary>
+    /// <inheritdoc cref="Helpers.RondelOutlookHelper.PaidForTheFartherTwinSlot"/>
     public static bool PaidForTheFartherTwinSlot(int fromSlot, int targetSlot, int power)
-    {
-        int twin = targetSlot switch
-        {
-            RondelData.ProductionSlot1 => RondelData.ProductionSlot2,
-            RondelData.ProductionSlot2 => RondelData.ProductionSlot1,
-            RondelData.ManeuverSlot1 => RondelData.ManeuverSlot2,
-            RondelData.ManeuverSlot2 => RondelData.ManeuverSlot1,
-            _ => -1
-        };
-        if (twin < 0) return false;
-
-        int toTwin = RondelData.GetMoveDistance(fromSlot, twin);
-        // The marker is standing on the twin, and staying is not a move (p.6) - there was no cheaper option.
-        if (toTwin == 0) return false;
-        if (toTwin >= RondelData.GetMoveDistance(fromSlot, targetSlot)) return false;
-
-        return RondelData.GetMoveCost(fromSlot, targetSlot, power) > RondelData.GetMoveCost(fromSlot, twin, power);
-    }
+        => Helpers.RondelOutlookHelper.PaidForTheFartherTwinSlot(fromSlot, targetSlot, power);
 
     /// <summary>Unchanged from when this was checked for one of each pair only.</summary>
     public const float FartherTwinSlotPenalty = 40.0f;
 
-    /// <summary>The power gain that makes a Taxation worth stopping for. Mirrors the +5 already paid for taxing above it.</summary>
-    public const int SkippedTaxationPowerThreshold = 5;
+    /// <inheritdoc cref="Helpers.RondelOutlookHelper.SkippedTaxationPowerThreshold"/>
+    public const int SkippedTaxationPowerThreshold = Helpers.RondelOutlookHelper.SkippedTaxationPowerThreshold;
 
     /// <summary>Sized with the other wasted-move penalties (Production and Maneuver are -10).</summary>
     public const float SkippedTaxationPenalty = 10.0f;

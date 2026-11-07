@@ -38,7 +38,7 @@ public class AggressiveBotStrategy : BotStrategyBase
             .Select(ns => ns.Nation)
             .ToList();
 
-        int score = Random.Shared.Next(0, 10);
+        int score = BotRandom.Current.Next(0, 10);
         bool hasEnemy = game.Units.Any(u => u.TerritoryId == destinationId && !friendlyNations.Contains(u.Nation));
         var ts = game.TerritoryStates.FirstOrDefault(t => t.TerritoryId == destinationId);
         var def = TerritoryData.AllTerritories.FirstOrDefault(t => t.Id == destinationId);

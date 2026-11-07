@@ -25,6 +25,7 @@ namespace Imperial2030.Tests;
 /// (126) and "end the phase now" (63: the remaining units stay where they are). The live bot must offer
 /// the same three kinds, or the policy answers a question with an option it was never asked in play.
 /// </summary>
+[Collection(RlTrainingFlagCollection.Name)]
 public class RLManeuverParityTests
 {
     private static BotService BuildBotService(params IBotStrategy[] strategies)

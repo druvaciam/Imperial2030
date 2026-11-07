@@ -871,7 +871,7 @@ public class RLBotStrategy : BotStrategyBase
             // Fallback to random if no model is loaded at all
             var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();
             if (validIndices.Count == 0) return 0;
-            return validIndices[Random.Shared.Next(validIndices.Count)];
+            return validIndices[BotRandom.Current.Next(validIndices.Count)];
         }
 
         int modelInputSize = GetModelInputSize();
@@ -893,7 +893,7 @@ public class RLBotStrategy : BotStrategyBase
                 // mismatch at inference time.
                 var validIndices = actionMask.Select((val, idx) => new { val, idx }).Where(x => x.val).Select(x => x.idx).ToList();
                 if (validIndices.Count == 0) return 0;
-                return validIndices[Random.Shared.Next(validIndices.Count)];
+                return validIndices[BotRandom.Current.Next(validIndices.Count)];
             }
         }
 
@@ -939,7 +939,7 @@ public class RLBotStrategy : BotStrategyBase
                 float maxValidLogit = validLogits.Max(x => x.Logit);
                 var exps = validLogits.Select(x => (float)Math.Exp((x.Logit - maxValidLogit) / Temperature)).ToList();
                 float sumExp = exps.Sum();
-                float randomVal = (float)Random.Shared.NextDouble() * sumExp;
+                float randomVal = (float)BotRandom.Current.NextDouble() * sumExp;
 
                 float cumulative = 0;
                 for (int i = 0; i < validLogits.Count; i++)
