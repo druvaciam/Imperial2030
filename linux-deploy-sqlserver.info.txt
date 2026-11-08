@@ -1,0 +1,26 @@
+# The game on SQL Server, all in Docker (nginx + game + SQL Server), for any Linux machine with Docker.
+# Everything it needs is the folder deploy/imperial2030-sql. Runs next to anything else on the
+# machine, including the existing SQLite game, as long as the port is different.
+
+
+# --- On your PC, in the repo folder, with Docker Desktop running ---
+docker build -f deploy/imperial2030-sql/Dockerfile -t imperial2030-sql-app .
+docker save -o deploy/imperial2030-sql/imperial2030-sql-app.tar imperial2030-sql-app
+scp -r deploy/imperial2030-sql ubuntu@51.83.187.156:~/
+
+
+# --- On the server ---
+# Once, if Docker is not installed yet:
+curl -fsSL https://get.docker.com | sudo sh
+
+# Start (and after every update - same command):
+sudo sh ~/imperial2030-sql/start.sh            # port 8080
+sudo sh ~/imperial2030-sql/start.sh 9000       # or any other port
+
+# It prints the address to open, e.g. http://51.83.187.156:8080
+# Without a port it keeps the one it already runs on; 8080 the first time.
+
+
+# --- To see what it is doing ---
+cd ~/imperial2030-sql && sudo docker compose ps
+cd ~/imperial2030-sql && sudo docker compose logs -f app

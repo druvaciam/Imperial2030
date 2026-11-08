@@ -114,3 +114,7 @@ VueReplayViewer/
 
 # Test-captured repro artifacts (e.g. ReplayGameTests.TestImportFromExportedJson's divergence dump)
 Tests/TestArtifacts/
+
+# The SQL Server deployment: its secrets (created on the server) and the built game image
+deploy/**/.env
+deploy/**/*.tar

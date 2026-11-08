@@ -1,0 +1,17 @@
+# What of the repo the image build may see (BuildKit reads <Dockerfile>.dockerignore next to the
+# Dockerfile). An allowlist: the three projects the server needs and nothing else - no .git, no
+# python_rl, no tests, and no local databases or secrets.
+*
+!Shared/
+!Client/
+!Server/
+
+# Build output from the Windows machine would confuse the Linux build.
+**/bin/
+**/obj/
+
+# Local SQLite databases (Server/ holds a few, including a copy of the VPS one) and logs.
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/logs/

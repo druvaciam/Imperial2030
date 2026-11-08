@@ -1,0 +1,2 @@
+# Shell scripts run on Linux: a Windows checkout (core.autocrlf) must not give them CRLF line endings.
+*.sh text eol=lf

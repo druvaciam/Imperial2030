@@ -1,0 +1,62 @@
+# The game on SQL Server, entirely in Docker: nginx -> game -> SQL Server. Started by start.sh, which
+# also creates .env (secrets and PORT). See linux-deploy-sqlserver.info.txt at the repo root.
+#
+# No fixed names anywhere: Docker names everything after this folder, so a second copy of the folder
+# on the same machine, started on another port, is a second independent instance.
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      # Express is free for production use (databases up to 10 GB).
+      MSSQL_PID: "Express"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:?run start.sh, it creates .env}"
+      # 2048 is the minimum SQL Server accepts; on a 4 GB machine it is also the most it should take.
+      MSSQL_MEMORY_LIMIT_MB: "${MSSQL_MEMORY_LIMIT_MB:-2048}"
+    volumes:
+      # The database. Kept across restarts and updates - removed only by `docker compose down -v`.
+      - mssql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  app:
+    image: imperial2030-sql-app:latest
+    # Built on the PC and loaded from imperial2030-sql-app.tar, never pulled from a registry.
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Production"
+      # Built from the one password in .env, so it cannot drift from the database's own. The game
+      # creates the database and runs every migration on its first start.
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=Imperial2030;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+      Jwt__Key: "${JWT_KEY:?run start.sh, it creates .env}"
+      AzureFunctionNotificationKey: "${AZURE_FUNCTION_NOTIFICATION_KEY:-}"
+      TypeSafe__ApiKey: "${TYPESAFE_API_KEY:-}"
+    volumes:
+      - app-logs:/app/logs
+      - app-keys:/home/app/.aspnet/DataProtection-Keys
+
+  nginx:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      # The one port this instance is reached on. Set by start.sh (sudo sh start.sh 9000).
+      - "${PORT:-8080}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  mssql-data:
+  app-logs:
+  app-keys:
